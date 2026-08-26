@@ -227,7 +227,12 @@ Conditions accept `==`, `!=`, `contains`, `startswith`, `endswith`, `in`, `notin
 `missing`, `notmissing`, `>`, `<`, `>=`, `<=`. Text comparison is trimmed and
 case-insensitive, matching SAS character comparison.
 
-By default the last step's output becomes the domain's record source; **Record source**
+**The final output overrides the spec's sources.** Wherever the last step's dataset carries a
+mapping's column — including sources nested inside derived recipes — that mapping reads from
+it; the spec's raw source applies only to columns the preparation does not carry, and a hand
+edit still beats both. One pipeline rewires the whole domain, with a build note saying how
+many variables followed it. By default the last step's output becomes the domain's record
+source; **Record source**
 overrides that. A step that fails names the step, the operation and what was wrong — it never
 half-runs.
 

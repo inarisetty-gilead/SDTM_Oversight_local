@@ -610,10 +610,11 @@ def retarget_to_output(blocks, store, out_name: str) -> int:
     """Point the domain's mappings at a prepared dataset wherever its columns match.
 
     A hand-built pipeline is the reader saying "THIS is the data" — merged, filtered,
-    deduplicated. Leaving every variable reading its spec-named raw form after that means the
+    deduplicated. Leaving mappings on their spec-named raw forms after that means the
     preparation applied to the records but not to the values, which is never what was meant.
-    So: any mapping whose source column exists in the output is repointed to it. A mapping
-    whose column the output does not carry is left alone and keeps its raw source.
+    Any source whose column(s) the output carries is repointed to it — including sources
+    nested inside derived recipes (a SAS pipeline's steps, a function's inputs, a date's
+    component columns). A column the output lacks keeps its raw source.
 
     Runs BEFORE hand edits are applied, so an explicit per-variable choice still wins."""
     key = store.resolve(out_name)
@@ -621,20 +622,42 @@ def retarget_to_output(blocks, store, out_name: str) -> int:
         return 0
     cols = {upper(c) for c in store.columns(key)}
     moved = 0
+
+    def columns_of(node: dict) -> list[str]:
+        out = [upper(node.get(f)) for f in
+               ("column", "date_col", "time_col", "y_col", "m_col", "d_col") if s(node.get(f))]
+        out += [upper(c) for c in (node.get("columns") or []) if s(c)]
+        return out
+
+    def visit(node) -> int:
+        n = 0
+        if isinstance(node, dict):
+            if s(node.get("dataset")) and (store.resolve(node["dataset"]) or node["dataset"]) != key:
+                referenced = columns_of(node)
+                if referenced and all(c in cols for c in referenced):
+                    node["dataset"] = key
+                    n += 1
+            for v in node.values():
+                n += visit(v)
+        elif isinstance(node, list):
+            for v in node:
+                n += visit(v)
+        return n
+
     for b in blocks:
-        if b.mtype == "assign" and b.column and upper(b.column) in cols \
+        # not only plain assigns: a derived block keeps its original source in dataset/column
+        # and the interface displays it — it must follow the retarget too
+        if b.mtype in ("assign", "derived") and b.column and upper(b.column) in cols \
                 and (store.resolve(b.dataset) or b.dataset) != key:
             b.dataset = key
             b.reason = (b.reason + " · " if b.reason else "") + \
                 f"reads the prepared dataset '{key}'"
             moved += 1
-        # derived recipes that carry their own source dataset follow the same rule
-        a = b.args or {}
-        if s(a.get("dataset")) and (store.resolve(a["dataset"]) or a["dataset"]) != key:
-            referenced = [upper(a.get(f)) for f in
-                          ("date_col", "time_col", "y_col", "m_col", "d_col") if s(a.get(f))]
-            referenced += [upper(c) for c in (a.get("columns") or [])]
-            if referenced and all(c in cols for c in referenced):
-                a["dataset"] = key
-                moved += 1
+        if b.args:
+            inner = visit(b.args)
+            if inner:
+                moved += inner
+                if "prepared dataset" not in (b.reason or ""):
+                    b.reason = (b.reason + " · " if b.reason else "") + \
+                        f"reads the prepared dataset '{key}'"
     return moved
