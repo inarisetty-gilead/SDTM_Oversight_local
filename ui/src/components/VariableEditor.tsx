@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { CondControl, FnControl, PipelineControl } from "./derivation"
 import { Mono } from "./grid"
 import { Callout } from "./shell"
 
@@ -62,6 +63,35 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
   const field = (f: Record<string, unknown>) => {
     const k = f.k as string, t = f.t as string
     const v = args[k]
+    // the structured builders replace every JSON textarea: the engine's format is not the
+    // reader's format
+    if (recipe === "pipeline" && k === "steps") {
+      return (
+        <div key={k} className="col-span-full space-y-1">
+          <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Steps</Label>
+          <PipelineControl steps={(v as Record<string, unknown>[]) ?? []} detail={detail}
+                           onChange={(steps) => setArg(k, steps)} />
+        </div>)
+    }
+    if (recipe === "fn" && k === "sources") {
+      return (
+        <div key={k} className="col-span-full space-y-1">
+          <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Function</Label>
+          <FnControl args={args} detail={detail} onChange={(a) => setArgs(a)} />
+        </div>)
+    }
+    if (recipe === "fn" && ["fn", "start", "len", "delim", "word", "find", "replace",
+                            "chars", "sep", "width"].includes(k)) {
+      return null                        // FnControl renders the function and its parameters
+    }
+    if (recipe === "cond" && k === "rules") {
+      return (
+        <div key={k} className="col-span-full space-y-1">
+          <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Rules</Label>
+          <CondControl args={args} detail={detail} onChange={(a) => setArgs(a)} />
+        </div>)
+    }
+    if (recipe === "cond" && k === "else") return null   // CondControl renders OTHERWISE
     const wide = t === "json" || t === "sources"
     const heading = (f.label as string) || k
     let control
