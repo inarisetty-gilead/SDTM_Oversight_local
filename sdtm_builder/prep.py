@@ -310,6 +310,7 @@ PREP_OPS = {
     "drop": "Drop — remove these columns",
     "rename": "Rename — change column names",
     "derive": "Derive — set a column with if/then rules",
+    "compute": "Compute — make a column from other columns (fix a partial date, year, join text)",
     "aggregate": "Aggregate — group and summarise",
     "date_extreme": "Earliest / latest date per group across datasets",
     "sort": "Sort — order the records",
@@ -343,6 +344,18 @@ def _ci_col(df: pd.DataFrame, name) -> str:
         if upper(c) == n:
             return c
     return ""
+
+
+def complete_partial_date(series: pd.Series) -> pd.Series:
+    """ISO text with missing month/day filled with 01: 1962 -> 1962-01-01, 1962-05 ->
+    1962-05-01. Full dates pass through; anything that is not a real date comes out blank
+    rather than guessed."""
+    text = series.astype("string").str.strip()
+    m = text.str.extract(r"^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?")
+    completed = (m[0] + "-" + m[1].fillna("1").str.zfill(2)
+                 + "-" + m[2].fillna("1").str.zfill(2))
+    parsed = pd.to_datetime(completed, errors="coerce", format="%Y-%m-%d")
+    return parsed.dt.strftime("%Y-%m-%d").fillna("")
 
 
 def cond_mask(df: pd.DataFrame, conds) -> pd.Series:
@@ -488,6 +501,33 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
             out[target] = ""
         for rule in p.get("rules") or []:            # sequential if/then, first write wins last
             out.loc[cond_mask(out, rule.get("conds")), target] = s(rule.get("value"))
+        return out, extra
+
+    if op == "compute":
+        src = _load(p.get("dataset"), store, ns)
+        out = src.copy()
+        func = str(p.get("func", "")).strip().lower()
+        cols = [c for c in (_ci_col(src, x) for x in (p.get("columns") or [])) if c]
+        if not cols:
+            raise PrepError("compute needs at least one source column that exists in the dataset")
+        target = upper(p.get("out_col")) or upper(cols[0])
+        first = src[cols[0]].astype("string").str.strip()
+        if func == "complete_date":
+            out[target] = complete_partial_date(src[cols[0]])
+        elif func == "year":
+            out[target] = first.str.extract(r"^(\d{4})")[0].fillna("")
+        elif func == "upcase":
+            out[target] = first.str.upper().fillna("")
+        elif func == "trim":
+            out[target] = first.fillna("")
+        elif func == "concat":
+            sep = str(p.get("sep") or "")
+            parts = [src[c].astype("string").str.strip().fillna("") for c in cols]
+            rows = zip(*(pc.tolist() for pc in parts))
+            # with a separator behave like CATX (blank parts are skipped); without, like CATS
+            out[target] = [sep.join(x for x in r if x) if sep else "".join(r) for r in rows]
+        else:
+            raise PrepError("pick what to compute — complete a date, take the year, join text…")
         return out, extra
 
     if op == "aggregate":

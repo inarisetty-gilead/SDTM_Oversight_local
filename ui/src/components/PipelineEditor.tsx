@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ArrowDown, ArrowUp, Loader2, Plus, Trash2 } from "lucide-react"
 import { api } from "@/api"
 import type { DomainDetail } from "@/api"
@@ -6,45 +6,49 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
 import { DataGrid, Mono } from "./grid"
 import { Callout } from "./shell"
 
 type Step = { op: string; name: string; params: Record<string, unknown> }
 type Report = { step: number; name: string; op: string; ok: boolean; rows?: number; columns?: string[]; error?: string; extra_outputs?: string[] }
 
-const FIELDS: Record<string, Array<{ k: string; t: string; ph?: string; label?: string }>> = {
+type Field = { k: string; t: string; ph?: string; label?: string; opts?: [string, string][] }
+
+const COMPUTE_FUNCS: [string, string][] = [
+  ["complete_date", "Complete a partial date — fill missing month/day with 01"],
+  ["year", "Take the year"],
+  ["concat", "Join columns together"],
+  ["upcase", "UPPERCASE the text"],
+  ["trim", "Trim surrounding spaces"],
+]
+
+const FIELDS: Record<string, Field[]> = {
   stack: [{ k: "datasets", t: "dslist", label: "Datasets to append" }],
   merge: [{ k: "inputs", t: "mergeinputs", label: "Datasets to join" }, { k: "on", t: "joinkeys", label: "Join on" },
           { k: "how", t: "choice:left,inner,outer,right", label: "Keep records from" }],
-  filter: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "conds", t: "json", label: "Keep records where" }],
+  filter: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "conds", t: "conds", label: "Keep records where" }],
   select: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "list", label: "Columns" }],
   drop: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "list", label: "Columns" }],
-  rename: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "renames", t: "json", label: "Rename" }],
+  rename: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "renames", t: "renames", label: "Rename" }],
   derive: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "target", t: "text", ph: "new column", label: "Column to set" },
-           { k: "else_value", t: "text", ph: "value when no rule matches", label: "Otherwise" }, { k: "rules", t: "json", label: "Rules" }],
+           { k: "else_value", t: "text", ph: "value when no rule matches", label: "Otherwise" }, { k: "rules", t: "rules", label: "Rules" }],
+  compute: [{ k: "dataset", t: "ds", label: "Dataset" },
+            { k: "func", t: "choicel", label: "Calculation", opts: COMPUTE_FUNCS },
+            { k: "columns", t: "colseq", label: "From column(s)" },
+            { k: "out_col", t: "text", ph: "blank overwrites the source column", label: "Save as" },
+            { k: "sep", t: "text", ph: "e.g. - (blanks are skipped)", label: "Joined with" }],
   aggregate: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "group_by", t: "list", label: "Group by" }, { k: "column", t: "text", label: "Column to summarise" },
               { k: "func", t: "choice:min,max,first,last,count,sum,mean", label: "Summarise with" }, { k: "out_col", t: "text", label: "Result column" }],
-  date_extreme: [{ k: "sources", t: "json", label: "Datasets and date columns" }, { k: "group_by", t: "list", ph: "USUBJID", label: "Per" },
+  date_extreme: [{ k: "sources", t: "datesources", label: "Datasets and date columns" }, { k: "group_by", t: "list", ph: "USUBJID", label: "Per" },
                  { k: "func", t: "choice:min,max", label: "Take the" }, { k: "out_col", t: "text", label: "Result column" }],
   sort: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "list", label: "Columns" }, { k: "directions", t: "list", ph: "asc, desc", label: "Direction" }],
   dedup: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "keys", t: "list", label: "Group by" }, { k: "keep", t: "choice:first,last", label: "Keep" }],
-  split: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "branches", t: "json", label: "Branches" }, { k: "other_name", t: "text", label: "Name for the rest" }],
+  split: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "branches", t: "branches", label: "Branches" }, { k: "other_name", t: "text", label: "Name for the rest" }],
   transpose_long: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "id_vars", t: "list", label: "Carry through" }, { k: "value_vars", t: "list", label: "Columns to melt" },
                    { k: "var_name", t: "text", ph: "TESTCD", label: "Name column" }, { k: "value_name", t: "text", ph: "ORRES", label: "Value column" }],
-  transpose_findings: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "id_vars", t: "list", label: "Carry through" }, { k: "measures", t: "json", label: "Measurements" },
+  transpose_findings: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "id_vars", t: "list", label: "Carry through" }, { k: "measures", t: "measures", label: "Measurements" },
                        { k: "testcd_col", t: "text", label: "Test code column" }, { k: "test_col", t: "text", label: "Test name column" },
                        { k: "orres_col", t: "text", label: "Result column" }, { k: "orresu_col", t: "text", label: "Unit column" }],
-}
-
-const HINTS: Record<string, string> = {
-  conds: '[{"column": "DSCAT", "operator": "==", "value": "PROTOCOL MILESTONE"}]',
-  rules: '[{"conds": [{"column": "DSCAT", "operator": "==", "value": "X"}], "value": "MILESTONE"}]',
-  branches: '[{"name": "milestones", "conds": [{"column": "DSCAT", "operator": "==", "value": "X"}]}]',
-  renames: '[{"from": "DSSTDAT", "to": "DSSTDTC"}]',
-  inputs: '[{"dataset": "ae"}, {"dataset": "dm", "columns": ["SEXCD"]}]',
-  sources: '[{"dataset": "ae", "date_col": "AESTDAT"}]',
-  measures: '[{"testcd": "SYSBP", "value_col": "SYSBP", "unit_col": "SYSBPU"}]',
 }
 
 
@@ -164,6 +168,284 @@ function JoinKeys({ value, inputs, domain, onChange }: {
       ))}
     </div>
   )
+}
+
+// ── condition and row builders — no JSON in sight ──────────────────────────
+const COND_OPS: [string, string][] = [
+  ["==", "equals"], ["!=", "does not equal"],
+  ["in", "is one of (comma separated)"], ["notin", "is not one of"],
+  ["contains", "contains"], ["startswith", "starts with"], ["endswith", "ends with"],
+  [">", "greater than"], ["<", "less than"], [">=", "at least"], ["<=", "at most"],
+  ["missing", "is missing"], ["notmissing", "is not missing"],
+]
+const COND_NO_VALUE = new Set(["missing", "notmissing"])
+
+type Cond = { column?: string; operator?: string; value?: string }
+
+/** Columns of a dataset (raw or a previous prep step), loaded once per name. */
+function useColumns(domain: string, dataset?: string) {
+  const [cols, setCols] = useState<string[]>([])
+  useEffect(() => {
+    let alive = true
+    if (!dataset) { setCols([]); return }
+    void api.columns(domain, dataset)
+      .then((r) => { if (alive) setCols(r.columns) })
+      .catch(() => { if (alive) setCols([]) })
+    return () => { alive = false }
+  }, [domain, dataset])
+  return cols
+}
+
+function ColSelect({ value, columns, onChange, placeholder = "column", width = "w-44" }: {
+  value?: string; columns: string[]; onChange: (v: string) => void
+  placeholder?: string; width?: string
+}) {
+  // a hand-set or stale name stays selectable so an existing pipeline never renders blank
+  const all = value && !columns.includes(value) ? [value, ...columns] : columns
+  return (
+    <Select value={value || "__none"} onValueChange={(v) => onChange(v === "__none" ? "" : v)}>
+      <SelectTrigger className={`h-8 ${width} text-xs`}><SelectValue placeholder={placeholder} /></SelectTrigger>
+      <SelectContent className="max-h-64">
+        <SelectItem value="__none" className="text-xs">—</SelectItem>
+        {all.map((c) => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  )
+}
+
+/** ANDed conditions: column · comparison · value rows, offered from the dataset itself. */
+function CondsEditor({ conds, columns, onChange, firstWord = "where" }: {
+  conds: Cond[]; columns: string[]; onChange: (c: Cond[]) => void; firstWord?: string
+}) {
+  const set = (i: number, patch: Cond) =>
+    onChange(conds.map((c, k) => (k === i ? { ...c, ...patch } : c)))
+  return (
+    <div className="space-y-1.5">
+      {conds.map((c, i) => (
+        <div key={i} className="flex flex-wrap items-center gap-1.5">
+          <span className="w-10 text-right text-[11px] text-muted-foreground">
+            {i === 0 ? firstWord : "and"}</span>
+          <ColSelect value={c.column} columns={columns}
+                     onChange={(v) => set(i, { column: v })} />
+          <Select value={c.operator || "=="} onValueChange={(v) => set(i, { operator: v })}>
+            <SelectTrigger className="h-8 w-44 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>{COND_OPS.map(([v, l]) =>
+              <SelectItem key={v} value={v} className="text-xs">{l}</SelectItem>)}</SelectContent>
+          </Select>
+          {!COND_NO_VALUE.has(c.operator || "==") && (
+            <Input className="h-8 w-44 text-xs" placeholder="value" value={c.value ?? ""}
+                   onChange={(e) => set(i, { value: e.target.value })} />)}
+          <Button type="button" size="icon" variant="ghost" className="h-7 w-7"
+                  onClick={() => onChange(conds.filter((_, k) => k !== i))}>
+            <Trash2 className="h-3 w-3" /></Button>
+        </div>
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => onChange([...conds, { operator: "==" }])}>
+        <Plus className="mr-1 h-3 w-3" />{conds.length ? "And also" : "Add a condition"}
+      </Button>
+    </div>
+  )
+}
+
+type Rule = { conds?: Cond[]; value?: string }
+
+/** Derive rules: IF conditions THEN set the column to a value; rules run in order. */
+function RulesEditor({ rules, columns, onChange }: {
+  rules: Rule[]; columns: string[]; onChange: (r: Rule[]) => void
+}) {
+  const set = (i: number, patch: Rule) =>
+    onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)))
+  return (
+    <div className="space-y-2">
+      {rules.map((r, i) => (
+        <div key={i} className="space-y-1.5 rounded-md border p-2">
+          <div className="flex items-center">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {i === 0 ? "If" : "Else if"}</span>
+            <Button type="button" size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs"
+                    onClick={() => onChange(rules.filter((_, k) => k !== i))}>Remove</Button>
+          </div>
+          <CondsEditor conds={r.conds ?? []} columns={columns} firstWord="when"
+                       onChange={(c) => set(i, { conds: c })} />
+          <div className="flex items-center gap-1.5">
+            <span className="w-10 text-right text-[11px] text-muted-foreground">then</span>
+            <span className="text-[11px] text-muted-foreground">set it to</span>
+            <Input className="h-8 w-56 text-xs" placeholder="value" value={r.value ?? ""}
+                   onChange={(e) => set(i, { value: e.target.value })} />
+          </div>
+        </div>
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => onChange([...rules, { conds: [{ operator: "==" }], value: "" }])}>
+        <Plus className="mr-1 h-3 w-3" />Add a rule
+      </Button>
+    </div>
+  )
+}
+
+type Branch = { name?: string; conds?: Cond[] }
+
+function BranchesEditor({ branches, columns, onChange }: {
+  branches: Branch[]; columns: string[]; onChange: (b: Branch[]) => void
+}) {
+  const set = (i: number, patch: Branch) =>
+    onChange(branches.map((b, k) => (k === i ? { ...b, ...patch } : b)))
+  return (
+    <div className="space-y-2">
+      {branches.map((b, i) => (
+        <div key={i} className="space-y-1.5 rounded-md border p-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground">dataset named</span>
+            <Input className="h-8 w-44 font-mono text-xs" placeholder={`branch${i + 1}`}
+                   value={b.name ?? ""} onChange={(e) => set(i, { name: e.target.value })} />
+            <span className="text-[11px] text-muted-foreground">takes the records</span>
+            <Button type="button" size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs"
+                    onClick={() => onChange(branches.filter((_, k) => k !== i))}>Remove</Button>
+          </div>
+          <CondsEditor conds={b.conds ?? []} columns={columns}
+                       onChange={(c) => set(i, { conds: c })} />
+        </div>
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => onChange([...branches, { name: "", conds: [{ operator: "==" }] }])}>
+        <Plus className="mr-1 h-3 w-3" />Add a branch
+      </Button>
+      <p className="text-[10px] text-muted-foreground">
+        A record goes to the first branch it matches; the rest can be kept with a name below.</p>
+    </div>
+  )
+}
+
+function RenamesEditor({ rows, columns, onChange }: {
+  rows: Array<{ from?: string; to?: string }>; columns: string[]
+  onChange: (r: Array<{ from?: string; to?: string }>) => void
+}) {
+  const set = (i: number, patch: { from?: string; to?: string }) =>
+    onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <ColSelect value={r.from} columns={columns} onChange={(v) => set(i, { from: v })} />
+          <span className="text-[11px] text-muted-foreground">becomes</span>
+          <Input className="h-8 w-44 font-mono text-xs" placeholder="new name"
+                 value={r.to ?? ""} onChange={(e) => set(i, { to: e.target.value })} />
+          <Button type="button" size="icon" variant="ghost" className="h-7 w-7"
+                  onClick={() => onChange(rows.filter((_, k) => k !== i))}>
+            <Trash2 className="h-3 w-3" /></Button>
+        </div>
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => onChange([...rows, {}])}>
+        <Plus className="mr-1 h-3 w-3" />Rename a column
+      </Button>
+    </div>
+  )
+}
+
+/** One dataset + its date column; the column list follows the chosen dataset. */
+function DateSourceRow({ row, datasets, domain, onChange, onRemove }: {
+  row: { dataset?: string; date_col?: string }; datasets: string[]; domain: string
+  onChange: (r: { dataset?: string; date_col?: string }) => void; onRemove: () => void
+}) {
+  const columns = useColumns(domain, row.dataset)
+  return (
+    <div className="flex items-center gap-1.5">
+      <ColSelect value={row.dataset} columns={datasets} placeholder="dataset"
+                 onChange={(v) => onChange({ dataset: v, date_col: "" })} />
+      <span className="text-[11px] text-muted-foreground">date in</span>
+      <ColSelect value={row.date_col} columns={columns}
+                 onChange={(v) => onChange({ ...row, date_col: v })} />
+      <Button type="button" size="icon" variant="ghost" className="h-7 w-7" onClick={onRemove}>
+        <Trash2 className="h-3 w-3" /></Button>
+    </div>
+  )
+}
+
+function DateSourcesEditor({ rows, datasets, domain, onChange }: {
+  rows: Array<{ dataset?: string; date_col?: string }>; datasets: string[]; domain: string
+  onChange: (r: Array<{ dataset?: string; date_col?: string }>) => void
+}) {
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r, i) => (
+        <DateSourceRow key={i} row={r} datasets={datasets} domain={domain}
+                       onChange={(nr) => onChange(rows.map((x, k) => (k === i ? nr : x)))}
+                       onRemove={() => onChange(rows.filter((_, k) => k !== i))} />
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => onChange([...rows, {}])}>
+        <Plus className="mr-1 h-3 w-3" />Add a dataset
+      </Button>
+    </div>
+  )
+}
+
+type Measure = { testcd?: string; value_col?: string; unit_col?: string }
+
+function MeasuresEditor({ rows, columns, onChange }: {
+  rows: Measure[]; columns: string[]; onChange: (r: Measure[]) => void
+}) {
+  const set = (i: number, patch: Measure) =>
+    onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r, i) => (
+        <div key={i} className="flex flex-wrap items-center gap-1.5">
+          <Input className="h-8 w-32 font-mono text-xs" placeholder="TESTCD, e.g. SYSBP"
+                 value={r.testcd ?? ""} onChange={(e) => set(i, { testcd: e.target.value })} />
+          <span className="text-[11px] text-muted-foreground">value from</span>
+          <ColSelect value={r.value_col} columns={columns} width="w-40"
+                     onChange={(v) => set(i, { value_col: v })} />
+          <span className="text-[11px] text-muted-foreground">unit from</span>
+          <ColSelect value={r.unit_col} columns={columns} width="w-40" placeholder="optional"
+                     onChange={(v) => set(i, { unit_col: v })} />
+          <Button type="button" size="icon" variant="ghost" className="h-7 w-7"
+                  onClick={() => onChange(rows.filter((_, k) => k !== i))}>
+            <Trash2 className="h-3 w-3" /></Button>
+        </div>
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => onChange([...rows, {}])}>
+        <Plus className="mr-1 h-3 w-3" />Add a measurement
+      </Button>
+    </div>
+  )
+}
+
+/** Ordered source columns for compute — order matters when joining text. */
+function ColSeqEditor({ cols, columns, onChange }: {
+  cols: string[]; columns: string[]; onChange: (c: string[]) => void
+}) {
+  return (
+    <div className="space-y-1.5">
+      {cols.map((c, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <ColSelect value={c} columns={columns}
+                     onChange={(v) => onChange(cols.map((x, k) => (k === i ? v : x)))} />
+          <Button type="button" size="icon" variant="ghost" className="h-7 w-7"
+                  onClick={() => onChange(cols.filter((_, k) => k !== i))}>
+            <Trash2 className="h-3 w-3" /></Button>
+        </div>
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => onChange([...cols, ""])}>
+        <Plus className="mr-1 h-3 w-3" />{cols.length ? "And then" : "Pick a column"}
+      </Button>
+    </div>
+  )
+}
+
+/** Loads the step's dataset columns once, then hands them to whichever editor needs them. */
+function StepColumns({ domain, dataset, children }: {
+  domain: string; dataset?: string; children: (columns: string[]) => ReactNode
+}) {
+  const columns = useColumns(domain, dataset)
+  if (!dataset) {
+    return <p className="text-[11px] text-muted-foreground">Choose the dataset first — its columns will be offered here.</p>
+  }
+  return <>{children(columns)}</>
 }
 
 export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDone: () => void }) {
@@ -289,8 +571,11 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {(FIELDS[st.op] ?? []).map((f) => {
+                // the join separator only matters when joining text
+                if (f.k === "sep" && st.params.func !== "concat") return null
                 const v = st.params[f.k]
-                const wide = f.t === "json" || f.t === "mergeinputs" || f.t === "joinkeys"
+                const wide = ["mergeinputs", "joinkeys", "conds", "rules", "branches",
+                              "renames", "datesources", "measures"].includes(f.t)
                 let control
                 if (f.t === "ds") {
                   control = (
@@ -329,16 +614,56 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                                       inputs={(st.params.inputs as MergeInput[]) ?? []}
                                       domain={detail.domain}
                                       onChange={(keys) => setParam(i, f.k, keys)} />
-                } else if (f.t === "json") {
-                  control = <Textarea rows={2} className="font-mono text-[11px]"
-                                      placeholder={HINTS[f.k] ?? ""}
-                                      value={v === undefined ? "" : JSON.stringify(v)}
-                                      onChange={(e) => {
-                                        const raw = e.target.value
-                                        if (!raw.trim()) return setParam(i, f.k, undefined)
-                                        try { setParam(i, f.k, JSON.parse(raw)); setError("") }
-                                        catch { setError(`step ${i + 1}, ${f.k}: not valid JSON yet`) }
-                                      }} />
+                } else if (f.t === "choicel") {
+                  control = (
+                    <Select value={(v as string) || "__none"}
+                            onValueChange={(x) => setParam(i, f.k, x === "__none" ? "" : x)}>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="—" /></SelectTrigger>
+                      <SelectContent><SelectItem value="__none" className="text-xs">—</SelectItem>
+                        {(f.opts ?? []).map(([val, lab]) =>
+                          <SelectItem key={val} value={val} className="text-xs">{lab}</SelectItem>)}
+                      </SelectContent></Select>)
+                } else if (f.t === "conds") {
+                  control = (
+                    <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
+                      {(columns) => <CondsEditor conds={(v as Cond[]) ?? []} columns={columns}
+                                                 onChange={(c) => setParam(i, f.k, c)} />}
+                    </StepColumns>)
+                } else if (f.t === "rules") {
+                  control = (
+                    <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
+                      {(columns) => <RulesEditor rules={(v as Rule[]) ?? []} columns={columns}
+                                                 onChange={(r) => setParam(i, f.k, r)} />}
+                    </StepColumns>)
+                } else if (f.t === "branches") {
+                  control = (
+                    <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
+                      {(columns) => <BranchesEditor branches={(v as Branch[]) ?? []} columns={columns}
+                                                    onChange={(b) => setParam(i, f.k, b)} />}
+                    </StepColumns>)
+                } else if (f.t === "renames") {
+                  control = (
+                    <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
+                      {(columns) => <RenamesEditor rows={(v as Array<{ from?: string; to?: string }>) ?? []}
+                                                   columns={columns}
+                                                   onChange={(r) => setParam(i, f.k, r)} />}
+                    </StepColumns>)
+                } else if (f.t === "measures") {
+                  control = (
+                    <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
+                      {(columns) => <MeasuresEditor rows={(v as Measure[]) ?? []} columns={columns}
+                                                    onChange={(r) => setParam(i, f.k, r)} />}
+                    </StepColumns>)
+                } else if (f.t === "colseq") {
+                  control = (
+                    <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
+                      {(columns) => <ColSeqEditor cols={(v as string[]) ?? []} columns={columns}
+                                                  onChange={(c) => setParam(i, f.k, c)} />}
+                    </StepColumns>)
+                } else if (f.t === "datesources") {
+                  control = <DateSourcesEditor rows={(v as Array<{ dataset?: string; date_col?: string }>) ?? []}
+                                               datasets={datasetsFor(i)} domain={detail.domain}
+                                               onChange={(r) => setParam(i, f.k, r)} />
                 } else if (f.t === "list") {
                   control = <Input className="h-8 text-xs" placeholder={f.ph ?? "comma separated"}
                                    value={Array.isArray(v) ? v.join(", ") : ((v as string) ?? "")}
@@ -352,8 +677,6 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                     <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
                       {f.label ?? f.k}</Label>
                     {control}
-                    {f.t === "json" && HINTS[f.k] && (
-                      <p className="text-[10px] text-muted-foreground">{HINTS[f.k]}</p>)}
                   </div>)
               })}
             </div>

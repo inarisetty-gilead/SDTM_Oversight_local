@@ -12,6 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pandas as pd
+
 from sdtm_builder import prep                                  # noqa: E402
 from sdtm_builder.rawio import RawStore                        # noqa: E402
 
@@ -194,6 +196,50 @@ def test_pipeline_output_feeds_a_domain_build():
         assert len(res.dataset) == 12                          # the filter carried through
         assert set(res.dataset["DSCAT"]) == {"PROTOCOL MILESTONE"}
         assert [r["op"] for r in res.prep_reports] == ["stack", "filter"]
+
+
+def _tiny_store(tmp: Path) -> RawStore:
+    raw = tmp / "raw"
+    raw.mkdir()
+    pd.DataFrame({
+        "SUBJID": ["001", "002", "003", "004"],
+        "BRTHDTC": ["1962", "1962-05", "1962-05-14", "unknown"],
+        "CITY": ["OSLO", "", "PARIS", "ROME"],
+        "COUNTRY": ["NOR", "SWE", "FRA", "ITA"],
+    }).to_csv(raw / "dm_raw.csv", index=False)
+    return RawStore.discover(raw)
+
+
+def test_compute_completes_partial_dates_and_joins_text():
+    """The compute step makes temp columns a SAS programmer would make in a data step:
+    a year-only BRTHDTC becomes year-01-01 (never a guess for junk), and concat with a
+    separator behaves like CATX — blank parts are skipped, not doubled."""
+    with tempfile.TemporaryDirectory() as td:
+        store = _tiny_store(Path(td))
+        out = run([
+            {"op": "compute", "name": "with_dates", "params": {
+                "dataset": "dm_raw", "func": "complete_date",
+                "columns": ["BRTHDTC"], "out_col": "BRTHDTC_FULL"}},
+            {"op": "compute", "name": "with_place", "params": {
+                "dataset": "with_dates", "func": "concat",
+                "columns": ["CITY", "COUNTRY"], "out_col": "PLACE", "sep": "-"}},
+        ], store)["with_place"]
+        assert out["BRTHDTC_FULL"].tolist() == ["1962-01-01", "1962-05-01", "1962-05-14", ""]
+        assert out["PLACE"].tolist() == ["OSLO-NOR", "SWE", "PARIS-FRA", "ROME-ITA"]
+        # the source column is untouched — the completed date lives beside it
+        assert out["BRTHDTC"].tolist() == ["1962", "1962-05", "1962-05-14", "unknown"]
+
+
+def test_compute_refuses_a_missing_column():
+    with tempfile.TemporaryDirectory() as td:
+        store = _tiny_store(Path(td))
+        try:
+            run([{"op": "compute", "name": "x", "params": {
+                "dataset": "dm_raw", "func": "year", "columns": ["NOPE"]}}], store)
+        except prep.PrepError as exc:
+            assert "column" in str(exc)
+        else:
+            raise AssertionError("a missing source column must refuse, not guess")
 
 
 if __name__ == "__main__":
