@@ -604,3 +604,37 @@ def run_pipeline(steps: list[dict], store, domain: str = "") -> tuple[dict, list
                         "rows": int(len(out)), "columns": [str(c) for c in out.columns],
                         "extra_outputs": sorted(extra)})
     return ns, reports
+
+
+def retarget_to_output(blocks, store, out_name: str) -> int:
+    """Point the domain's mappings at a prepared dataset wherever its columns match.
+
+    A hand-built pipeline is the reader saying "THIS is the data" — merged, filtered,
+    deduplicated. Leaving every variable reading its spec-named raw form after that means the
+    preparation applied to the records but not to the values, which is never what was meant.
+    So: any mapping whose source column exists in the output is repointed to it. A mapping
+    whose column the output does not carry is left alone and keeps its raw source.
+
+    Runs BEFORE hand edits are applied, so an explicit per-variable choice still wins."""
+    key = store.resolve(out_name)
+    if not key:
+        return 0
+    cols = {upper(c) for c in store.columns(key)}
+    moved = 0
+    for b in blocks:
+        if b.mtype == "assign" and b.column and upper(b.column) in cols \
+                and (store.resolve(b.dataset) or b.dataset) != key:
+            b.dataset = key
+            b.reason = (b.reason + " · " if b.reason else "") + \
+                f"reads the prepared dataset '{key}'"
+            moved += 1
+        # derived recipes that carry their own source dataset follow the same rule
+        a = b.args or {}
+        if s(a.get("dataset")) and (store.resolve(a["dataset"]) or a["dataset"]) != key:
+            referenced = [upper(a.get(f)) for f in
+                          ("date_col", "time_col", "y_col", "m_col", "d_col") if s(a.get(f))]
+            referenced += [upper(c) for c in (a.get("columns") or [])]
+            if referenced and all(c in cols for c in referenced):
+                a["dataset"] = key
+                moved += 1
+    return moved

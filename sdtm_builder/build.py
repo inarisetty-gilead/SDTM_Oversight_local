@@ -159,6 +159,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
     # A forced --base always wins: it is an explicit statement about where records come from.
     # A hand-built pipeline is authoritative: its outputs become datasets the mappings can
     # read by name, and nothing is auto-retargeted behind the user's back.
+    prep_final = ""
     if prep_mode == "custom" and prep_steps:
         try:
             outputs, reports = prep.run_pipeline(prep_steps, store, dom)
@@ -172,6 +173,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
                     f"data preparation produced {len(names)} dataset(s): {', '.join(names)}")
             if not base_override and names:
                 base_override = names[-1]      # the last step is the domain's records by default
+            prep_final = store.resolve(base_override) or (names[-1] if names else "")
         except prep.PrepError as exc:
             result.error = f"data preparation failed: {exc}"
             return result
@@ -254,6 +256,17 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
             f"{repointed} variable(s) were repointed to a better-matching source the spec also lists")
 
     passes.run_all(blocks, store, base_name, dom)
+
+    # The reader's own pipeline overrides the spec's sources: wherever the final prepared
+    # dataset carries a mapping's column, the mapping reads from it. Done after the automatic
+    # passes (so nothing repoints it back) and before hand edits (so those still win).
+    if prep_final:
+        moved = prep.retarget_to_output(blocks, store, prep_final)
+        if moved:
+            result.warnings.append(
+                f"{moved} variable(s) now read from the prepared dataset '{prep_final}' — "
+                "its columns match their sources. A variable it does not carry keeps its "
+                "raw source.")
 
     # Layer 2: variables the spec leaves unmapped get a name-matched source. This is a GUESS
     # and is labelled as one everywhere it appears — see automap.name_match_unmapped.

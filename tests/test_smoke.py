@@ -415,6 +415,47 @@ def test_naming_the_date_column_is_enough():
         assert list(forced.dataset["BRTHDTC"])[0] == "1975"
 
 
+def test_a_custom_pipeline_overrides_the_specs_sources():
+    """The reader's final prepared dataset wins: every mapping whose column it carries reads
+    from it, a column it lacks keeps its raw source, and an explicit hand edit still beats
+    both. This is the 'consider my prep for all the variables' shortcut — one pipeline, no
+    per-variable rewiring."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        spec = load_spec(tmp / "mapping_spec.xlsx")
+        from sdtm_builder.build import build_domain
+
+        steps = [
+            {"op": "merge", "name": "ae_full", "params": {
+                "how": "left", "on": ["USUBJID"],
+                "inputs": [{"dataset": "ae"}, {"dataset": "dm", "columns": ["SEXCD"]}]}},
+            {"op": "filter", "name": "ae_final", "params": {
+                "dataset": "ae_full",
+                "conds": [{"column": "AESEVCD", "operator": "!=", "value": "mild"}]}},
+        ]
+        res = build_domain(spec, RawStore.discover(tmp / "raw"), "AE",
+                           prep_mode="custom", prep_steps=steps)
+        assert res.ok, res.error
+        assert res.base_dataset == "ae_final"
+        assert len(res.dataset) == 3                       # 5 of the 8 raw events are mild
+
+        by = {b.variable: b for b in res.blocks}
+        # sources the output carries were repointed to it — values follow the preparation
+        assert by["AETERM"].dataset == "ae_final"
+        assert "prepared dataset" in by["AETERM"].reason
+        assert by["AESER"].dataset == "ae_final"
+        assert set(res.dataset["AESEV"]) == {"MODERATE", "SEVERE"}   # no 'mild' rows survive
+        assert any("now read from the prepared dataset" in w for w in res.warnings)
+
+        # a hand edit still beats the pipeline: explicit choices always win
+        edited = build_domain(spec, RawStore.discover(tmp / "raw"), "AE",
+                              prep_mode="custom", prep_steps=steps,
+                              edits={"AESER": {"mtype": "assign",
+                                               "dataset": "ae", "column": "AESER"}})
+        eb = next(b for b in edited.blocks if b.variable == "AESER")
+        assert eb.dataset == "ae" and eb.edited
+
+
 def test_the_toc_names_the_studys_domains():
     """The TOC sheet is the spec's own statement of which domains are in this study.
     Active = Y is in; Active = N is out of the default build but stays reviewable."""
