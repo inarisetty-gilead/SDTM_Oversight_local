@@ -35,6 +35,7 @@ export default function App() {
   const [ignoreCase, setIgnoreCase] = useState(false)
   const [ignoreVars, setIgnoreVars] = useState("")
   const [compareSel, setCompareSel] = useState<string[]>([])
+  const [buildSel, setBuildSel] = useState<string[]>([])
   const [appBuild, setAppBuild] = useState<{ version: string; built: string } | null>(null)
   const [stale, setStale] = useState(false)
 
@@ -114,7 +115,7 @@ export default function App() {
   const onBuild = async () => {
     setBusy("build"); setErr((p) => ({ ...p, build: "" })); setView("build")
     try {
-      await api.build({ fmt: opts.fmt, studyid: opts.studyid,
+      await api.build({ fmt: opts.fmt, studyid: opts.studyid, domains: buildSel,
         include_unbuilt: opts.structure === "full", name_match: Number(opts.nameMatch) })
       const j = await waitJob()
       if (j.status === "error") { fail("build", new Error(j.error)); return }
@@ -288,6 +289,8 @@ export default function App() {
               <BuildView build={build} job={job?.kind === "build" ? job : null}
                          err={err.build ?? ""} busy={busy === "build"} ready={!!raw}
                          opts={opts} setOpts={setOpts} onBuild={() => void onBuild()}
+                         specDomains={spec?.domains ?? []} inactive={spec?.inactive ?? []}
+                         selected={buildSel} setSelected={setBuildSel}
                          onOpenDomain={(d) => setView({ domain: d })} />
             )}
             {view === "compare" && (

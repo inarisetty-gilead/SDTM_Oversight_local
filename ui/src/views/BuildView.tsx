@@ -12,11 +12,14 @@ import { Callout, EmptyState, Metric, Metrics, PageHeader, Panel } from "@/compo
 
 export function BuildView({
   build, job, err, busy, opts, setOpts, onBuild, onOpenDomain, ready,
+  specDomains, inactive, selected, setSelected,
 }: {
   build: BuildResults | null; job: JobState | null; err: string; busy: boolean
   opts: { fmt: string; studyid: string; nameMatch: string; structure: string }
   setOpts: (o: Partial<{ fmt: string; studyid: string; nameMatch: string; structure: string }>) => void
   onBuild: () => void; onOpenDomain: (d: string) => void; ready: boolean
+  specDomains: string[]; inactive: string[]
+  selected: string[]; setSelected: (d: string[]) => void
 }) {
   const ok = build?.domains.filter((d) => d.ok) ?? []
   const failed = build?.domains.filter((d) => !d.ok) ?? []
@@ -31,10 +34,43 @@ export function BuildView({
         subtitle="Rebuild every domain the spec defines, from the raw data — independently of the vendor."
         actions={
           <Button onClick={onBuild} disabled={busy || !ready}>
-            <Play className="mr-1.5 h-3.5 w-3.5" />{busy ? "Building…" : "Build all domains"}
+            <Play className="mr-1.5 h-3.5 w-3.5" />
+            {busy ? "Building…"
+              : selected.length === 1 ? `Build ${selected[0]}`
+              : selected.length ? `Build ${selected.length} domains`
+              : "Build all domains"}
           </Button>} />
 
       <div className="space-y-4">
+        {specDomains.length > 0 && (
+          <Panel title="Domains to build"
+                 description="Pick one or a few to work one domain at a time — each build ADDS to what is already built, it never wipes the others. Nothing selected builds every active domain.">
+            <div className="flex flex-wrap items-center gap-1">
+              {specDomains.map((d) => {
+                const on = selected.includes(d)
+                const off = inactive.includes(d)
+                const built = build?.domains.some((x) => x.domain === d && x.ok)
+                return (
+                  <button key={d} type="button"
+                          onClick={() => setSelected(on ? selected.filter((x) => x !== d)
+                                                        : [...selected, d])}
+                          title={off ? "Active = N in the TOC — buildable by selecting it" : ""}
+                          className={`rounded-md border px-2 py-1 text-xs transition
+                            ${on ? "border-primary bg-primary/10 font-medium"
+                                 : selected.length ? "opacity-45 hover:opacity-100" : "hover:bg-accent"}
+                            ${off && !on ? "opacity-35" : ""}`}>
+                    {d}{built && <span className="ml-1 text-emerald-600">✓</span>}
+                  </button>
+                )
+              })}
+              {selected.length > 0 && (
+                <Button variant="link" size="sm" className="h-auto p-0 pl-2 text-[11px]"
+                        onClick={() => setSelected([])}>clear — build all active</Button>
+              )}
+            </div>
+          </Panel>
+        )}
+
         <Panel title="Options">
           <div className="flex flex-wrap items-end gap-4">
             <Field label="Output format">

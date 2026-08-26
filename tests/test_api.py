@@ -432,6 +432,31 @@ def test_compare_can_be_restricted_to_named_domains():
         assert bad.status_code == 400 and "not built" in bad.json()["detail"]
 
 
+def test_building_one_domain_at_a_time_accumulates():
+    """Build DM, then AE: each selected build ADDS to the session. Only a full build (no
+    selection) replaces everything — otherwise working one domain at a time would silently
+    throw away every domain built before it."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        client.post("/api/spec", json={"path": str(tmp / "mapping_spec.xlsx")})
+        client.post("/api/raw", json={"path": str(tmp / "raw")})
+
+        client.post("/api/build", json={"fmt": "none", "domains": ["DM"]})
+        assert _wait(client)["status"] == "done"
+        assert client.get("/api/state").json()["built"] == ["DM"]
+
+        client.post("/api/build", json={"fmt": "none", "domains": ["AE"]})
+        assert _wait(client)["status"] == "done"
+        assert client.get("/api/state").json()["built"] == ["AE", "DM"]
+        # DM is genuinely still there, not just listed
+        assert client.get("/api/domain/DM").json()["rows"] == 6
+
+        client.post("/api/build", json={"fmt": "none"})
+        assert _wait(client)["status"] == "done"
+        assert client.get("/api/state").json()["built"] == ["AE", "DM", "DS", "EG", "VS"]
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

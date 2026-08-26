@@ -646,7 +646,13 @@ def start_build(body: BuildIn):
             prep_pipelines=SESSION.pipelines, edits=SESSION.edits, dedups=SESSION.dedups,
             name_match_threshold=body.name_match,
             include_unbuilt=body.include_unbuilt, progress=tick)
-        SESSION.results = results
+        # Building a chosen subset ACCUMULATES: DM now, AE next, one by one — each build adds
+        # to the session rather than wiping the domains built before it. Only a full build
+        # (no selection) replaces everything.
+        if body.domains:
+            SESSION.results = {**SESSION.results, **results}
+        else:
+            SESSION.results = results
 
         if body.fmt != "none":
             data_dir = out / "datasets"
@@ -665,12 +671,12 @@ def start_build(body: BuildIn):
         meta = {"spec": SESSION.spec_path, "raw": SESSION.raw_path,
                 "timestamp": datetime.now().isoformat(timespec="seconds"),
                 "tool": f"sdtm_builder {__version__}", "studyid": body.studyid,
-                "domains": sorted(results)}
+                "domains": sorted(SESSION.results)}
         SESSION.build_meta = meta
-        jpath, xpath = write_manifest(results, out, meta)
+        jpath, xpath = write_manifest(SESSION.results, out, meta)
         SESSION.outputs["manifest"] = str(xpath)
         SESSION.outputs["manifest_json"] = str(jpath)
-        html = report.write_html_report(results, None, out / "build_report.html", meta)
+        html = report.write_html_report(SESSION.results, None, out / "build_report.html", meta)
         SESSION.outputs["report"] = str(html)
         _save_session()
         _autosave()
