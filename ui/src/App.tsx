@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import {
   Database, FileSpreadsheet, GitCompare, Layers, Settings2, ShieldCheck, Sparkles,
+  FunctionSquare,
 } from "lucide-react"
 import { api } from "@/api"
 import type { BuildResults, CompareRow, JobState, RawInfo, SpecInfo } from "@/api"
@@ -13,9 +14,10 @@ import { SpecView } from "@/views/SpecView"
 import { StudiesView } from "@/views/StudiesView"
 import { BuildView } from "@/views/BuildView"
 import { CompareView } from "@/views/CompareView"
+import { FunctionsView } from "@/views/FunctionsView"
 import { DomainView } from "@/views/DomainView"
 
-type View = "studies" | "setup" | "spec" | "build" | "compare" | { domain: string }
+type View = "studies" | "setup" | "spec" | "build" | "functions" | "compare" | { domain: string }
 
 export default function App() {
   const [view, setView] = useState<View>("studies")
@@ -246,6 +248,9 @@ export default function App() {
                       meta={spec?.inactive?.length
                         ? `${spec.active?.length}/${spec.domains.length}` : undefined}
                       tone="violet" />
+            <RailItem icon={<FunctionSquare className="h-4 w-4" />} label="Functions"
+                      active={view === "functions"} disabled={!spec}
+                      onClick={() => setView("functions")} tone="violet" />
             <RailItem icon={<Database className="h-4 w-4" />} label="Build"
                       active={view === "build"} disabled={!raw} onClick={() => setView("build")}
                       meta={okDomains.length || undefined} tone="violet" />
@@ -292,6 +297,9 @@ export default function App() {
                          specDomains={spec?.domains ?? []} inactive={spec?.inactive ?? []}
                          selected={buildSel} setSelected={setBuildSel}
                          onOpenDomain={(d) => setView({ domain: d })} />
+            )}
+            {view === "functions" && (
+              <FunctionsView specDomains={spec?.domains ?? []} ready={!!spec && !!raw} />
             )}
             {view === "compare" && (
               <CompareView vendorPath={vendorPath} setVendorPath={setVendorPath}

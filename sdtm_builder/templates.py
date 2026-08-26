@@ -119,13 +119,16 @@ REGISTRY: list[Template] = [
 ]
 
 
-def apply_templates(blocks: list[Block], store, domain: str, base_ds: str) -> list[str]:
-    """Fill unmapped variables from the template registry. Returns what was applied."""
+def apply_templates(blocks: list[Block], store, domain: str, base_ds: str,
+                    disabled: set[str] | None = None) -> list[str]:
+    """Fill unmapped variables from the template registry. Returns what was applied.
+    `disabled` names templates the user switched off in the function library."""
     dom = upper(domain)
+    off = {upper(x) for x in (disabled or ())}
     by_var = {b.variable: b for b in blocks}
     applied = []
     for t in REGISTRY:
-        if dom not in t.domains:
+        if dom not in t.domains or t.variable in off:
             continue
         b = by_var.get(t.variable)
         # each template guards its own applicability; the loop only enforces that a hand
@@ -139,4 +142,35 @@ def apply_templates(blocks: list[Block], store, domain: str, base_ds: str) -> li
         b.confidence = 95
         b.reason = f"standard derivation from the {t.source}: {note}"
         applied.append(f"{t.variable} — {note}")
+    return applied
+
+
+def apply_custom_fns(blocks: list[Block], custom_fns: dict | None, domain: str) -> list[str]:
+    """Apply the user's own function library. A custom function outranks a built-in template
+    (the user wrote it deliberately) but never a spec mapping unless it says override — and a
+    hand edit is never touched. Applications are labelled `custom` so they read as the
+    user's rule, not the spec's."""
+    dom = upper(domain)
+    by_var = {b.variable: b for b in blocks}
+    applied = []
+    for fn in (custom_fns or {}).values():
+        if not fn.get("enabled", True):
+            continue
+        doms = [upper(d) for d in (fn.get("domains") or [])]
+        if doms and dom not in doms:
+            continue
+        b = by_var.get(upper(fn.get("variable")))
+        if b is None or b.edited:
+            continue
+        spec_mapped = b.mtype != "unmapped" and b.method_source not in ("template", "custom")
+        if spec_mapped and not fn.get("override"):
+            continue
+        b.mtype, b.recipe = "derived", "pipeline"
+        b.dataset, b.column, b.value = "", "", ""
+        b.args = {"steps": [dict(st) for st in (fn.get("steps") or [])]}
+        b.method_source = "custom"
+        b.confidence = 90
+        b.reason = (f"your function '{fn.get('name')}'"
+                    + (f": {fn['description']}" if fn.get("description") else ""))
+        applied.append(f"{b.variable} — {fn.get('name')}")
     return applied

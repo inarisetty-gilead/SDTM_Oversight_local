@@ -47,6 +47,8 @@ class Study:
     edits: dict = field(default_factory=dict)
     pipelines: dict = field(default_factory=dict)
     draft_pipelines: dict = field(default_factory=dict)   # prep steps still being edited
+    custom_fns: dict = field(default_factory=dict)        # the user's function library
+    template_overrides: dict = field(default_factory=dict)
     dedups: dict = field(default_factory=dict)
     last_run: str = ""
 

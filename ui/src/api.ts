@@ -155,6 +155,18 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+export interface TemplateFn {
+  variable: string; domains: string[]; source: string; describe: string; enabled: boolean
+}
+export interface CustomFn {
+  name: string; description: string; variable: string; domains: string[]
+  steps: Array<Record<string, unknown>>; override: boolean; enabled: boolean
+}
+export interface FnContext {
+  domain: string; datasets: string[]; prepared_datasets: string[]
+  variables: Array<{ variable: string }>
+}
+
 const post = <T,>(p: string, b?: unknown) =>
   call<T>(p, { method: "POST", body: JSON.stringify(b ?? {}) })
 
@@ -206,6 +218,14 @@ export const api = {
   domainSettings: (d: string, b: unknown) => post(`/api/domain/${d}/settings`, b),
   domainDedup: (d: string, b: unknown) => post(`/api/domain/${d}/dedup`, b),
   rebuild: (d: string) => post(`/api/domain/${d}/build`),
+  listFunctions: () => call<{ templates: TemplateFn[]; custom: CustomFn[] }>("/api/functions"),
+  saveFunction: (fn: CustomFn) => post("/api/functions", fn),
+  deleteFunction: (name: string) =>
+    call(`/api/functions/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  toggleTemplate: (variable: string, enabled: boolean) =>
+    post(`/api/functions/template/${variable}`, { enabled }),
+  fnContext: (d: string) => call<FnContext>(`/api/functions/context/${d}`),
+
   columns: (d: string, ds: string) => call<{ dataset: string; columns: string[] }>(
     `/api/domain/${d}/columns/${encodeURIComponent(ds)}`),
 

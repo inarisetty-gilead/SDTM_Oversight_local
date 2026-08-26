@@ -144,6 +144,8 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
                  prep_steps: list[dict] | None = None,
                  edits: dict[str, dict] | None = None,
                  dedup: dict | None = None,
+                 custom_fns: dict | None = None,
+                 templates_off: set[str] | None = None,
                  name_match_threshold: int = automap.DEFAULT_THRESHOLD) -> DomainResult:
     dom = upper(domain)
     rows = spec.rows(dom)
@@ -272,11 +274,20 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
     # a workable mapping — before name matching, because a documented template rule outranks
     # a fuzzy guess. Each application is labelled and editable like any other mapping.
     from . import templates as templates_mod
-    applied = templates_mod.apply_templates(blocks, store, dom, base_name)
+    applied = templates_mod.apply_templates(blocks, store, dom, base_name,
+                                            disabled=templates_off)
     if applied:
         result.warnings.append(
             f"{len(applied)} variable(s) use standard template derivations: "
             + "; ".join(applied))
+
+    # The user's own function library — deliberate rules, so they outrank the built-in
+    # templates and the name-match guesses that follow.
+    custom_applied = templates_mod.apply_custom_fns(blocks, custom_fns, dom)
+    if custom_applied:
+        result.warnings.append(
+            f"{len(custom_applied)} variable(s) filled by your custom functions: "
+            + "; ".join(custom_applied))
 
     # Layer 2: variables the spec leaves unmapped get a name-matched source. This is a GUESS
     # and is labelled as one everywhere it appears — see automap.name_match_unmapped.
@@ -472,6 +483,8 @@ def build_study(spec: Spec, store: RawStore, domains: list[str] | None = None,
                 prep_pipelines: dict[str, list] | None = None,
                 edits: dict[str, dict] | None = None,
                 dedups: dict[str, dict] | None = None,
+                custom_fns: dict | None = None,
+                templates_off: set[str] | None = None,
                 name_match_threshold: int = automap.DEFAULT_THRESHOLD,
                 progress=None) -> dict[str, DomainResult]:
     """Build every requested domain, in dependency order. A domain that fails is recorded
@@ -505,6 +518,7 @@ def build_study(spec: Spec, store: RawStore, domains: list[str] | None = None,
                            prep_override=prep_overrides.get(dom),
                            prep_steps=prep_pipelines.get(dom),
                            edits=edits.get(dom), dedup=dedups.get(dom),
+                           custom_fns=custom_fns, templates_off=templates_off,
                            name_match_threshold=name_match_threshold)
         results[dom] = res
         if res.ok:

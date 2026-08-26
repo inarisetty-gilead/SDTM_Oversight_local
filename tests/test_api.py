@@ -489,6 +489,44 @@ def test_prep_draft_survives_a_refresh():
         assert client.get("/api/domain/DM").json()["pipeline_draft"] is None
 
 
+def test_custom_functions_apply_and_templates_can_be_switched_off():
+    """A saved custom function fills its variable on the next build, labelled `custom`;
+    switching a template derivation off keeps it out of the build entirely."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        client.post("/api/spec", json={"path": str(tmp / "mapping_spec.xlsx")})
+        client.post("/api/raw", json={"path": str(tmp / "raw")})
+
+        lib = client.get("/api/functions").json()
+        assert {t["variable"] for t in lib["templates"]} == {"AGE", "AGEU", "DTHDTC", "DTHFL"}
+
+        # DTHFL: replace the built-in with the user's own rule, a fixed N for everyone
+        r = client.post("/api/functions", json={
+            "name": "death flag default", "description": "N unless recorded",
+            "variable": "DTHFL", "domains": ["DM"], "override": False,
+            "steps": [{"op": "constant", "value": "N"}]})
+        assert r.status_code == 200
+        client.post("/api/functions/template/DTHFL", json={"enabled": False})
+
+        client.post("/api/build", json={"fmt": "none", "domains": ["DM"]})
+        assert _wait(client)["status"] == "done"
+        vars_ = {v["variable"]: v for v in client.get("/api/domain/DM").json()["variables"]}
+        assert vars_["DTHFL"]["method_source"] == "custom"
+        assert "death flag default" in vars_["DTHFL"]["reason"]
+        page = client.get("/api/domain/DM/data").json()
+        names = [c["name"] for c in page["columns"]]
+        col = names.index("DTHFL")
+        assert {row[col] for row in page["rows"]} == {"N"}
+
+        # the function is part of the study: delete it, rebuild, the variable is unmapped again
+        client.delete("/api/functions/death%20flag%20default")
+        client.post("/api/build", json={"fmt": "none", "domains": ["DM"]})
+        assert _wait(client)["status"] == "done"
+        vars_ = {v["variable"]: v for v in client.get("/api/domain/DM").json()["variables"]}
+        assert vars_["DTHFL"]["method_source"] != "custom"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

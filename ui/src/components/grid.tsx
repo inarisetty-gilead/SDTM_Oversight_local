@@ -252,7 +252,7 @@ export function ClientGrid<T>({ cols, rows, dropdownMax = 40, ...rest }: {
 }
 
 /** A coloured chip, the way a grid shows a single-select value. */
-export type ChipTone = "violet" | "green" | "amber" | "red" | "blue" | "slate" | "teal"
+export type ChipTone = "violet" | "green" | "amber" | "red" | "blue" | "slate" | "teal" | "fuchsia"
 
 const TONE: Record<ChipTone, string> = {
   violet: "bg-violet-500/12 text-violet-700 ring-violet-500/25 dark:text-violet-300",
@@ -261,6 +261,7 @@ const TONE: Record<ChipTone, string> = {
   red: "bg-rose-500/12 text-rose-700 ring-rose-500/25 dark:text-rose-300",
   blue: "bg-sky-500/12 text-sky-700 ring-sky-500/25 dark:text-sky-300",
   teal: "bg-teal-500/12 text-teal-700 ring-teal-500/25 dark:text-teal-300",
+  fuchsia: "bg-fuchsia-500/12 text-fuchsia-700 ring-fuchsia-500/25 dark:text-fuchsia-300",
   slate: "bg-muted text-muted-foreground ring-border",
 }
 
@@ -277,6 +278,7 @@ export function Chip({ tone = "slate", children, className }: {
 export const STATUS_TONE: Record<string, ChipTone> = {
   built: "green", dropped: "slate", not_built: "amber", error: "red", empty: "amber",
   spec: "slate", name_match: "amber", edit: "blue", convention: "teal", template: "violet",
+  custom: "fuchsia",
   identical: "green", differences: "red",
 }
 
@@ -295,7 +297,8 @@ export function SegmentBar({ segments, className }: {
   const total = segments.reduce((a, s) => a + s.value, 0) || 1
   const FILL: Record<ChipTone, string> = {
     violet: "bg-violet-500", green: "bg-emerald-500", amber: "bg-amber-500",
-    red: "bg-rose-500", blue: "bg-sky-500", teal: "bg-teal-500", slate: "bg-muted-foreground/35",
+    red: "bg-rose-500", blue: "bg-sky-500", teal: "bg-teal-500",
+    fuchsia: "bg-fuchsia-500", slate: "bg-muted-foreground/35",
   }
   return (
     <div className={cn("flex h-2 overflow-hidden rounded-full bg-muted", className)}>

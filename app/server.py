@@ -23,6 +23,7 @@ from sdtm_builder.build import build_domain, build_study
 from sdtm_builder.compare import compare_study, discover_vendor
 from sdtm_builder.rawio import RawStore
 from sdtm_builder.spec import analyse as analyse_spec, load_spec
+from sdtm_builder import templates as templates_registry
 from sdtm_builder.translate import raw_refs
 from sdtm_builder.ops import SAS_FUNCTIONS
 from sdtm_builder.rawio import norm_key
@@ -58,6 +59,8 @@ class Session:
     dedups: dict = field(default_factory=dict)       # DOMAIN -> {enabled, keys, keep}
     pipelines: dict = field(default_factory=dict)    # DOMAIN -> [prep step, ...]
     draft_pipelines: dict = field(default_factory=dict)  # DOMAIN -> steps being edited, not yet applied
+    custom_fns: dict = field(default_factory=dict)       # name -> user-defined derivation
+    template_overrides: dict = field(default_factory=dict)  # VARIABLE -> {"enabled": False}
     preview_outputs: set = field(default_factory=set)  # prepared datasets from an unapplied run
     study_id: str = ""
     study_name: str = ""
@@ -283,6 +286,8 @@ def _autosave() -> None:
     study.edits = SESSION.edits
     study.pipelines = SESSION.pipelines
     study.draft_pipelines = SESSION.draft_pipelines
+    study.custom_fns = SESSION.custom_fns
+    study.template_overrides = SESSION.template_overrides
     study.dedups = SESSION.dedups
     if SESSION.out_dir:
         study.last_run = SESSION.out_dir
@@ -302,6 +307,8 @@ def _apply_study(study: Study) -> None:
     SESSION.edits = dict(study.edits)
     SESSION.pipelines = dict(study.pipelines)
     SESSION.draft_pipelines = dict(study.draft_pipelines)
+    SESSION.custom_fns = dict(study.custom_fns)
+    SESSION.template_overrides = dict(study.template_overrides)
     SESSION.dedups = dict(study.dedups)
     # reopen the inputs so the reader lands where they left off, not on an empty form
     SESSION.open_problems = []
@@ -647,6 +654,7 @@ def start_build(body: BuildIn):
             prep_overrides={d: o["prep"] for d, o in ovr.items()
                             if o.get("prep_mode") == "custom" and o.get("prep")},
             prep_pipelines=SESSION.pipelines, edits=SESSION.edits, dedups=SESSION.dedups,
+            custom_fns=SESSION.custom_fns, templates_off=_templates_off(),
             name_match_threshold=body.name_match,
             include_unbuilt=body.include_unbuilt, progress=tick)
         # Building a chosen subset ACCUMULATES: DM now, AE next, one by one — each build adds
@@ -987,6 +995,7 @@ def rebuild_domain(domain: str):
                            prep_override=ov.get("prep") if ov.get("prep_mode") == "custom" else None,
                            prep_steps=SESSION.pipelines.get(dom),
                            edits=SESSION.edits.get(dom), dedup=SESSION.dedups.get(dom),
+                           custom_fns=SESSION.custom_fns, templates_off=_templates_off(),
                            name_match_threshold=SESSION.name_match)
         SESSION.results[dom] = res
 
@@ -1158,6 +1167,10 @@ def recipes():
     return {"mtypes": ["assign", "constant", "sequence", "derived", "drop"], "recipes": RECIPES}
 
 
+def _templates_off() -> set:
+    return {v for v, ov in SESSION.template_overrides.items() if ov.get("enabled") is False}
+
+
 def _rebuild_one(dom: str, progress=None) -> "object":
     """Build a single domain with the session's current overrides, prep and edits."""
     ov = SESSION.overrides.get(dom, {})
@@ -1170,6 +1183,7 @@ def _rebuild_one(dom: str, progress=None) -> "object":
         prep_override=ov.get("prep") if ov.get("prep_mode") == "custom" else None,
         prep_steps=SESSION.pipelines.get(dom),
         edits=SESSION.edits.get(dom), dedup=SESSION.dedups.get(dom),
+        custom_fns=SESSION.custom_fns, templates_off=_templates_off(),
         name_match_threshold=SESSION.name_match)
 
 
@@ -1364,6 +1378,84 @@ def dataset_columns(domain: str, dataset: str):
 
 
 # ── the data-preparation pipeline ───────────────────────────────────────────
+# ── the function library: template derivations + the user's own ────────────
+class FnIn(BaseModel):
+    name: str
+    description: str = ""
+    variable: str
+    domains: list[str] = []
+    steps: list[dict] = []
+    override: bool = False
+    enabled: bool = True
+
+
+@app.get("/api/functions")
+def list_functions():
+    """The whole function library: the built-in SAS-template derivations (with their
+    switches) and every function the user has written."""
+    templates = []
+    for t in templates_registry.REGISTRY:
+        ov = SESSION.template_overrides.get(t.variable, {})
+        templates.append({
+            "variable": t.variable, "domains": list(t.domains), "source": t.source,
+            "describe": t.describe, "enabled": ov.get("enabled", True) is not False,
+        })
+    return {"templates": templates,
+            "custom": sorted(SESSION.custom_fns.values(), key=lambda f: f.get("name", ""))}
+
+
+@app.post("/api/functions")
+def save_function(body: FnIn):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "name the function")
+    if not body.variable.strip():
+        raise HTTPException(400, "name the variable the function fills")
+    SESSION.custom_fns[name] = {
+        "name": name, "description": body.description.strip(),
+        "variable": upper(body.variable), "domains": [upper(d) for d in body.domains],
+        "steps": body.steps, "override": body.override, "enabled": body.enabled,
+    }
+    _autosave()
+    return {"ok": True, "count": len(SESSION.custom_fns)}
+
+
+@app.delete("/api/functions/{name}")
+def delete_function(name: str):
+    SESSION.custom_fns.pop(name, None)
+    _autosave()
+    return {"ok": True, "count": len(SESSION.custom_fns)}
+
+
+class TemplateToggle(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/functions/template/{variable}")
+def toggle_template(variable: str, body: TemplateToggle):
+    var = upper(variable)
+    if var not in {t.variable for t in templates_registry.REGISTRY}:
+        raise HTTPException(404, f"no template derivation for {var}")
+    SESSION.template_overrides[var] = {"enabled": body.enabled}
+    _autosave()
+    return {"ok": True}
+
+
+@app.get("/api/functions/context/{domain}")
+def fn_context(domain: str):
+    """Just enough of a domain's shape to drive the function editor's pickers — works
+    before any build: datasets from the raw folder, variables from the spec."""
+    dom = upper(domain)
+    if SESSION.spec is None or dom not in SESSION.spec.domains:
+        raise HTTPException(404, f"{dom} is not in the mapping spec")
+    datasets = sorted(SESSION.store.refs) if SESSION.store else []
+    variables = [{"variable": upper(r.variable)}
+                 for r in SESSION.spec.rows(dom) if r.variable]
+    return {"domain": dom, "datasets": datasets,
+            "prepared_datasets": sorted(SESSION.preview_outputs),
+            "variables": variables}
+
+
 @app.get("/api/prep/ops")
 def prep_ops():
     """The operations the pipeline editor can offer — taken from the engine, so the
