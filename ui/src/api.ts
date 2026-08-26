@@ -162,7 +162,7 @@ export const api = {
   createStudy: (name: string) => post<{ id: string }>("/api/studies", { name }),
   openStudy: (id: string) => post<{ id: string; name: string; spec: string; raw: string
     vendor: string; restored: Record<string, number>
-    built: string[]; compared: string[] }>(`/api/studies/${id}/open`),
+    built: string[]; compared: string[]; problems?: string[] }>(`/api/studies/${id}/open`),
   closeStudy: (id: string) => post(`/api/studies/${id}/close`),
   deleteStudy: (id: string) => call(`/api/studies/${id}`, { method: "DELETE" }),
   buildId: () => call<{ version: string; assets: string[]; built: string }>("/api/build-id"),

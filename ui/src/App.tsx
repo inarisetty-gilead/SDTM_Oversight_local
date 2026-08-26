@@ -140,6 +140,7 @@ export default function App() {
     try {
       const r = await api.openStudy(id)
       setStudy({ id, name: r.name || name })
+      if (r.problems?.length) setErr((p) => ({ ...p, spec: r.problems!.join(" ") }))
       setSpecPath(r.spec ?? ""); setRawPath(r.raw ?? ""); setVendorPath(r.vendor ?? "")
       setSpec(null); setRaw(null); setBuild(null); setCompare(null)
       // land where the reader left off: their last build and comparison, when the server

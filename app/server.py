@@ -60,6 +60,7 @@ class Session:
     preview_outputs: set = field(default_factory=set)  # prepared datasets from an unapplied run
     study_id: str = ""
     study_name: str = ""
+    open_problems: list = field(default_factory=list)
     synthetic: dict | None = None
     spec_sig: tuple = ()                             # (path, mtime, size) of the loaded spec
     raw_sig: tuple = ()                              # (path, file count, newest mtime) of the raw folder
@@ -300,24 +301,40 @@ def _apply_study(study: Study) -> None:
     SESSION.pipelines = dict(study.pipelines)
     SESSION.dedups = dict(study.dedups)
     # reopen the inputs so the reader lands where they left off, not on an empty form
-    if study.spec_path and Path(study.spec_path).exists():
+    SESSION.open_problems = []
+    if study.spec_path:
         try:
             SESSION.spec = load_spec(study.spec_path)
             SESSION.spec_sig = _file_sig(Path(study.spec_path).resolve())
-        except Exception:                                        # noqa: BLE001
+        except Exception as exc:                                 # noqa: BLE001
             SESSION.spec = None
+            SESSION.open_problems.append(f"the mapping spec could not be reopened: {_fs_hint(exc)}")
     if study.raw_path and Path(study.raw_path).is_dir():
         try:
             SESSION.store = RawStore.discover(study.raw_path)
             SESSION.raw_sig = _folder_sig(Path(study.raw_path).resolve())
             from sdtm_builder.synth import read_marker
             SESSION.synthetic = read_marker(study.raw_path)
-        except Exception:                                        # noqa: BLE001
+        except Exception as exc:                                 # noqa: BLE001
             SESSION.store = None
+            SESSION.open_problems.append(f"the raw data could not be reopened: {_fs_hint(exc)}")
     # resume the last build, so reopening a study lands where the reader left it —
     # built domains, comparison and all — rather than on an empty build view
     if study.last_run and Path(study.last_run).is_dir():
         _load_run_cache(Path(study.last_run))
+
+
+def _fs_hint(exc_or_msg) -> str:
+    """Turn a bare filesystem error into something the reader can act on. 'Operation not
+    permitted' on macOS is the OS withholding folder access from this app — nothing is wrong
+    with the file, and no retry will fix it."""
+    msg = str(exc_or_msg)
+    if "Operation not permitted" in msg or "Errno 1]" in msg or "Errno 13]" in msg:
+        return (msg + " — macOS is blocking this app's access to that folder (common for "
+                "Downloads/Desktop/Documents). Either move the file somewhere unrestricted "
+                "such as a folder under ~/Developer, or grant access in System Settings → "
+                "Privacy & Security → Files and Folders.")
+    return msg
 
 
 # ── studies ─────────────────────────────────────────────────────────────────
@@ -350,6 +367,7 @@ def open_study(study_id: str):
     return {"id": study.id, "name": study.name, "spec": study.spec_path,
             "raw": study.raw_path, "vendor": study.vendor_path,
             "restored": study.counts(),
+            "problems": SESSION.open_problems,
             "built": sorted(SESSION.results), "compared": sorted(SESSION.comps)}
 
 
@@ -445,8 +463,8 @@ def _discard_build(reason: str) -> bool:
 def set_spec(body: PathIn):
     try:
         spec = load_spec(os.path.expanduser(body.path))
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(400, str(exc))
+    except (FileNotFoundError, ValueError, PermissionError) as exc:
+        raise HTTPException(400, _fs_hint(exc))
     resolved = Path(os.path.expanduser(body.path)).resolve()
     sig = _file_sig(resolved)
     # Re-reading the SAME, UNCHANGED spec must not throw away a build that took minutes.
@@ -534,8 +552,8 @@ def set_raw(body: PathIn):
         raise HTTPException(400, "load the mapping spec first")
     try:
         store = RawStore.discover(os.path.expanduser(body.path))
-    except NotADirectoryError as exc:
-        raise HTTPException(400, str(exc))
+    except (NotADirectoryError, PermissionError) as exc:
+        raise HTTPException(400, _fs_hint(exc))
     resolved = Path(os.path.expanduser(body.path)).resolve()
     sig = _folder_sig(resolved)
     cleared = False
