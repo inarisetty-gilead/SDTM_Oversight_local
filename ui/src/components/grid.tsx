@@ -207,7 +207,7 @@ export function Chip({ tone = "slate", children, className }: {
 
 export const STATUS_TONE: Record<string, ChipTone> = {
   built: "green", dropped: "slate", not_built: "amber", error: "red", empty: "amber",
-  spec: "slate", name_match: "amber", edit: "blue", convention: "teal",
+  spec: "slate", name_match: "amber", edit: "blue", convention: "teal", template: "violet",
   identical: "green", differences: "red",
 }
 

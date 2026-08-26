@@ -479,6 +479,31 @@ def op_usubjid(ctx, b: Block) -> pd.Series:
         "found to compose it from — add a raw.<dataset>.USUBJID Input Variable to the spec")
 
 
+def op_age(ctx, b: Block) -> pd.Series:
+    """AGE at the reference date, the way the company DM template derives it: the reported
+    age when the study collected one, otherwise whole years from the birth date to the
+    reference date on the anniversary rule (SAS YRDIF 'AGE') — never a fraction, never a
+    birthday-eve off-by-one."""
+    a = b.args or {}
+    age_col = upper(a.get("age_col"))
+    if age_col and age_col in {upper(c) for c in ctx.base.columns}:
+        reported = pd.to_numeric(ctx.base[_find_column(ctx.base, (age_col,))], errors="coerce")
+        if reported.notna().any():
+            return reported.astype("Int64")
+
+    birth_var = upper(a.get("birth_var")) or "BRTHDTC"
+    ref_var = upper(a.get("ref_var")) or "RFSTDTC"
+    for var in (birth_var, ref_var):
+        if var not in ctx.frame.columns:
+            raise OpError(f"AGE needs {var}, which is not built in this domain")
+    birth = pd.to_datetime(str_series(ctx.frame[birth_var]).str[:10], errors="coerce", format="mixed")
+    ref = pd.to_datetime(str_series(ctx.frame[ref_var]).str[:10], errors="coerce", format="mixed")
+    years = ref.dt.year - birth.dt.year
+    before_anniversary = ((ref.dt.month < birth.dt.month)
+                          | ((ref.dt.month == birth.dt.month) & (ref.dt.day < birth.dt.day)))
+    return (years - before_anniversary.astype("int")).astype("Int64")
+
+
 # ── SAS-style functions (recipe='fn') ───────────────────────────────────────
 def op_fn(ctx, b: Block) -> pd.Series:
     a = b.args or {}
@@ -652,6 +677,7 @@ RECIPE_OPS = {
     "copy_var": op_copy_var,
     "sdtm_ref": op_sdtm_ref,
     "studyid": op_studyid,
+    "age": op_age,
     "usubjid": op_usubjid,
     "fn": op_fn,
     "cond": op_cond,

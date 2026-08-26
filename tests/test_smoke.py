@@ -456,6 +456,47 @@ def test_a_custom_pipeline_overrides_the_specs_sources():
         assert eb.dataset == "ae" and eb.edited
 
 
+def test_template_derivations_fill_what_the_spec_leaves_open():
+    """AGE/AGEU/DTHDTC/DTHFL from the company SAS templates: applied only where the spec has
+    no workable mapping and the inputs exist, labelled as template-derived, and outranked by
+    the spec and by hand edits."""
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        spec = load_spec(tmp / "mapping_spec.xlsx")
+        from sdtm_builder.build import build_domain
+
+        r = build_domain(spec, RawStore.discover(tmp / "raw"), "DM")
+        by = {b.variable: b for b in r.blocks}
+        # AGE: whole years, anniversary rule — subject 1 born 1975-03-12, ref 2024-01-15,
+        # so 48 (the 2024 birthday has not happened yet at the reference date)
+        assert by["AGE"].method_source == "template" and by["AGE"].status == "built"
+        assert list(r.dataset["AGE"])[:2] == [48, 61]
+        assert pd.isna(r.dataset["AGE"].iloc[5])              # no birth date collected → no age
+        assert by["AGEU"].method_source == "template"
+        assert set(r.dataset["AGEU"].dropna()) == {"YEARS"}
+        # no death data in this study → DTHFL stays honestly not built, never invented
+        assert by["DTHFL"].status == "not_built"
+
+        # collect a death form and both death variables light up
+        pd.DataFrame({"USUBJID": [r.dataset["USUBJID"].iloc[2]],
+                      "DEATHDAT_RAW": ["2024-05-30"]}).to_csv(tmp / "raw" / "death.csv", index=False)
+        r2 = build_domain(spec, RawStore.discover(tmp / "raw"), "DM")
+        by2 = {b.variable: b for b in r2.blocks}
+        assert by2["DTHFL"].method_source == "template" and by2["DTHFL"].status == "built"
+        flags = list(r2.dataset["DTHFL"])
+        assert flags[2] == "Y" and all(str(f) in ("", "<NA>", "nan", "None") or pd.isna(f)
+                                       for i, f in enumerate(flags) if i != 2)
+
+        # a hand edit outranks the template
+        forced = build_domain(spec, RawStore.discover(tmp / "raw"), "DM",
+                              edits={"AGE": {"mtype": "constant", "value": "99"}})
+        fb = next(b for b in forced.blocks if b.variable == "AGE")
+        assert fb.edited and fb.method_source == "edit"
+        assert set(forced.dataset["AGE"]) == {"99"}
+
+
 def test_the_toc_names_the_studys_domains():
     """The TOC sheet is the spec's own statement of which domains are in this study.
     Active = Y is in; Active = N is out of the default build but stays reviewable."""

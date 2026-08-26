@@ -303,11 +303,12 @@ export function DataView({ domain, datasets, refreshKey }: {
             return n ? <span key={st} className="flex items-center gap-1">
               <Chip tone={STATUS_TONE[st] ?? "slate"}>{st.replace("_", " ")}</Chip>{n}</span> : null
           })}
-          {["name_match", "edit", "convention"].map((ms) => {
+          {["name_match", "edit", "convention", "template"].map((ms) => {
             const n = page.columns.filter((c) => c.method_source === ms).length
             return n ? <span key={ms} className="flex items-center gap-1">
               <Chip tone={STATUS_TONE[ms] ?? "slate"}>
-                {ms === "name_match" ? "name match" : ms === "edit" ? "hand edit" : "convention"}
+                {ms === "name_match" ? "name match" : ms === "edit" ? "hand edit"
+                  : ms === "template" ? "template" : "convention"}
               </Chip>{n}</span> : null
           })}
           <span className="ml-auto">Drag a column edge to resize · click a header to sort</span>

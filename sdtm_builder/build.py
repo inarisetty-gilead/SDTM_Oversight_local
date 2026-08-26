@@ -268,6 +268,16 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
                 "its columns match their sources. A variable it does not carry keeps its "
                 "raw source.")
 
+    # Standard derivations from the company SAS templates fill what the spec leaves without
+    # a workable mapping — before name matching, because a documented template rule outranks
+    # a fuzzy guess. Each application is labelled and editable like any other mapping.
+    from . import templates as templates_mod
+    applied = templates_mod.apply_templates(blocks, store, dom, base_name)
+    if applied:
+        result.warnings.append(
+            f"{len(applied)} variable(s) use standard template derivations: "
+            + "; ".join(applied))
+
     # Layer 2: variables the spec leaves unmapped get a name-matched source. This is a GUESS
     # and is labelled as one everywhere it appears — see automap.name_match_unmapped.
     guessed = automap.name_match_unmapped(blocks, store, base_name,
@@ -288,7 +298,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
 
     # --SEQ is numbered after sorting; --LOBXFL depends on columns derived later in spec order
     seq_blocks = [b for b in blocks if b.mtype == "sequence"]
-    late_blocks = [b for b in blocks if b.recipe == "lobxfl"]
+    late_blocks = [b for b in blocks if b.recipe in ("lobxfl", "age")]
     main_blocks = [b for b in blocks if b not in seq_blocks and b not in late_blocks]
 
     for b in main_blocks + late_blocks:

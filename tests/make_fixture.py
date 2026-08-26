@@ -132,6 +132,9 @@ dm_spec = [
     # no Input Variables and no rule — only a name that resembles a collected column
     row("ETHNIC", "Ethnicity", "", role="Qualifier", ds="DM"),
     row("COUNTRY", "Country", "DROP", role="Qualifier", ds="DM"),
+    row("AGE", "Age", "", rule="Derive AGE per the SAP.", role="Qualifier",
+        origin="Derived", ds="DM"),
+    row("AGEU", "Age Units", "", role="Qualifier", origin="Derived", ds="DM"),
     row("DTHFL", "Subject Death Flag", "", rule="Set to Y if the subject died on study.",
         role="Qualifier", origin="Derived", ds="DM"),
 ]

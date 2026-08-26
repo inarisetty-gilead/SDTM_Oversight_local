@@ -449,6 +449,29 @@ and joining on another looks right at both steps and matches nothing — so when
 be joined at all, it is named and skipped, and if none can be joined the variable reports the
 reason instead of returning a blank column.
 
+## Standard template derivations
+
+The company SAS templates (SDTM-Designer's `dm-merge` and siblings) carry derivations that
+belong to every study — so they live here as a library, applied automatically where they fit:
+
+| Variable | Derivation |
+| --- | --- |
+| `AGE` | the reported age when collected, else whole years from `BRTHDTC` to `RFSTDTC` on the anniversary rule |
+| `AGEU` | the collected unit, else `YEARS` |
+| `DTHDTC` | the collected death date, found in whichever form carries it |
+| `DTHFL` | `Y` when a death date exists, blank otherwise |
+
+Three rules govern them. They fill **only** variables the spec leaves without a workable
+mapping — the spec, and a hand edit, always outrank a template. They apply **only** when
+their inputs exist in this study — no death form means `DTHFL` stays honestly not built,
+never invented. And every application is **labelled** — a violet `template` chip, a reason
+naming the template and the logic — and editable like any other mapping, with `AGE` opening
+as structured fields (reported-age column, birth variable, reference variable).
+
+The reference-date logic those templates also carry (`RFSTDTC` from first dose, `RFENDTC`
+from last visit, `RFICDTC` from consent) is already generalised as the automatic
+earliest/latest-date derivations.
+
 ## Why a variable is not built — and how to raise coverage
 
 Coverage is set by what the mapping spec actually states, not by the engine. After a build,

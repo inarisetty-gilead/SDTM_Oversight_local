@@ -1123,6 +1123,17 @@ RECIPES = [
           "help": '[{"op":"assign","dataset":"ae","column":"AETERM"}, '
                   '{"op":"fn","args":{"fn":"upcase","sources":[{"kind":"self"}]}}]'},
      ]},
+    {"id": "age",
+     "label": "Age at the reference date",
+     "desc": "The company DM template's AGE: the reported age when the study collected one, "
+             "otherwise whole years from the birth date to the reference start date on the "
+             "anniversary rule — never a fraction, never a birthday-eve off-by-one.",
+     "fields": [
+         {"k": "age_col", "t": "column", "label": "Reported age column",
+          "help": "used as-is when present, e.g. AGE_REP; leave empty to always derive"},
+         {"k": "birth_var", "t": "sdtmvar", "label": "Birth date variable", "help": "BRTHDTC"},
+         {"k": "ref_var", "t": "sdtmvar", "label": "Reference date variable", "help": "RFSTDTC"},
+     ]},
     {"id": "studyid", "label": "Study identifier", "hidden": True,
      "desc": "Taken from the STUDYID override, or whichever spelling of a study key the raw "
              "data carries.", "fields": []},

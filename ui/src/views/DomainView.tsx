@@ -216,7 +216,8 @@ export function DomainView({ domain, onBack, onChanged }: {
                   cell: (v) => <Chip tone={STATUS_TONE[v.method_source] ?? "slate"}>
                     {v.method_source === "name_match" ? `name match ${v.confidence}%`
                       : v.method_source === "edit" ? "hand edit"
-                      : v.method_source === "convention" ? "convention" : "spec"}</Chip> },
+                      : v.method_source === "convention" ? "convention"
+                      : v.method_source === "template" ? "template" : "spec"}</Chip> },
                 { id: "h", head: "How it was built", kind: "calc", width: 180, cell: (v) => v.how },
                 { id: "src", head: "Source", kind: "code", width: 170,
                   cell: (v) => v.source ? <Mono>{v.source}</Mono>
