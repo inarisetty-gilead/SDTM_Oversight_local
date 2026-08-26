@@ -40,19 +40,36 @@ class Template:
 
 
 def _apply_age(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    # The one template that also UPGRADES a spec mapping: a spec that assigns AGE from a
+    # reported-age column has named the template's first branch and silently dropped its
+    # second — every uncollected age would stay blank. Keep the spec's column as primary
+    # and add the derivation underneath it, exactly as the SAS template does.
+    spec_assigned = (b.mtype == "assign" and upper(b.column) in REPORTED_AGE)
+    if not (b.mtype == "unmapped" or spec_assigned):
+        return None
     has_birth = "BRTHDTC" in by_var and by_var["BRTHDTC"].mtype not in ("drop", "unmapped")
     has_ref = "RFSTDTC" in by_var and by_var["RFSTDTC"].mtype not in ("drop", "unmapped")
     base_cols = {upper(c) for c in store.columns(store.resolve(base_ds) or "")}
-    reported = next((c for c in REPORTED_AGE if c in base_cols), "")
+    reported = (upper(b.column) if spec_assigned
+                else next((c for c in REPORTED_AGE if c in base_cols), ""))
+    reported_ds = b.dataset if spec_assigned else ""
     if not (reported or (has_birth and has_ref)):
         return None
     b.mtype, b.recipe = "derived", "age"
-    b.args = {"age_col": reported, "birth_var": "BRTHDTC", "ref_var": "RFSTDTC"}
-    return ("the reported age" + (f" ({reported})" if reported else "")
-            if reported else "whole years from BRTHDTC to RFSTDTC, anniversary rule")
+    b.dataset, b.column = "", ""
+    b.args = {"age_col": reported, "age_dataset": reported_ds,
+              "birth_var": "BRTHDTC", "ref_var": "RFSTDTC"}
+    if reported and has_birth and has_ref:
+        return (f"the reported age ({reported}), with whole years BRTHDTC→RFSTDTC filling "
+                "the records where none was collected")
+    if reported:
+        return f"the reported age ({reported})"
+    return "whole years from BRTHDTC to RFSTDTC, anniversary rule"
 
 
 def _apply_ageu(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    if b.mtype != "unmapped":
+        return None
     age = by_var.get("AGE")
     if age is None or age.mtype in ("drop", "unmapped"):
         return None
@@ -66,6 +83,8 @@ def _apply_ageu(b: Block, by_var: dict, store, base_ds: str) -> str | None:
 
 
 def _apply_dthdtc(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    if b.mtype != "unmapped":
+        return None
     found = _find_source(store, DEATH_DATE)
     if not found:
         return None
@@ -75,6 +94,8 @@ def _apply_dthdtc(b: Block, by_var: dict, store, base_ds: str) -> str | None:
 
 
 def _apply_dthfl(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    if b.mtype != "unmapped":
+        return None
     found = _find_source(store, DEATH_DATE)
     if not found:
         return None
@@ -107,9 +128,9 @@ def apply_templates(blocks: list[Block], store, domain: str, base_ds: str) -> li
         if dom not in t.domains:
             continue
         b = by_var.get(t.variable)
-        # only a variable the spec leaves without a workable mapping — the spec and the
-        # reader always outrank a template
-        if b is None or b.edited or b.mtype not in ("unmapped",):
+        # each template guards its own applicability; the loop only enforces that a hand
+        # edit is never touched
+        if b is None or b.edited:
             continue
         note = t.apply(b, by_var, store, base_ds)
         if note is None:

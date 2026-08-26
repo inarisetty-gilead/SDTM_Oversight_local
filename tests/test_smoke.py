@@ -469,11 +469,14 @@ def test_template_derivations_fill_what_the_spec_leaves_open():
 
         r = build_domain(spec, RawStore.discover(tmp / "raw"), "DM")
         by = {b.variable: b for b in r.blocks}
-        # AGE: whole years, anniversary rule — subject 1 born 1975-03-12, ref 2024-01-15,
-        # so 48 (the 2024 birthday has not happened yet at the reference date)
-        assert by["AGE"].method_source == "template" and by["AGE"].status == "built"
-        assert list(r.dataset["AGE"])[:2] == [48, 61]
-        assert pd.isna(r.dataset["AGE"].iloc[5])              # no birth date collected → no age
+        # The spec assigns AGE from AGE_REP — the template UPGRADES that to reported-first
+        # with the derivation underneath, exactly as the SAS template behaves:
+        assert by["AGE"].method_source == "template" and by["AGE"].recipe == "age"
+        assert by["AGE"].args["age_col"] == "AGE_REP"
+        ages = list(r.dataset["AGE"])
+        assert ages[2] == 30 and ages[3] == 29                # reported values used as-is
+        assert ages[0] == 48 and ages[1] == 61                # gaps filled by BRTHDTC→RFSTDTC
+        assert pd.isna(r.dataset["AGE"].iloc[5])              # neither reported nor derivable
         assert by["AGEU"].method_source == "template"
         assert set(r.dataset["AGEU"].dropna()) == {"YEARS"}
         # no death data in this study → DTHFL stays honestly not built, never invented

@@ -480,28 +480,45 @@ def op_usubjid(ctx, b: Block) -> pd.Series:
 
 
 def op_age(ctx, b: Block) -> pd.Series:
-    """AGE at the reference date, the way the company DM template derives it: the reported
-    age when the study collected one, otherwise whole years from the birth date to the
-    reference date on the anniversary rule (SAS YRDIF 'AGE') — never a fraction, never a
-    birthday-eve off-by-one."""
+    """AGE as the company DM template derives it: the reported age wherever the study
+    collected one, and whole years from birth to the reference date for the records where it
+    did not — anniversary rule (SAS YRDIF 'AGE'), never a fraction. A plain copy of the
+    reported column would leave every uncollected age blank; deriving everything would ignore
+    what was actually reported. The template does both, so this does both."""
     a = b.args or {}
-    age_col = upper(a.get("age_col"))
-    if age_col and age_col in {upper(c) for c in ctx.base.columns}:
-        reported = pd.to_numeric(ctx.base[_find_column(ctx.base, (age_col,))], errors="coerce")
-        if reported.notna().any():
-            return reported.astype("Int64")
 
+    reported = None
+    age_col = upper(a.get("age_col"))
+    if age_col:
+        ds = s(a.get("age_dataset"))
+        try:
+            src = (source_series(ctx, ds, age_col) if ds
+                   else ctx.base[_find_column(ctx.base, (age_col,))])
+            reported = pd.to_numeric(src, errors="coerce")
+        except (OpError, KeyError):
+            reported = None
+
+    derived = None
     birth_var = upper(a.get("birth_var")) or "BRTHDTC"
     ref_var = upper(a.get("ref_var")) or "RFSTDTC"
-    for var in (birth_var, ref_var):
-        if var not in ctx.frame.columns:
-            raise OpError(f"AGE needs {var}, which is not built in this domain")
-    birth = pd.to_datetime(str_series(ctx.frame[birth_var]).str[:10], errors="coerce", format="mixed")
-    ref = pd.to_datetime(str_series(ctx.frame[ref_var]).str[:10], errors="coerce", format="mixed")
-    years = ref.dt.year - birth.dt.year
-    before_anniversary = ((ref.dt.month < birth.dt.month)
-                          | ((ref.dt.month == birth.dt.month) & (ref.dt.day < birth.dt.day)))
-    return (years - before_anniversary.astype("int")).astype("Int64")
+    if birth_var in ctx.frame.columns and ref_var in ctx.frame.columns:
+        birth = pd.to_datetime(str_series(ctx.frame[birth_var]).str[:10],
+                               errors="coerce", format="mixed")
+        ref = pd.to_datetime(str_series(ctx.frame[ref_var]).str[:10],
+                             errors="coerce", format="mixed")
+        years = ref.dt.year - birth.dt.year
+        before = ((ref.dt.month < birth.dt.month)
+                  | ((ref.dt.month == birth.dt.month) & (ref.dt.day < birth.dt.day)))
+        derived = (years - before.astype("int")).astype("Int64")
+
+    if reported is not None and derived is not None:
+        return reported.astype("Int64").combine_first(derived)
+    if reported is not None:
+        return reported.astype("Int64")
+    if derived is not None:
+        return derived
+    raise OpError(
+        f"AGE needs a reported age column, or {birth_var} and {ref_var} built in this domain")
 
 
 # ── SAS-style functions (recipe='fn') ───────────────────────────────────────

@@ -28,6 +28,8 @@ dm = pd.DataFrame({
     # collected, but the mapping spec never names it as an Input Variable
     "ETHNICCD": ["NOT HISPANIC OR LATINO", "HISPANIC OR LATINO", "NOT HISPANIC OR LATINO",
                  "NOT HISPANIC OR LATINO", "HISPANIC OR LATINO", "NOT REPORTED"],
+    # reported age, with gaps — the template derivation fills what was not collected
+    "AGE_REP": ["", "", "30", "29", "", ""],
     "ARMCD": ["TRT", "PBO", "TRT", "PBO", "TRT", "PBO"],
     "RFSTDAT": ["2024-01-15", "2024-01-22", "2024-02-01", "2024-02-12", "2024-03-04", "2024-03-11"],
 })
@@ -132,8 +134,8 @@ dm_spec = [
     # no Input Variables and no rule — only a name that resembles a collected column
     row("ETHNIC", "Ethnicity", "", role="Qualifier", ds="DM"),
     row("COUNTRY", "Country", "DROP", role="Qualifier", ds="DM"),
-    row("AGE", "Age", "", rule="Derive AGE per the SAP.", role="Qualifier",
-        origin="Derived", ds="DM"),
+    row("AGE", "Age", "ASSIGN", iv="raw.dm.AGE_REP", rule="Derive AGE per the SAP.",
+        role="Qualifier", origin="Derived", ds="DM"),
     row("AGEU", "Age Units", "", role="Qualifier", origin="Derived", ds="DM"),
     row("DTHFL", "Subject Death Flag", "", rule="Set to Y if the subject died on study.",
         role="Qualifier", origin="Derived", ds="DM"),
