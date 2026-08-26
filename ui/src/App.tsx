@@ -34,6 +34,7 @@ export default function App() {
   const [opts, setOptsState] = useState({ fmt: "xpt", studyid: "", nameMatch: "70", structure: "full" })
   const [ignoreCase, setIgnoreCase] = useState(false)
   const [ignoreVars, setIgnoreVars] = useState("")
+  const [compareSel, setCompareSel] = useState<string[]>([])
   const [appBuild, setAppBuild] = useState<{ version: string; built: string } | null>(null)
   const [stale, setStale] = useState(false)
 
@@ -123,7 +124,7 @@ export default function App() {
   const onCompare = async () => {
     setBusy("compare"); setErr((p) => ({ ...p, compare: "" }))
     try {
-      await api.compare({ path: vendorPath, ignore_case: ignoreCase,
+      await api.compare({ path: vendorPath, ignore_case: ignoreCase, domains: compareSel,
         ignore_vars: ignoreVars.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean) })
       const j = await waitJob()
       if (j.status === "error") { fail("compare", new Error(j.error)); return }
@@ -295,6 +296,8 @@ export default function App() {
                            ready={!!build?.domains.length} synthetic={!!build?.synthetic}
                            ignoreCase={ignoreCase} setIgnoreCase={setIgnoreCase}
                            ignoreVars={ignoreVars} setIgnoreVars={setIgnoreVars}
+                           builtDomains={okDomains.map((d) => d.domain)}
+                           selected={compareSel} setSelected={setCompareSel}
                            onCompare={() => void onCompare()}
                            onBrowse={() => setPicker({ mode: "dir", target: "vendor" })} />
             )}

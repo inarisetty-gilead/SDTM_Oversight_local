@@ -128,6 +128,7 @@ class OverrideIn(BaseModel):
 
 class CompareIn(BaseModel):
     path: str
+    domains: list[str] = []          # empty = every built domain
     ignore_case: bool = False
     numeric_tolerance: float = 1e-9
     ignore_vars: list[str] = []
@@ -1409,13 +1410,25 @@ def start_compare(body: CompareIn):
     keys = {d: o["keys"] for d, o in SESSION.overrides.items() if o.get("keys")}
     keys.update({upper(k): v for k, v in body.keys.items()})
 
+    # a restricted comparison covers exactly the named domains — and their SUPP-- —
+    # with no "delivered but not built" noise from everything else in the vendor folder
+    wanted = {upper(d) for d in body.domains if s(d)}
+    missing = sorted(wanted - set(SESSION.results))
+    if missing:
+        raise HTTPException(400, f"not built in this session: {', '.join(missing)}")
+    targets = ({k: v for k, v in SESSION.results.items() if k in wanted}
+               if wanted else SESSION.results)
+
     def work(progress):
         progress(f"reading {len(found)} vendor dataset(s)", step=1, total=3)
-        comps = compare_study(SESSION.results, vendor,
+        comps = compare_study(targets, vendor,
                               keys=keys,
                               ignore_case=body.ignore_case,
                               numeric_tol=body.numeric_tolerance,
                               ignore_vars=set(body.ignore_vars))
+        if wanted:
+            allowed = wanted | {f"SUPP{d}" for d in wanted}
+            comps = {k: v for k, v in comps.items() if k in allowed}
         SESSION.comps = comps
         out = Path(SESSION.out_dir)
         progress("writing the comparison workbook", step=2)

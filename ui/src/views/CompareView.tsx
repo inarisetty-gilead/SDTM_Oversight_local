@@ -16,6 +16,7 @@ const structural = (r: CompareRow) =>
 export function CompareView({
   vendorPath, setVendorPath, rows, job, err, busy, ready, synthetic,
   ignoreCase, setIgnoreCase, ignoreVars, setIgnoreVars, onCompare, onBrowse,
+  builtDomains, selected, setSelected,
 }: {
   vendorPath: string; setVendorPath: (v: string) => void
   rows: CompareRow[] | null; job: JobState | null; err: string; busy: boolean; ready: boolean
@@ -23,6 +24,8 @@ export function CompareView({
   ignoreCase: boolean; setIgnoreCase: (v: boolean) => void
   ignoreVars: string; setIgnoreVars: (v: string) => void
   onCompare: () => void; onBrowse: () => void
+  builtDomains: string[]
+  selected: string[]; setSelected: (d: string[]) => void
 }) {
   const identical = rows?.filter((r) => r.status === "identical").length ?? 0
   const differing = rows?.filter((r) => r.status === "differences" && !structural(r)).length ?? 0
@@ -47,6 +50,38 @@ export function CompareView({
               <Play className="mr-1.5 h-3.5 w-3.5" />{busy ? "Comparing…" : "Run comparison"}
             </Button>
           </div>
+          {builtDomains.length > 0 && (
+            <div className="mt-4 space-y-1.5">
+              <div className="flex items-baseline gap-2">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  Domains to compare</span>
+                <Button variant="link" size="sm" className="h-auto p-0 text-[11px]"
+                        onClick={() => setSelected([])}>
+                  {selected.length ? "compare all instead" : "all built domains"}
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {builtDomains.map((d) => {
+                  const on = selected.includes(d)
+                  return (
+                    <button key={d} type="button"
+                            onClick={() => setSelected(on
+                              ? selected.filter((x) => x !== d) : [...selected, d])}
+                            className={`rounded-md border px-2 py-1 text-xs transition
+                              ${on ? "border-primary bg-primary/10 font-medium"
+                                   : selected.length ? "opacity-45 hover:opacity-100" : "hover:bg-accent"}`}>
+                      {d}
+                    </button>
+                  )
+                })}
+              </div>
+              {selected.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  Only {selected.join(", ")} (and their SUPP--) will be compared.
+                </p>
+              )}
+            </div>
+          )}
           <div className="mt-4 flex flex-wrap items-end gap-4">
             <label className="flex items-center gap-2 pb-2 text-xs">
               <Checkbox checked={ignoreCase} onCheckedChange={(v) => setIgnoreCase(!!v)} />

@@ -381,6 +381,37 @@ def test_reopening_a_study_resumes_its_last_build():
         assert stale["built"] == []
 
 
+def test_compare_can_be_restricted_to_named_domains():
+    """Compare only DM: the result covers DM (and its SUPP) and nothing else — no
+    'delivered but not built' noise from the rest of the vendor folder."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        _load_and_build(client, tmp)
+
+        # unrestricted covers everything, including vendor-only rows
+        client.post("/api/compare", json={"path": str(tmp / "vendor")})
+        _wait(client)
+        full = {d["domain"] for d in client.get("/api/compare/results").json()["domains"]}
+        assert {"DM", "AE", "VS", "SUPPAE"} <= full
+
+        # restricted to DM covers exactly DM
+        client.post("/api/compare", json={"path": str(tmp / "vendor"), "domains": ["DM"]})
+        _wait(client)
+        only = {d["domain"] for d in client.get("/api/compare/results").json()["domains"]}
+        assert only == {"DM"}
+
+        # AE brings its SUPP along
+        client.post("/api/compare", json={"path": str(tmp / "vendor"), "domains": ["AE"]})
+        _wait(client)
+        ae = {d["domain"] for d in client.get("/api/compare/results").json()["domains"]}
+        assert ae == {"AE", "SUPPAE"}
+
+        # naming a domain that was not built is a clear error, not an empty result
+        bad = client.post("/api/compare", json={"path": str(tmp / "vendor"), "domains": ["ZZ"]})
+        assert bad.status_code == 400 and "not built" in bad.json()["detail"]
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
