@@ -500,6 +500,36 @@ def test_template_derivations_fill_what_the_spec_leaves_open():
         assert set(forced.dataset["AGE"]) == {"99"}
 
 
+def test_age_computes_from_partial_birth_dates():
+    """A year-only or year-month birth date still yields an age: the missing parts impute to
+    01, the earliest day of the known period — whole-year rounding makes that the standard
+    convention, and it is explicit here rather than left to whatever a parser assumes."""
+    import pandas as pd
+    from sdtm_builder.blocks import Block
+    from sdtm_builder.build import BuildContext
+    from sdtm_builder.ops import op_age
+    from sdtm_builder.rawio import RawStore
+
+    with tempfile.TemporaryDirectory() as td:
+        raw = Path(td)
+        pd.DataFrame({"USUBJID": ["A", "B", "C", "D", "E"]}).to_csv(raw / "dm.csv", index=False)
+        store = RawStore.discover(raw)
+        base = store.get("dm")
+        frame = pd.DataFrame({
+            "BRTHDTC": ["1962", "1962-11", "1962-11-15", "", "1962-13"],
+            "RFSTDTC": ["2024-06-01"] * 5,
+        }, index=base.index)
+        ctx = BuildContext(domain="DM", store=store, base=base, frame=frame,
+                           built={}, codelists={})
+        got = op_age(ctx, Block(variable="AGE", domain="DM", mtype="derived", recipe="age",
+                                args={"birth_var": "BRTHDTC", "ref_var": "RFSTDTC"}))
+        assert got.iloc[0] == 62          # 1962 → 1962-01-01, anniversary passed by June
+        assert got.iloc[1] == 61          # 1962-11 → 1962-11-01, November not yet reached
+        assert got.iloc[2] == 61          # a full date behaves as before
+        assert pd.isna(got.iloc[3])       # nothing collected → no age, never a guess
+        assert pd.isna(got.iloc[4])       # month 13 is not a date — refuse, don't invent
+
+
 def test_the_toc_names_the_studys_domains():
     """The TOC sheet is the spec's own statement of which domains are in this study.
     Active = Y is in; Active = N is out of the default build but stays reviewable."""

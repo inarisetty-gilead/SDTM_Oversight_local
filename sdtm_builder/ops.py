@@ -479,6 +479,18 @@ def op_usubjid(ctx, b: Block) -> pd.Series:
         "found to compose it from — add a raw.<dataset>.USUBJID Input Variable to the spec")
 
 
+def _impute_partial_date(series) -> pd.Series:
+    """A partial ISO date completed for arithmetic: a bare year becomes 01 January, a
+    year-month becomes the 1st. Deliberate and explicit — AGE is whole years anyway, so
+    imputing the earliest day of the known period is the standard convention, and relying on
+    whatever a parser happens to assume is how a library upgrade changes ages silently."""
+    text = series.astype("string").str.strip()
+    m = text.str.extract(r"^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?")
+    completed = (m[0] + "-" + m[1].fillna("1").str.zfill(2)
+                 + "-" + m[2].fillna("1").str.zfill(2))
+    return pd.to_datetime(completed, errors="coerce", format="%Y-%m-%d")
+
+
 def op_age(ctx, b: Block) -> pd.Series:
     """AGE as the company DM template derives it: the reported age wherever the study
     collected one, and whole years from birth to the reference date for the records where it
@@ -502,10 +514,8 @@ def op_age(ctx, b: Block) -> pd.Series:
     birth_var = upper(a.get("birth_var")) or "BRTHDTC"
     ref_var = upper(a.get("ref_var")) or "RFSTDTC"
     if birth_var in ctx.frame.columns and ref_var in ctx.frame.columns:
-        birth = pd.to_datetime(str_series(ctx.frame[birth_var]).str[:10],
-                               errors="coerce", format="mixed")
-        ref = pd.to_datetime(str_series(ctx.frame[ref_var]).str[:10],
-                             errors="coerce", format="mixed")
+        birth = _impute_partial_date(ctx.frame[birth_var])
+        ref = _impute_partial_date(ctx.frame[ref_var])
         years = ref.dt.year - birth.dt.year
         before = ((ref.dt.month < birth.dt.month)
                   | ((ref.dt.month == birth.dt.month) & (ref.dt.day < birth.dt.day)))
