@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdtm-oversight"
+version = "0.1.0"
+description = "Local SDTM builder and vendor-delivery checker for study oversight"
+requires-python = ">=3.10"
+# Upper bounds are deliberate. This tool is used to make findings that may be revisited years
+# later, and a library upgrade can change a rounding edge or a parsing default. `verify` will
+# tell you the environment drifted; the bounds stop it drifting by accident.
+dependencies = [
+    "pandas>=2.0,<4",
+    "numpy>=1.24,<3",
+    "openpyxl>=3.1,<4",
+    "pyreadstat>=1.2,<2",
+    "fastapi>=0.110,<1",
+    "uvicorn[standard]>=0.27,<1",
+]
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=14"]
+
+[project.scripts]
+sdtmbuild = "sdtm_builder.cli:main"
+sdtm-oversight = "app.server:main"
+
+[tool.setuptools.packages.find]
+include = ["sdtm_builder*", "app*"]
+
+[tool.setuptools.package-data]
+app = ["static/*"]

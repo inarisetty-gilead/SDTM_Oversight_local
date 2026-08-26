@@ -1,0 +1,18 @@
+# environments and caches — rebuilt by run.command / npm install
+.venv*/
+__pycache__/
+*.pyc
+ui/node_modules/
+ui/dist/
+
+# work product: study data and build outputs never belong in a code repository.
+# runs/ holds built datasets (real subject data once you point at a live study);
+# studies/ holds your mapping judgements for each study.
+runs/
+studies/
+fixture/
+*.egg-info/
+.DS_Store
+.session.pkl
+
+# app/static_dist IS committed: the built interface, so the app runs without Node.

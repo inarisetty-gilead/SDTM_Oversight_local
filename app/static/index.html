@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SDTM Oversight</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+</head>
+<body>
+<div class="shell">
+
+  <header class="top">
+    <h1>SDTM Oversight</h1>
+    <span class="badge" id="ver">local</span>
+    <span style="flex:1"></span>
+    <button class="link" id="btn-reset">start over</button>
+  </header>
+  <p class="tagline">Rebuild the SDTM from the mapping spec and the raw data, then check the
+    vendor's delivery against it. Runs entirely on this machine — no network, no AI.</p>
+
+  <!-- 1 · mapping spec -->
+  <section class="step" id="s-spec">
+    <header><span class="num">1</span><h2>Mapping specification</h2></header>
+    <div class="body">
+      <p class="hint">The SDTM Designer spec workbook — one sheet per domain.</p>
+      <div class="pathrow">
+        <input type="text" id="spec-path" placeholder="/path/to/MAPPING_SPEC.xlsx" spellcheck="false">
+        <button data-browse="spec-path" data-mode="file">Browse…</button>
+        <button class="primary" id="btn-spec">Load spec</button>
+      </div>
+      <div id="spec-out"></div>
+    </div>
+  </section>
+
+  <!-- 2 · raw data -->
+  <section class="step locked" id="s-raw">
+    <header><span class="num">2</span><h2>Raw datasets</h2></header>
+    <div class="body">
+      <p class="hint">Folder holding the raw extracts (.sas7bdat, .xpt, .csv, .xlsx, .parquet).
+        Subfolders are searched.</p>
+      <div class="pathrow">
+        <input type="text" id="raw-path" placeholder="/path/to/rawdata" spellcheck="false">
+        <button data-browse="raw-path" data-mode="dir">Browse…</button>
+        <button class="primary" id="btn-raw">Scan raw data</button>
+      </div>
+      <div id="raw-out"></div>
+    </div>
+  </section>
+
+  <!-- 3 · build -->
+  <section class="step locked" id="s-build">
+    <header><span class="num">3</span><h2>Build the SDTM datasets</h2></header>
+    <div class="body">
+      <div class="opts">
+        <div class="opt"><label for="fmt">Output format</label>
+          <select id="fmt">
+            <option value="xpt">SAS transport (.xpt v5)</option>
+            <option value="csv">CSV</option>
+            <option value="parquet">Parquet</option>
+            <option value="none">None — build in memory only</option>
+          </select></div>
+        <div class="opt"><label for="studyid">STUDYID override</label>
+          <input type="text" id="studyid" placeholder="only if raw has none" style="width:13rem"></div>
+        <div class="opt"><label for="namematch">Name matching</label>
+          <select id="namematch" title="For variables the spec leaves unmapped, look for a raw column of a similar name">
+            <option value="70" selected>on — 70% name similarity</option>
+            <option value="85">strict — 85%</option>
+            <option value="45">loose — 45% (SDTM Designer's setting)</option>
+            <option value="0">off — build only what the spec states</option>
+          </select></div>
+        <label class="check"><input type="checkbox" id="incl-unbuilt">
+          emit unbuildable variables as empty columns</label>
+      </div>
+      <div class="actions">
+        <button class="primary" id="btn-build">Build all domains</button>
+        <button id="btn-build-sel" title="Choose which domains to build">Select domains…</button>
+      </div>
+      <div id="build-job" hidden><progress id="build-prog" max="100" value="0"></progress>
+        <div class="joblbl" id="build-lbl"></div></div>
+      <div id="build-out"></div>
+    </div>
+  </section>
+
+  <!-- 4 · compare -->
+  <section class="step locked" id="s-cmp">
+    <header><span class="num">4</span><h2>Compare against the vendor delivery</h2></header>
+    <div class="body">
+      <p class="hint">Folder holding the vendor's delivered SDTM datasets.</p>
+      <div class="pathrow">
+        <input type="text" id="vendor-path" placeholder="/path/to/vendor_sdtm" spellcheck="false">
+        <button data-browse="vendor-path" data-mode="dir">Browse…</button>
+        <button class="primary" id="btn-cmp">Run comparison</button>
+      </div>
+      <div class="opts">
+        <label class="check"><input type="checkbox" id="ign-case"> ignore letter case</label>
+        <div class="opt"><label for="numtol">Numeric tolerance</label>
+          <input type="text" id="numtol" value="0.000000001" style="width:9rem"></div>
+        <div class="opt"><label for="ignvars">Ignore variables</label>
+          <input type="text" id="ignvars" placeholder="e.g. AESEQ, VSSEQ" style="width:13rem"></div>
+      </div>
+      <div id="cmp-job" hidden><progress id="cmp-prog" max="100" value="0"></progress>
+        <div class="joblbl" id="cmp-lbl"></div></div>
+      <div id="cmp-out"></div>
+    </div>
+  </section>
+
+  <p class="foot">Every value traces to a named operation recorded in the build manifest.
+     Variables the spec does not describe deterministically are reported, never guessed.</p>
+</div>
+
+<!-- per-domain detail -->
+<div class="modal" id="dommodal" hidden>
+  <div class="drawer">
+    <header>
+      <h3 id="dom-title">Domain</h3>
+      <button id="dom-close">Close</button>
+    </header>
+    <div class="drawer-body" id="dom-body"></div>
+  </div>
+</div>
+
+<!-- file / folder picker -->
+<div class="modal" id="modal" hidden>
+  <div class="picker">
+    <header><h3 id="pick-title">Choose</h3><button id="pick-up">↑ Up</button></header>
+    <div class="shortcuts" id="pick-shortcuts"></div>
+    <div class="cwd" id="pick-cwd"></div>
+    <ul id="pick-list"></ul>
+    <footer>
+      <button id="pick-cancel">Cancel</button>
+      <button class="primary" id="pick-choose">Use this folder</button>
+    </footer>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
