@@ -177,9 +177,15 @@ def _save_session() -> None:
 
 def _restore_session() -> str:
     """Reload the most recent run, so a restart resumes where the user left off."""
-    if not RUNS.is_dir():
-        return ""
-    for run in sorted(RUNS.iterdir(), reverse=True):
+    candidates = []
+    if RUNS.is_dir():
+        candidates += [d for d in RUNS.iterdir() if d.is_dir()]
+    if STUDIES.root.is_dir():
+        for study_dir in STUDIES.root.iterdir():
+            runs = study_dir / "runs"
+            if runs.is_dir():
+                candidates += [d for d in runs.iterdir() if d.is_dir()]
+    for run in sorted(candidates, key=lambda d: d.name, reverse=True):
         cache = run / SESSION_FILE
         if not cache.exists():
             continue
@@ -420,7 +426,9 @@ def make_synthetic(body: SynthIn):
     if SESSION.spec is None:
         raise HTTPException(400, "load the mapping spec first")
     from sdtm_builder.synth import SynthOptions, generate
-    out = Path(os.path.expanduser(body.out)) if body.out else (RUNS / "synthetic_raw")
+    default_dir = (STUDIES.root / SESSION.study_id / "synthetic_raw"
+                   if SESSION.study_id else RUNS / "synthetic_raw")
+    out = Path(os.path.expanduser(body.out)) if body.out else default_dir
     try:
         res = generate(SESSION.spec, out, SynthOptions(
             subjects=max(1, min(body.subjects, 2000)), visits=max(1, min(body.visits, 30)),
@@ -497,7 +505,11 @@ def start_build(body: BuildIn):
     if bad:
         raise HTTPException(400, f"not in the mapping spec: {', '.join(bad)}")
 
-    out = RUNS / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # A run belongs to the study that made it. Everything about a study — its judgements in
+    # study.json, its builds, its reports — lives under that one folder, so archiving or
+    # handing over a study is copying a single directory.
+    runs_root = STUDIES.runs_dir(SESSION.study_id) if SESSION.study_id else RUNS
+    out = runs_root / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     SESSION.out_dir, SESSION.studyid = str(out), body.studyid
     SESSION.fmt, SESSION.include_unbuilt = body.fmt, body.include_unbuilt
     SESSION.name_match = body.name_match
