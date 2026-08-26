@@ -182,6 +182,75 @@ export function DataGrid<T>({
   )
 }
 
+/** DataGrid with self-contained sorting and per-column filtering, for tables whose rows are
+ *  already fully in hand (the comparison views). Each column provides `value` — the plain
+ *  text behind its rendered cell — and gets a header filter: a dropdown of the actual values
+ *  where there are few enough, a search box otherwise. */
+export function ClientGrid<T>({ cols, rows, dropdownMax = 40, ...rest }: {
+  cols: GridCol<T>[]
+  rows: T[]
+  dropdownMax?: number
+  rowKey?: (row: T, i: number) => string
+  onRowClick?: (row: T) => void
+  groupBy?: (row: T) => string
+  height?: string
+  empty?: ReactNode
+  rowNumbers?: boolean
+}) {
+  const [filters, setFilters] = useState<Record<string, string>>({})
+  const [sort, setSort] = useState<{ col: string; dir: "asc" | "desc" } | undefined>()
+
+  const valueOf = useMemo(() => {
+    const map: Record<string, (row: T) => string> = {}
+    for (const c of cols) map[c.id] = c.value ?? (() => "")
+    return map
+  }, [cols])
+
+  const options = useMemo(() => {
+    const out: Record<string, string[] | undefined> = {}
+    for (const c of cols) {
+      if (!c.value) continue
+      const distinct = [...new Set(rows.map((r) => c.value!(r)).filter((v) => v !== ""))]
+      out[c.id] = distinct.length > 0 && distinct.length <= dropdownMax
+        ? distinct.sort() : undefined
+    }
+    return out
+  }, [cols, rows, dropdownMax])
+
+  const shown = useMemo(() => {
+    let out = rows.filter((r) =>
+      Object.entries(filters).every(([col, needle]) => {
+        if (!needle) return true
+        const v = valueOf[col]?.(r) ?? ""
+        return options[col]                       // dropdowns match exactly, search boxes contain
+          ? v === needle
+          : v.toLowerCase().includes(needle.toLowerCase())
+      }))
+    if (sort) {
+      const get = valueOf[sort.col] ?? (() => "")
+      out = [...out].sort((a, b) => {
+        const va = get(a), vb = get(b)
+        const na = Number(va.replace(/[,%]/g, "")), nb = Number(vb.replace(/[,%]/g, ""))
+        const cmp = (!Number.isNaN(na) && !Number.isNaN(nb) && va !== "" && vb !== "")
+          ? na - nb : va.localeCompare(vb)
+        return sort.dir === "asc" ? cmp : -cmp
+      })
+    }
+    return out
+  }, [rows, filters, sort, valueOf, options])
+
+  const filterable = cols.some((c) => c.value)
+  return (
+    <DataGrid {...rest} cols={cols} rows={shown}
+              sort={sort}
+              onSort={(col) => setSort(sort?.col === col && sort.dir === "asc"
+                ? { col, dir: "desc" } : { col, dir: "asc" })}
+              filters={filterable ? filters : undefined}
+              onFilter={filterable ? (col, v) => setFilters((f) => ({ ...f, [col]: v })) : undefined}
+              filterOptions={options} />
+  )
+}
+
 /** A coloured chip, the way a grid shows a single-select value. */
 export type ChipTone = "violet" | "green" | "amber" | "red" | "blue" | "slate" | "teal"
 

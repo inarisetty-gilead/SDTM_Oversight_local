@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { Chip, DataGrid, Mono, SegmentBar } from "@/components/grid"
+import { Chip, ClientGrid, Mono, SegmentBar } from "@/components/grid"
 import { Callout, EmptyState, Metric, Metrics, PageHeader, Panel } from "@/components/shell"
 import { PathField } from "@/components/PathPicker"
 
@@ -129,30 +129,40 @@ export function CompareView({
             ]} />
 
             <Panel title="Domains">
-              <DataGrid rows={rows} height="26rem" rowKey={(r) => r.domain}
+              <ClientGrid rows={rows} height="26rem" rowKey={(r) => r.domain}
                 cols={[
-                  { id: "d", head: "Domain", kind: "key", sticky: true, width: 110, cell: (r) => r.domain },
-                  { id: "s", head: "Status", kind: "tag", width: 150, cell: (r) =>
+                  { id: "d", head: "Domain", kind: "key", sticky: true, width: 110,
+                    value: (r) => r.domain, cell: (r) => r.domain },
+                  { id: "s", head: "Status", kind: "tag", width: 150,
+                    value: (r) => r.status === "error" ? "not comparable"
+                      : r.status === "identical" ? "identical"
+                      : structural(r) ? "variables differ" : "differences",
+                    cell: (r) =>
                       r.status === "error" ? <Chip tone="slate">{r.error}</Chip>
                       : r.status === "identical" ? <Chip tone="green">identical</Chip>
                       : structural(r) ? <Chip tone="amber">variables differ</Chip>
                       : <Chip tone="red">differences</Chip> },
                   { id: "rb", head: "Built", kind: "number", align: "right",
-                    cell: (r) => r.rows_built.toLocaleString() },
+                    value: (r) => String(r.rows_built), cell: (r) => r.rows_built.toLocaleString() },
                   { id: "rv", head: "Vendor", kind: "number", align: "right",
-                    cell: (r) => r.rows_vendor.toLocaleString() },
+                    value: (r) => String(r.rows_vendor), cell: (r) => r.rows_vendor.toLocaleString() },
                   { id: "m", head: "Matched", kind: "number", align: "right",
+                    value: (r) => r.status === "error" ? "" : String(r.matched),
                     cell: (r) => r.status === "error" ? "—" : r.matched.toLocaleString() },
                   { id: "ob", head: "Only built", kind: "number", align: "right",
+                    value: (r) => String(r.only_built),
                     cell: (r) => r.only_built ? <Chip tone="red">{r.only_built}</Chip>
                       : (r.status === "error" ? "—" : "0") },
                   { id: "ov", head: "Only vendor", kind: "number", align: "right",
+                    value: (r) => String(r.only_vendor),
                     cell: (r) => r.only_vendor ? <Chip tone="red">{r.only_vendor}</Chip>
                       : (r.status === "error" ? "—" : "0") },
                   { id: "vd", head: "Value diffs", kind: "number", align: "right",
+                    value: (r) => String(r.value_differences),
                     cell: (r) => r.value_differences ? <Chip tone="red">{r.value_differences}</Chip>
                       : (r.status === "error" ? "—" : "0") },
                   { id: "k", head: "Matched on", kind: "code",
+                    value: (r) => r.keys.join(", "),
                     cell: (r) => r.keys.length ? <Mono>{r.keys.join(", ")}</Mono> : null },
                 ]} />
             </Panel>
@@ -178,32 +188,45 @@ export function CompareView({
                       <Mono>{r.not_built.join(", ")}</Mono></Callout>}
 
                     {r.variables.length > 0 && (
-                      <DataGrid rows={r.variables} height="16rem" rowKey={(v) => v.variable}
+                      <ClientGrid rows={r.variables} height="16rem" rowKey={(v) => v.variable}
                         cols={[
-                          { id: "v", head: "Variable", kind: "key", sticky: true, cell: (v) => v.variable },
+                          { id: "v", head: "Variable", kind: "key", sticky: true,
+                            value: (v) => v.variable, cell: (v) => v.variable },
                           { id: "d", head: "Differing", kind: "number", align: "right",
+                            value: (v) => String(v.differing),
                             cell: (v) => <Chip tone="red">{v.differing}</Chip> },
                           { id: "c", head: "Compared", kind: "number", align: "right",
+                            value: (v) => String(v.compared),
                             cell: (v) => v.compared.toLocaleString() },
                           { id: "a", head: "Agreement", kind: "number", align: "right",
+                            value: (v) => String(v.agreement),
                             cell: (v) => `${v.agreement}%` },
                           { id: "ob", head: "Only in build", kind: "number", align: "right",
+                            value: (v) => String(v.only_built_nonblank || ""),
                             cell: (v) => v.only_built_nonblank || "" },
                           { id: "ov", head: "Only in vendor", kind: "number", align: "right",
+                            value: (v) => String(v.only_vendor_nonblank || ""),
                             cell: (v) => v.only_vendor_nonblank || "" },
                         ]} />
                     )}
 
                     {r.variables.some((v) => v.examples.length) && (
-                      <DataGrid height="16rem" rowNumbers={false}
+                      <ClientGrid height="16rem" rowNumbers={false}
                         rows={r.variables.flatMap((v) => v.examples.slice(0, 3).map((ex) => ({ v: v.variable, ex })))}
                         cols={[
-                          { id: "v", head: "Variable", kind: "key", cell: (x) => x.v },
-                          { id: "k", head: "Record", kind: "text", width: 320, cell: (x) => Object.entries(x.ex)
+                          { id: "v", head: "Variable", kind: "key",
+                            value: (x) => x.v, cell: (x) => x.v },
+                          { id: "k", head: "Record", kind: "text", width: 320,
+                            value: (x) => Object.entries(x.ex)
+                              .filter(([k]) => k !== "built" && k !== "vendor")
+                              .map(([k, val]) => `${k}=${val}`).join(" · "),
+                            cell: (x) => Object.entries(x.ex)
                               .filter(([k]) => k !== "built" && k !== "vendor")
                               .map(([k, val]) => `${k}=${val}`).join(" · ") },
-                          { id: "b", head: "Built", kind: "code", cell: (x) => <Mono>{x.ex.built}</Mono> },
-                          { id: "vd", head: "Vendor", kind: "code", cell: (x) => <Mono>{x.ex.vendor}</Mono> },
+                          { id: "b", head: "Built", kind: "code",
+                            value: (x) => x.ex.built, cell: (x) => <Mono>{x.ex.built}</Mono> },
+                          { id: "vd", head: "Vendor", kind: "code",
+                            value: (x) => x.ex.vendor, cell: (x) => <Mono>{x.ex.vendor}</Mono> },
                         ]} />
                     )}
                   </AccordionContent>
