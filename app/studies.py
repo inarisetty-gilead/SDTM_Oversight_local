@@ -46,6 +46,7 @@ class Study:
     overrides: dict = field(default_factory=dict)
     edits: dict = field(default_factory=dict)
     pipelines: dict = field(default_factory=dict)
+    draft_pipelines: dict = field(default_factory=dict)   # prep steps still being edited
     dedups: dict = field(default_factory=dict)
     last_run: str = ""
 

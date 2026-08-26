@@ -6,20 +6,20 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { FN_LABELS } from "./derivation"
 import { DataGrid, Mono } from "./grid"
 import { Callout } from "./shell"
 
 type Step = { op: string; name: string; params: Record<string, unknown> }
 type Report = { step: number; name: string; op: string; ok: boolean; rows?: number; columns?: string[]; error?: string; extra_outputs?: string[] }
 
-type Field = { k: string; t: string; ph?: string; label?: string; opts?: [string, string][] }
+type Field = { k: string; t: string; ph?: string; label?: string
+               opts?: [string, string][]; funcs?: string[] }
 
 const COMPUTE_FUNCS: [string, string][] = [
   ["complete_date", "Complete a partial date — fill missing month/day with 01"],
   ["year", "Take the year"],
-  ["concat", "Join columns together"],
-  ["upcase", "UPPERCASE the text"],
-  ["trim", "Trim surrounding spaces"],
+  ...Object.entries(FN_LABELS),
 ]
 
 const FIELDS: Record<string, Field[]> = {
@@ -36,7 +36,15 @@ const FIELDS: Record<string, Field[]> = {
             { k: "func", t: "choicel", label: "Calculation", opts: COMPUTE_FUNCS },
             { k: "columns", t: "colseq", label: "From column(s)" },
             { k: "out_col", t: "text", ph: "blank overwrites the source column", label: "Save as" },
-            { k: "sep", t: "text", ph: "e.g. - (blanks are skipped)", label: "Joined with" }],
+            { k: "start", t: "text", ph: "1", label: "From position", funcs: ["substr"] },
+            { k: "len", t: "text", ph: "to the end", label: "Length", funcs: ["substr"] },
+            { k: "word", t: "text", ph: "-1 = last", label: "Word number", funcs: ["scan"] },
+            { k: "delim", t: "text", ph: "space if empty", label: "Separated by", funcs: ["scan"] },
+            { k: "find", t: "text", label: "Find", funcs: ["tranwrd", "index"] },
+            { k: "replace", t: "text", label: "Replace with", funcs: ["tranwrd"] },
+            { k: "chars", t: "text", ph: "blanks if empty", label: "Characters to remove", funcs: ["compress"] },
+            { k: "sep", t: "text", ph: "e.g. - (blanks are skipped)", label: "Joined with", funcs: ["catx", "concat"] },
+            { k: "width", t: "text", ph: "3", label: "Width", funcs: ["zeropad"] }],
   aggregate: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "group_by", t: "list", label: "Group by" }, { k: "column", t: "text", label: "Column to summarise" },
               { k: "func", t: "choice:min,max,first,last,count,sum,mean", label: "Summarise with" }, { k: "out_col", t: "text", label: "Result column" }],
   date_extreme: [{ k: "sources", t: "datesources", label: "Datasets and date columns" }, { k: "group_by", t: "list", ph: "USUBJID", label: "Per" },
@@ -176,6 +184,7 @@ const COND_OPS: [string, string][] = [
   ["in", "is one of (comma separated)"], ["notin", "is not one of"],
   ["contains", "contains"], ["startswith", "starts with"], ["endswith", "ends with"],
   [">", "greater than"], ["<", "less than"], [">=", "at least"], ["<=", "at most"],
+  ["between", "between (low, high)"],
   ["missing", "is missing"], ["notmissing", "is not missing"],
 ]
 const COND_NO_VALUE = new Set(["missing", "notmissing"])
@@ -449,7 +458,8 @@ function StepColumns({ domain, dataset, children }: {
 }
 
 export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDone: () => void }) {
-  const [steps, setSteps] = useState<Step[]>(() => JSON.parse(JSON.stringify(detail.pipeline ?? [])))
+  const [steps, setSteps] = useState<Step[]>(() =>
+    JSON.parse(JSON.stringify(detail.pipeline_draft ?? detail.pipeline ?? [])))
   const [ops, setOps] = useState<Array<{ id: string; label: string }>>([])
   const [reports, setReports] = useState<Report[]>((detail.prep_reports as unknown as Report[]) ?? [])
   const [out, setOut] = useState<{ name: string; columns: string[]; sample: string[][]; rows: number } | null>(null)
@@ -463,7 +473,13 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
   // blind between presses, which is where a wrong step survives long enough to be trusted.
   const firstRun = useRef(true)
   useEffect(() => {
-    if (!steps.length) { setReports([]); setOut(null); return }
+    if (!steps.length) {
+      setReports([]); setOut(null)
+      // removing every step must also forget the saved draft, or it comes back on refresh
+      if (!firstRun.current) void api.previewPipeline(detail.domain, [])
+      firstRun.current = false
+      return
+    }
     const t = window.setTimeout(() => { void run(steps, true) }, firstRun.current ? 0 : 450)
     firstRun.current = false
     return () => window.clearTimeout(t)
@@ -571,8 +587,8 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {(FIELDS[st.op] ?? []).map((f) => {
-                // the join separator only matters when joining text
-                if (f.k === "sep" && st.params.func !== "concat") return null
+                // a parameter appears only for the function it belongs to
+                if (f.funcs && !f.funcs.includes(st.params.func as string)) return null
                 const v = st.params[f.k]
                 const wide = ["mergeinputs", "joinkeys", "conds", "rules", "branches",
                               "renames", "datesources", "measures"].includes(f.t)

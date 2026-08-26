@@ -57,6 +57,7 @@ class Session:
     edits: dict = field(default_factory=dict)        # DOMAIN -> {VARIABLE -> block override}
     dedups: dict = field(default_factory=dict)       # DOMAIN -> {enabled, keys, keep}
     pipelines: dict = field(default_factory=dict)    # DOMAIN -> [prep step, ...]
+    draft_pipelines: dict = field(default_factory=dict)  # DOMAIN -> steps being edited, not yet applied
     preview_outputs: set = field(default_factory=set)  # prepared datasets from an unapplied run
     study_id: str = ""
     study_name: str = ""
@@ -281,6 +282,7 @@ def _autosave() -> None:
     study.overrides = SESSION.overrides
     study.edits = SESSION.edits
     study.pipelines = SESSION.pipelines
+    study.draft_pipelines = SESSION.draft_pipelines
     study.dedups = SESSION.dedups
     if SESSION.out_dir:
         study.last_run = SESSION.out_dir
@@ -299,6 +301,7 @@ def _apply_study(study: Study) -> None:
     SESSION.overrides = dict(study.overrides)
     SESSION.edits = dict(study.edits)
     SESSION.pipelines = dict(study.pipelines)
+    SESSION.draft_pipelines = dict(study.draft_pipelines)
     SESSION.dedups = dict(study.dedups)
     # reopen the inputs so the reader lands where they left off, not on an empty form
     SESSION.open_problems = []
@@ -925,6 +928,7 @@ def _domain_payload(dom: str) -> dict:
         "override": SESSION.overrides.get(dom, {}),
         "dedup": SESSION.dedups.get(dom, {}),
         "pipeline": SESSION.pipelines.get(dom, []),
+        "pipeline_draft": SESSION.draft_pipelines.get(dom),
         "prep_reports": res.prep_reports,
         "prep_outputs": res.prep_outputs,
         "edits": SESSION.edits.get(dom, {}),
@@ -1381,6 +1385,14 @@ def preview_pipeline(domain: str, body: PipelineIn):
     a sample — so a preparation can be checked step by step before it is adopted."""
     if SESSION.store is None:
         raise HTTPException(400, "scan the raw data folder first")
+    # The draft persists as it is typed — half-finished steps included — so a refresh or a
+    # reopened study lands back in the editor exactly as it was left, not on an empty form.
+    dom = upper(domain)
+    if body.steps:
+        SESSION.draft_pipelines[dom] = body.steps
+    else:
+        SESSION.draft_pipelines.pop(dom, None)
+    _autosave()
     try:
         outputs, reports = prep_module.run_pipeline(body.steps, SESSION.store, upper(domain))
     except prep_module.PrepError as exc:
@@ -1405,6 +1417,7 @@ def set_pipeline(domain: str, body: PipelineIn):
     dom = upper(domain)
     if SESSION.spec is None or dom not in SESSION.spec.domains:
         raise HTTPException(404, f"{dom} is not in the mapping spec")
+    SESSION.draft_pipelines.pop(dom, None)       # applying (or clearing) supersedes the draft
     if body.steps:
         SESSION.preview_outputs -= {norm_key(st.get("name", "")) for st in body.steps}
         SESSION.pipelines[dom] = body.steps

@@ -457,6 +457,38 @@ def test_building_one_domain_at_a_time_accumulates():
         assert client.get("/api/state").json()["built"] == ["AE", "DM", "DS", "EG", "VS"]
 
 
+def test_prep_draft_survives_a_refresh():
+    """Steps still being edited persist with every live preview, so a browser refresh (or a
+    reopened study) restores the editor exactly as it was left. Applying the pipeline — or
+    deleting every step — supersedes the draft."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        client.post("/api/spec", json={"path": str(tmp / "mapping_spec.xlsx")})
+        client.post("/api/raw", json={"path": str(tmp / "raw")})
+        client.post("/api/build", json={"fmt": "none", "domains": ["DM"]})
+        assert _wait(client)["status"] == "done"
+
+        steps = [{"op": "compute", "name": "prep1", "params": {
+            "dataset": "dm", "func": "year", "columns": ["RFSTDAT"], "out_col": "RFYEAR"}}]
+        client.post("/api/domain/DM/pipeline/preview", json={"steps": steps})
+        draft = client.get("/api/domain/DM").json()["pipeline_draft"]
+        assert draft and draft[0]["params"]["out_col"] == "RFYEAR"
+
+        # a draft that fails to run still persists — half-finished work is still work
+        broken = [{"op": "compute", "name": "prep1", "params": {"dataset": "dm", "func": "year"}}]
+        r = client.post("/api/domain/DM/pipeline/preview", json={"steps": broken}).json()
+        assert not r["ok"]
+        assert client.get("/api/domain/DM").json()["pipeline_draft"] == broken
+
+        client.post("/api/domain/DM/pipeline", json={"steps": steps})   # apply
+        assert client.get("/api/domain/DM").json()["pipeline_draft"] is None
+
+        client.post("/api/domain/DM/pipeline/preview", json={"steps": steps})
+        client.post("/api/domain/DM/pipeline/preview", json={"steps": []})  # removed all
+        assert client.get("/api/domain/DM").json()["pipeline_draft"] is None
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

@@ -242,6 +242,30 @@ def test_compute_refuses_a_missing_column():
             raise AssertionError("a missing source column must refuse, not guess")
 
 
+def test_compute_speaks_sas():
+    """Compute runs the SAME function engine as the variable recipes — SUBSTR, SCAN,
+    CATX and friends with their SAS names and 1-based positions — and the condition set
+    includes BETWEEN, so a SAS programmer finds what they expect."""
+    with tempfile.TemporaryDirectory() as td:
+        store = _tiny_store(Path(td))
+        out = run([
+            {"op": "compute", "name": "a", "params": {
+                "dataset": "dm_raw", "func": "substr",
+                "columns": ["CITY"], "start": "1", "len": "3", "out_col": "CITY3"}},
+            {"op": "compute", "name": "b", "params": {
+                "dataset": "a", "func": "scan",
+                "columns": ["BRTHDTC"], "word": "1", "delim": "-", "out_col": "BYEAR"}},
+        ], store)["b"]
+        assert out["CITY3"].tolist() == ["OSL", "", "PAR", "ROM"]
+        assert out["BYEAR"].tolist() == ["1962", "1962", "1962", "unknown"]
+
+
+def test_between_condition():
+    df = pd.DataFrame({"AGE": ["17", "45", "80", ""]})
+    m = prep.cond_mask(df, [{"column": "AGE", "operator": "between", "value": "18, 65"}])
+    assert m.tolist() == [False, True, False, False]
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

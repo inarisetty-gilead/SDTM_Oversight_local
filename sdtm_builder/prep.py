@@ -21,7 +21,8 @@ import pandas as pd
 
 from .blocks import Block
 from .translate import raw_refs
-from .util import as_float, blank_mask, norm_key, s, upper
+from . import ops as ops_module
+from .util import as_float, blank_mask, norm_key, s, str_series, upper
 
 UNIT_SUFFIXES = ("U", "_U", "_UN", "_UNIT")
 VALUE_SUFFIXES = ("_RAW", "_STD")
@@ -326,6 +327,7 @@ COND_OPS = {
     "==": "equals", "!=": "does not equal", "contains": "contains",
     "startswith": "starts with", "endswith": "ends with",
     "in": "is one of", "notin": "is not one of",
+    "between": "between (low, high)",
     "missing": "is missing", "notmissing": "is not missing",
     ">": "greater than", "<": "less than", ">=": "at least", "<=": "at most",
 }
@@ -397,6 +399,12 @@ def cond_mask(df: pd.DataFrame, conds) -> pd.Series:
             m &= blank
         elif opr == "notmissing":
             m &= ~blank
+        elif opr == "between":
+            num = pd.to_numeric(df[col], errors="coerce")
+            bounds = [as_float(x) for x in val.split(",")[:2]] if "," in val else None
+            if not bounds:
+                raise PrepError("between needs two numbers: low, high")
+            m &= num.between(bounds[0], bounds[1]).fillna(False)
         elif opr in (">", "<", ">=", "<="):
             num = pd.to_numeric(df[col], errors="coerce")
             f = as_float(val)
@@ -506,28 +514,30 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
     if op == "compute":
         src = _load(p.get("dataset"), store, ns)
         out = src.copy()
-        func = str(p.get("func", "")).strip().lower()
+        # the first Compute release used its own names for three of these
+        func = {"concat": "catx", "trim": "strip", "upcase": "upcase"}.get(
+            str(p.get("func", "")).strip().lower(), str(p.get("func", "")).strip().lower())
         cols = [c for c in (_ci_col(src, x) for x in (p.get("columns") or [])) if c]
         if not cols:
             raise PrepError("compute needs at least one source column that exists in the dataset")
         target = upper(p.get("out_col")) or upper(cols[0])
-        first = src[cols[0]].astype("string").str.strip()
         if func == "complete_date":
             out[target] = complete_partial_date(src[cols[0]])
         elif func == "year":
-            out[target] = first.str.extract(r"^(\d{4})")[0].fillna("")
-        elif func == "upcase":
-            out[target] = first.str.upper().fillna("")
-        elif func == "trim":
-            out[target] = first.fillna("")
-        elif func == "concat":
-            sep = str(p.get("sep") or "")
-            parts = [src[c].astype("string").str.strip().fillna("") for c in cols]
-            rows = zip(*(pc.tolist() for pc in parts))
-            # with a separator behave like CATX (blank parts are skipped); without, like CATS
-            out[target] = [sep.join(x for x in r if x) if sep else "".join(r) for r in rows]
+            out[target] = (src[cols[0]].astype("string").str.strip()
+                           .str.extract(r"^(\d{4})")[0].fillna(""))
+        elif func in ops_module.SAS_FUNCTIONS:
+            parts = [str_series(src[c]) for c in cols]
+            raw = [src[c] for c in cols]
+            try:
+                result = ops_module.apply_sas_function(func, parts, p, raw=raw)
+            except ops_module.OpError as exc:
+                raise PrepError(str(exc)) from exc
+            out[target] = result.astype("string").fillna("") \
+                if result.dtype != object else result
         else:
-            raise PrepError("pick what to compute — complete a date, take the year, join text…")
+            raise PrepError("pick what to compute — a SAS function, complete a date, "
+                            "or take the year")
         return out, extra
 
     if op == "aggregate":

@@ -539,14 +539,28 @@ def op_fn(ctx, b: Block) -> pd.Series:
     srcs = a.get("sources") or []
     if not fn:
         raise OpError("no function named")
+    if not srcs:
+        if fn in ("catx", "cats", "cat", "coalesce"):
+            raise OpError(f"{fn} needs at least one input")
+        srcs = [{}]
+    parts = [_series_for(ctx, x, v, "string") for x in srcs]
+    raw = [_series_for(ctx, x, v, "raw") for x in srcs]
+    return apply_sas_function(fn, parts, a, raw=raw)
+
+
+def apply_sas_function(fn: str, parts: list, args: dict, raw: list | None = None) -> pd.Series:
+    """The one SAS function engine — variable recipes and the prep Compute step both call
+    this, so SUBSTR in one place can never behave differently from SUBSTR in another.
+    `parts` are string-cast inputs in order; `raw` keeps the uncast originals for PUT."""
+    a = args or {}
+    if not parts:
+        raise OpError(f"{fn or 'the function'} needs at least one input")
 
     def one(cast="string"):
-        return _series_for(ctx, srcs[0] if srcs else {}, v, cast)
+        return parts[0] if cast == "string" else (raw or parts)[0]
 
     def many():
-        if not srcs:
-            raise OpError(f"{fn} needs at least one input")
-        return [_series_for(ctx, x, v) for x in srcs]
+        return parts
 
     if fn == "catx":
         parts = [p.str.strip().fillna("") for p in many()]
