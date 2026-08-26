@@ -415,6 +415,29 @@ def test_naming_the_date_column_is_enough():
         assert list(forced.dataset["BRTHDTC"])[0] == "1975"
 
 
+def test_the_toc_names_the_studys_domains():
+    """The TOC sheet is the spec's own statement of which domains are in this study.
+    Active = Y is in; Active = N is out of the default build but stays reviewable."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        spec = load_spec(tmp / "mapping_spec.xlsx")
+
+        assert set(spec.toc) == {"DM", "AE", "VS", "EG", "DS", "XX"}
+        assert "DM-DATA" not in spec.toc                      # companion rows fold away
+        assert spec.is_active("DM") and not spec.is_active("XX")
+        assert spec.toc["DM"]["label"] == "Demographics"
+        assert spec.toc["AE"]["class"] == "EVENTS"
+        # a spec WITHOUT a TOC treats everything as active — nothing changes for it
+        assert spec.is_active("NEVER-MENTIONED")
+
+        # deactivating a domain removes it from the default build, and ONLY the default:
+        spec.toc["EG"]["active"] = False
+        results = build_study(spec, RawStore.discover(tmp / "raw"))
+        assert "EG" not in results and "DM" in results
+        named = build_study(spec, RawStore.discover(tmp / "raw"), domains=["EG"])
+        assert "EG" in named                                   # naming it still builds it
+
+
 def test_spec_header_below_a_title_row_is_found():
     """Spec workbooks commonly open a sheet with a title banner and put the headings on the
     row below. Assuming row 1 made the entire workbook look empty."""

@@ -219,7 +219,22 @@ codelists = pd.DataFrame([
 
 spec_path = OUT / "mapping_spec.xlsx"
 with pd.ExcelWriter(spec_path, engine="openpyxl") as xw:
-    pd.DataFrame([{"Sheet": "TOC", "Note": "not a domain sheet"}]).to_excel(xw, sheet_name="TOC", index=False)
+    pd.DataFrame([
+        {"Active": "Y", "Dataset": "DM", "Label": "Demographics", "Class": "SPECIAL PURPOSE",
+         "Structure": "One record per subject", "Display Order": 1},
+        {"Active": "N", "Dataset": "DM-DATA", "Label": "Demographics", "Class": "SPECIAL PURPOSE",
+         "Structure": "", "Display Order": 2},
+        {"Active": "Y", "Dataset": "AE", "Label": "Adverse Events", "Class": "EVENTS",
+         "Structure": "One record per event", "Display Order": 3},
+        {"Active": "Y", "Dataset": "VS", "Label": "Vital Signs", "Class": "FINDINGS",
+         "Structure": "One record per measurement", "Display Order": 4},
+        {"Active": "Y", "Dataset": "EG", "Label": "ECG", "Class": "FINDINGS",
+         "Structure": "One record per measurement", "Display Order": 5},
+        {"Active": "Y", "Dataset": "DS", "Label": "Disposition", "Class": "EVENTS",
+         "Structure": "One record per event", "Display Order": 6},
+        {"Active": "N", "Dataset": "XX", "Label": "Not in this study", "Class": "FINDINGS",
+         "Structure": "", "Display Order": 7},
+    ]).to_excel(xw, sheet_name="TOC", index=False)
     for name, rows in (("DM", dm_spec), ("AE", ae_spec), ("VS", vs_spec),
                    ("EG", eg_spec), ("DS", ds_spec)):
         df = pd.DataFrame(rows)

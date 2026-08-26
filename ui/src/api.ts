@@ -18,9 +18,23 @@ export interface SpecCoverage {
   domains: Array<Record<string, number | string>>;
 }
 
+export interface SpecDomain {
+  domain: string; variables: number; supp: number
+  active: boolean; in_toc: boolean; label: string; class: string; structure: string
+}
+
+export interface SpecSheetRow {
+  variable: string; label: string; action: string; input_variables: string
+  mapping_rule: string; sas_code: string; codelist: string; role: string
+  origin: string; dataset: string; type: string; length: string
+  supp: boolean; sheet_row: number
+}
+
 export interface SpecInfo {
   path: string; cleared: boolean; domains: string[]; variables: number;
   codelists: number; coverage: SpecCoverage;
+  toc?: Record<string, { active: boolean; label: string }>
+  active?: string[]; inactive?: string[];
   skipped: Array<{ sheet: string; why: string }>;
 }
 
@@ -164,6 +178,10 @@ export const api = {
   }>(`/api/browse?path=${encodeURIComponent(path)}`),
 
   setSpec: (path: string) => post<SpecInfo>("/api/spec", { path }),
+  specDomains: () => call<{ domains: SpecDomain[]; has_toc: boolean; toc_only: string[] }>(
+    "/api/spec/domains"),
+  specRows: (d: string) => call<{ domain: string; active: boolean; rows: SpecSheetRow[] }>(
+    `/api/spec/${d}/rows`),
   setRaw: (path: string) => post<RawInfo>("/api/raw", { path }),
   synth: (b: Record<string, unknown>) => post<{
     out_dir: string; studyid: string; rows: number; subjects: number

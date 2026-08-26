@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import {
-  Database, GitCompare, Layers, Settings2, ShieldCheck, Sparkles,
+  Database, FileSpreadsheet, GitCompare, Layers, Settings2, ShieldCheck, Sparkles,
 } from "lucide-react"
 import { api } from "@/api"
 import type { BuildResults, CompareRow, JobState, RawInfo, SpecInfo } from "@/api"
@@ -9,12 +9,13 @@ import { Chip } from "@/components/grid"
 import { Rail, RailItem, RailSection, TopBar } from "@/components/shell"
 import { PathPicker } from "@/components/PathPicker"
 import { SetupView } from "@/views/SetupView"
+import { SpecView } from "@/views/SpecView"
 import { StudiesView } from "@/views/StudiesView"
 import { BuildView } from "@/views/BuildView"
 import { CompareView } from "@/views/CompareView"
 import { DomainView } from "@/views/DomainView"
 
-type View = "studies" | "setup" | "build" | "compare" | { domain: string }
+type View = "studies" | "setup" | "spec" | "build" | "compare" | { domain: string }
 
 export default function App() {
   const [view, setView] = useState<View>("studies")
@@ -237,6 +238,11 @@ export default function App() {
             <RailItem icon={<Settings2 className="h-4 w-4" />} label="Setup"
                       active={view === "setup"} onClick={() => setView("setup")}
                       meta={spec ? "✓" : undefined} tone="green" />
+            <RailItem icon={<FileSpreadsheet className="h-4 w-4" />} label="Spec"
+                      active={view === "spec"} disabled={!spec} onClick={() => setView("spec")}
+                      meta={spec?.inactive?.length
+                        ? `${spec.active?.length}/${spec.domains.length}` : undefined}
+                      tone="violet" />
             <RailItem icon={<Database className="h-4 w-4" />} label="Build"
                       active={view === "build"} disabled={!raw} onClick={() => setView("build")}
                       meta={okDomains.length || undefined} tone="violet" />
@@ -275,6 +281,7 @@ export default function App() {
                          onBrowse={(target, mode) => setPicker({ mode, target })}
                          onSynth={(dir) => { setRawPath(dir); setTimeout(() => void onRaw(), 0) }} />
             )}
+            {view === "spec" && <SpecView />}
             {view === "build" && (
               <BuildView build={build} job={job?.kind === "build" ? job : null}
                          err={err.build ?? ""} busy={busy === "build"} ready={!!raw}

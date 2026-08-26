@@ -452,6 +452,7 @@ def set_spec(body: PathIn):
             "variables": sum(len(r) for r in spec.domains.values()),
             "codelists": len(spec.codelists),
             "coverage": analyse_spec(spec),
+            "toc": spec.toc, "active": spec.active_domains, "inactive": spec.inactive_domains,
             "skipped": [{"sheet": s, "why": w} for s, w in spec.skipped_sheets]}
 
 
@@ -474,6 +475,48 @@ def make_synthetic(body: SynthIn):
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return res
+
+
+# ── reviewing the spec ──────────────────────────────────────────────────────
+@app.get("/api/spec/domains")
+def spec_domains():
+    """Every domain sheet, with its TOC standing and row counts — the spec's own table of
+    contents, reviewable before anything is built."""
+    if SESSION.spec is None:
+        raise HTTPException(400, "load the mapping spec first")
+    spec = SESSION.spec
+    out = []
+    for dom in spec.domain_names:
+        rows = spec.rows(dom)
+        toc = spec.toc.get(dom, {})
+        out.append({
+            "domain": dom, "variables": len(rows),
+            "supp": sum(1 for r in rows if r.is_supp),
+            "active": spec.is_active(dom), "in_toc": dom in spec.toc,
+            "label": toc.get("label", ""), "class": toc.get("class", ""),
+            "structure": toc.get("structure", ""),
+        })
+    return {"domains": out, "has_toc": bool(spec.toc),
+            "toc_only": sorted(set(spec.toc) - set(spec.domains))}
+
+
+@app.get("/api/spec/{domain}/rows")
+def spec_rows(domain: str):
+    """One domain's spec sheet, row by row, exactly as written."""
+    if SESSION.spec is None:
+        raise HTTPException(400, "load the mapping spec first")
+    dom = upper(domain)
+    rows = SESSION.spec.rows(dom)
+    if not rows:
+        raise HTTPException(404, f"{dom} is not in the mapping spec")
+    return {"domain": dom, "active": SESSION.spec.is_active(dom),
+            "rows": [{
+                "variable": r.variable, "label": r.label, "action": upper(r.action),
+                "input_variables": r.input_variables, "mapping_rule": r.mapping_rule,
+                "sas_code": r.sas_code, "codelist": upper(r.codelist), "role": r.role,
+                "origin": r.origin, "dataset": r.dataset, "type": r.type,
+                "length": r.length, "supp": r.is_supp, "sheet_row": r.row_number,
+            } for r in rows]}
 
 
 # ── step 2: the raw data ────────────────────────────────────────────────────
@@ -537,7 +580,12 @@ def start_build(body: BuildIn):
     if RUNNER.busy:
         raise HTTPException(409, "a job is already running")
 
-    targets = [upper(d) for d in (body.domains or SESSION.spec.domain_names)]
+    if body.domains:
+        targets = [upper(d) for d in body.domains]
+    elif SESSION.spec.toc:
+        targets = SESSION.spec.active_domains
+    else:
+        targets = SESSION.spec.domain_names
     bad = [d for d in targets if d not in SESSION.spec.domains]
     if bad:
         raise HTTPException(400, f"not in the mapping spec: {', '.join(bad)}")

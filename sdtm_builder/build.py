@@ -453,7 +453,13 @@ def build_study(spec: Spec, store: RawStore, domains: list[str] | None = None,
                 progress=None) -> dict[str, DomainResult]:
     """Build every requested domain, in dependency order. A domain that fails is recorded
     and the run continues — one bad spec sheet must not hide the rest of the delivery."""
-    targets = [upper(d) for d in (domains or spec.domain_names)]
+    # No explicit list means "the study's domains" — and the spec's TOC is the authority on
+    # that. A domain the TOC marks Active = N is deliberately out of this study; building it
+    # anyway would report spec gaps for work nobody was meant to do.
+    if domains is None and spec.toc:
+        targets = [upper(d) for d in spec.active_domains]
+    else:
+        targets = [upper(d) for d in (domains or spec.domain_names)]
     targets = [d for d in order_domains(targets)]
     base_overrides = {upper(k): v for k, v in (base_overrides or {}).items()}
     sort_overrides = {upper(k): v for k, v in (sort_overrides or {}).items()}

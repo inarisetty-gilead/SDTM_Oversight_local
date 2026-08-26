@@ -70,8 +70,15 @@ export function SetupView({
                 </Callout>
               </>}
 
+              {(spec.inactive?.length ?? 0) > 0 && (
+                <Callout title={`The TOC marks ${spec.inactive!.length} domain(s) Active = N`}>
+                  Building “all domains” builds the {spec.active!.length} active ones. The
+                  inactive sheets stay reviewable in the Spec view.
+                </Callout>
+              )}
               <div className="flex flex-wrap gap-1">
-                {spec.domains.map((d) => <Chip key={d} tone="violet">{d}</Chip>)}
+                {spec.domains.map((d) => (
+                  <Chip key={d} tone={spec.inactive?.includes(d) ? "slate" : "violet"}>{d}</Chip>))}
               </div>
             </div>
           )}

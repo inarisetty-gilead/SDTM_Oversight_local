@@ -107,6 +107,23 @@ class Spec:
     domains: dict[str, list[SpecRow]] = field(default_factory=dict)
     codelists: dict[str, dict[str, str]] = field(default_factory=dict)
     skipped_sheets: list[tuple[str, str]] = field(default_factory=list)
+    # the TOC sheet: {DOMAIN: {active, label, class, structure, order}}. The spec's own
+    # statement of which domains are in this study — Active = Y.
+    toc: dict[str, dict] = field(default_factory=dict)
+
+    def is_active(self, domain: str) -> bool:
+        """Active per the TOC. A domain the TOC does not mention stays active — only an
+        explicit N deactivates, so a spec without a TOC behaves as before."""
+        entry = self.toc.get(upper(domain))
+        return True if entry is None else bool(entry.get("active", True))
+
+    @property
+    def active_domains(self) -> list[str]:
+        return [d for d in self.domain_names if self.is_active(d)]
+
+    @property
+    def inactive_domains(self) -> list[str]:
+        return [d for d in self.domain_names if not self.is_active(d)]
 
     def rows(self, domain: str) -> list[SpecRow]:
         return self.domains.get(upper(domain), [])
@@ -176,6 +193,12 @@ def load_spec(path: str | Path) -> Spec:
         if low in SKIP_SHEETS or low.endswith("-data"):
             if low in ("codelist", "codelists"):
                 spec.codelists = _read_codelist_sheet(xl, sheet)
+            if low == "toc":
+                spec.toc = _read_toc(xl, sheet)
+                spec.skipped_sheets.append(
+                    (sheet, f"table of contents — {sum(1 for t in spec.toc.values() if t['active'])} "
+                            f"of {len(spec.toc)} datasets active"))
+                continue
             spec.skipped_sheets.append((sheet, "non-domain sheet"))
             continue
         try:
@@ -218,6 +241,48 @@ def load_spec(path: str | Path) -> Spec:
             "the sheet must have a column named Variable."
         )
     return spec
+
+
+TOC_ACTIVE = ("active", "active_flag", "in_study", "instudy", "included")
+
+
+def _read_toc(xl: pd.ExcelFile, sheet: str) -> dict[str, dict]:
+    """The TOC sheet: which datasets this study actually uses (Active = Y), plus their label,
+    class, structure and ordering. `-DATA` companion rows are the raw-data views of the same
+    domain and are folded into it, never listed separately."""
+    try:
+        probe = xl.parse(sheet_name=sheet, header=None, dtype=object, nrows=HEADER_SCAN_ROWS)
+    except Exception:                                            # noqa: BLE001
+        return {}
+    header_row = None
+    for i in range(min(HEADER_SCAN_ROWS, len(probe))):
+        cells = [norm_key(v) for v in probe.iloc[i].tolist()]
+        if "dataset" in cells and any(a in cells for a in TOC_ACTIVE):
+            header_row = i
+            break
+    if header_row is None:
+        return {}
+    df = xl.parse(sheet_name=sheet, header=header_row, dtype=object)
+    hdr = {norm_key(c): c for c in df.columns}
+    ds_col = hdr.get("dataset") or hdr.get("domain")
+    act_col = next((hdr[a] for a in TOC_ACTIVE if a in hdr), None)
+    if not (ds_col and act_col):
+        return {}
+    out: dict[str, dict] = {}
+    for _, r in df.iterrows():
+        name = upper(r.get(ds_col))
+        if not name:
+            continue
+        if name.endswith("-DATA"):
+            continue                     # the raw-data companion of a domain, not a domain
+        out[name] = {
+            "active": upper(r.get(act_col)) == "Y",
+            "label": s(r.get(hdr["label"])) if "label" in hdr else "",
+            "class": s(r.get(hdr["class"])) if "class" in hdr else "",
+            "structure": s(r.get(hdr["structure"])) if "structure" in hdr else "",
+            "order": s(r.get(hdr["display_order"])) if "display_order" in hdr else "",
+        }
+    return out
 
 
 def _read_codelist_sheet(xl: pd.ExcelFile, sheet: str) -> dict[str, dict[str, str]]:

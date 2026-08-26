@@ -377,6 +377,25 @@ downstream says so — the raw panel, the build, and most emphatically the compa
 Use it to find out whether your spec builds, and where it does not. Point step 2 at the real
 extract before drawing any conclusion about a delivery.
 
+## The TOC decides what "all domains" means
+
+Spec workbooks carry a **TOC** sheet listing every dataset with an `Active` flag. That is the
+spec's own statement of which domains are in this study, and the tool honours it: building
+"all domains" builds the ones marked `Active = Y`. Inactive sheets are dimmed, stay fully
+reviewable, and can still be built by naming them — deactivation narrows the default, it never
+hides anything. `-DATA` companion rows fold into their domain, and TOC entries with no spec
+sheet are called out rather than silently ignored. A spec without a TOC behaves as before:
+everything active.
+
+## Reviewing the spec
+
+The **Spec** view shows the workbook as written, before anything is built from it: every
+domain sheet as chips (with its TOC label, class and structure), and every row of the selected
+sheet in the grid — Variable, Label, Action, Input Variables, SAS code, Mapping Rule,
+Codelist, Role, Origin, and the sheet row it came from. Filter by action or free text. SUPP
+rows carry their own chip. This is where a spec gets read end to end before you trust a build
+of it.
+
 ## The dataset it builds
 
 A built domain is **submission-shaped**: every variable the spec defines for that domain, in
