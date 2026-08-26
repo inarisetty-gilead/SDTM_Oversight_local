@@ -175,6 +175,38 @@ def _save_session() -> None:
         print(f"  could not cache the session: {exc}")
 
 
+def _load_run_cache(run_dir: Path) -> bool:
+    """Restore a run's build and comparison into the session — only when the study's inputs
+    are still the ones that made it. A build presented against a changed spec or changed raw
+    data would be a stale answer wearing a current face."""
+    cache = run_dir / SESSION_FILE
+    if not cache.exists():
+        return False
+    try:
+        import pickle
+        with open(cache, "rb") as fh:
+            d = pickle.load(fh)
+    except Exception:                                            # noqa: BLE001
+        return False
+    if d.get("spec_sig") != SESSION.spec_sig or d.get("raw_sig") != SESSION.raw_sig:
+        return False                       # inputs changed since this run — rebuild, don't resume
+    for key in ("results", "comps", "build_meta", "outputs"):
+        if key in d:
+            setattr(SESSION, key, d[key])
+    SESSION.out_dir = d.get("out_dir", str(run_dir))
+    SESSION.vendor_path = d.get("vendor_path", SESSION.vendor_path)
+    # prep outputs are in-memory frames — rebuild them so the domain views resolve
+    for res in SESSION.results.values():
+        if res.ok and res.prep_step is not None and SESSION.store is not None \
+                and res.base_dataset not in SESSION.store.refs:
+            try:
+                SESSION.store.put(res.prep_step.name,
+                                  prep_module.apply_step(res.prep_step, SESSION.store))
+            except Exception:                                    # noqa: BLE001
+                pass
+    return True
+
+
 def _restore_session() -> str:
     """Reload the most recent run, so a restart resumes where the user left off."""
     candidates = []
@@ -274,6 +306,10 @@ def _apply_study(study: Study) -> None:
             SESSION.synthetic = read_marker(study.raw_path)
         except Exception:                                        # noqa: BLE001
             SESSION.store = None
+    # resume the last build, so reopening a study lands where the reader left it —
+    # built domains, comparison and all — rather than on an empty build view
+    if study.last_run and Path(study.last_run).is_dir():
+        _load_run_cache(Path(study.last_run))
 
 
 # ── studies ─────────────────────────────────────────────────────────────────
@@ -305,7 +341,8 @@ def open_study(study_id: str):
     _apply_study(study)
     return {"id": study.id, "name": study.name, "spec": study.spec_path,
             "raw": study.raw_path, "vendor": study.vendor_path,
-            "restored": study.counts()}
+            "restored": study.counts(),
+            "built": sorted(SESSION.results), "compared": sorted(SESSION.comps)}
 
 
 @app.post("/api/studies/{study_id}/close")

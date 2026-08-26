@@ -353,6 +353,34 @@ def test_a_prepared_dataset_is_usable_as_a_variable_source():
         assert "ae_plus_dm" not in applied["unapplied_datasets"]
 
 
+def test_reopening_a_study_resumes_its_last_build():
+    """Opening a study must land the reader where they left off — built domains and all —
+    and must NOT resume a build whose inputs have changed since."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, srv = _client(Path(td) / "runs")
+        srv.STUDIES = srv.StudyStore(Path(td) / "studies")
+
+        client.post("/api/studies", json={"name": "Resume Test"})
+        sid = client.get("/api/studies").json()["studies"][0]["id"]
+        _load_and_build(client, tmp)
+        assert client.get("/api/state").json()["built"]
+
+        client.post(f"/api/studies/{sid}/close")
+        assert client.get("/api/state").json()["built"] == []
+
+        reopened = client.post(f"/api/studies/{sid}/open").json()
+        assert reopened["built"] == ["AE", "DM", "DS", "EG", "VS"]
+        # the domain view answers immediately, without a rebuild
+        assert client.get("/api/domain/DM").json()["rows"] == 6
+
+        # a changed spec means the cached build no longer describes the inputs — refuse it
+        (tmp / "mapping_spec.xlsx").touch()
+        client.post(f"/api/studies/{sid}/close")
+        stale = client.post(f"/api/studies/{sid}/open").json()
+        assert stale["built"] == []
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

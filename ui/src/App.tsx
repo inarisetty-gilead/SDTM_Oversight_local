@@ -140,7 +140,16 @@ export default function App() {
       setStudy({ id, name: r.name || name })
       setSpecPath(r.spec ?? ""); setRawPath(r.raw ?? ""); setVendorPath(r.vendor ?? "")
       setSpec(null); setRaw(null); setBuild(null); setCompare(null)
-      setView("setup")
+      // land where the reader left off: their last build and comparison, when the server
+      // restored them, rather than an empty setup form
+      if (r.built?.length) {
+        if (r.raw) setRaw({ path: r.raw, cleared: false, datasets: [], coverage: [], missing: [] })
+        await loadBuild()
+        if (r.compared?.length) await loadCompare()
+        setView("build")
+      } else {
+        setView("setup")
+      }
     } catch (e) { fail("spec", e) }
   }
 
