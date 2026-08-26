@@ -374,6 +374,26 @@ def test_reopening_a_study_resumes_its_last_build():
         # the domain view answers immediately, without a rebuild
         assert client.get("/api/domain/DM").json()["rows"] == 6
 
+        # a build made by a DIFFERENT tool version is not resumed: its datasets stay on
+        # disk, but the session starts clean and one rebuild is required
+        import json as _json
+        import pickle as _pickle
+        run_dir = Path(client.get("/api/state").json()["out_dir"])
+        cache = run_dir / ".session.pkl"
+        d = _pickle.loads(cache.read_bytes())
+        d["tool_version"] = "0.0.0-older"
+        cache.write_bytes(_pickle.dumps(d))
+        client.post(f"/api/studies/{sid}/close")
+        upgraded = client.post(f"/api/studies/{sid}/open").json()
+        assert upgraded["built"] == []
+        d["tool_version"] = srv.__version__ if hasattr(srv, "__version__") else d["tool_version"]
+        from sdtm_builder import __version__ as _v
+        d["tool_version"] = _v
+        cache.write_bytes(_pickle.dumps(d))
+        client.post(f"/api/studies/{sid}/close")
+        restored = client.post(f"/api/studies/{sid}/open").json()
+        assert restored["built"] == ["AE", "DM", "DS", "EG", "VS"]
+
         # a changed spec means the cached build no longer describes the inputs — refuse it
         (tmp / "mapping_spec.xlsx").touch()
         client.post(f"/api/studies/{sid}/close")

@@ -155,6 +155,7 @@ def _save_session() -> None:
             return
         import pickle
         payload = {
+            "tool_version": __version__,
             "results": SESSION.results, "comps": SESSION.comps,
             "build_meta": SESSION.build_meta, "outputs": SESSION.outputs,
             "overrides": SESSION.overrides, "studyid": SESSION.studyid,
@@ -191,6 +192,12 @@ def _load_run_cache(run_dir: Path) -> bool:
         return False
     if d.get("spec_sig") != SESSION.spec_sig or d.get("raw_sig") != SESSION.raw_sig:
         return False                       # inputs changed since this run — rebuild, don't resume
+    if d.get("tool_version") != __version__:
+        # the engine changed since this run was made. Its datasets on disk are still the
+        # record, but resuming them into a newer engine would present old results as the new
+        # code's output — and may not even unpickle. One rebuild after an upgrade is the cost
+        # of never showing a stale answer with a current face.
+        return False
     for key in ("results", "comps", "build_meta", "outputs"):
         if key in d:
             setattr(SESSION, key, d[key])
