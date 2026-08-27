@@ -292,6 +292,7 @@ function TemplateDerivation({ t, refresh }: { t: TemplateFn; refresh: () => void
       {r.recipe !== "age" && r.mtype === "assign" && <AssignForm r={r} save={save} />}
       {r.recipe !== "age" && r.mtype === "constant" && <ConstantForm r={r} save={save} />}
       {r.recipe === "cond" && <CondSourceForm r={r} save={save} />}
+      {r.recipe === "date_extreme" && <DateExtremeForm r={r} save={save} />}
       <p className="text-[11px] text-muted-foreground">
         {saving ? "saving…" : "Changes save into the study and apply when you next build."}
         {t.edit && <>{" · "}<button className="underline" onClick={clear}>back to the template's own derivation</button></>}
@@ -389,6 +390,65 @@ function CondSourceForm({ r, save }: {
       <PickCol value={ds === src.dataset ? (src.column ?? "") : ""} options={cols}
                placeholder="column" onChange={pick} />
       <span className="text-muted-foreground">, blank otherwise</span>
+    </div>
+  )
+}
+
+
+/** Reference dates: earliest/latest per subject over dataset+date-column pairs. */
+function DateExtremeForm({ r, save }: {
+  r: TemplateResolved; save: (e: Record<string, unknown>) => void
+}) {
+  const a = r.args as { func?: string; sources?: Array<{ dataset?: string; date_col?: string }> }
+  const sources = a.sources ?? []
+  const [ctxDatasets, setCtxDatasets] = useState<string[]>([])
+  useEffect(() => {
+    void api.fnContext(r.domain).then((c) => setCtxDatasets(c.datasets)).catch(() => {})
+  }, [r.domain])
+  const patch = (next: Array<{ dataset?: string; date_col?: string }>, func?: string) =>
+    save({ args: { func: func ?? a.func ?? "min",
+                   sources: next.filter((x) => x.dataset && x.date_col) } })
+  return (
+    <div className="space-y-1.5 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground">take the</span>
+        <Select value={a.func ?? "min"} onValueChange={(v) => patch(sources, v)}>
+          <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="min" className="text-xs">earliest</SelectItem>
+            <SelectItem value="max" className="text-xs">latest</SelectItem>
+          </SelectContent>
+        </Select>
+        <span className="text-muted-foreground">per subject, across:</span>
+      </div>
+      {sources.map((src, i) => (
+        <DateExtremeRow key={i} src={src} datasets={ctxDatasets} domain={r.domain}
+          onChange={(nr) => patch(sources.map((x, k) => (k === i ? nr : x)))}
+          onRemove={() => patch(sources.filter((_, k) => k !== i))} />
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => save({ args: { func: a.func ?? "min",
+                                            sources: [...sources, {}] } })}>
+        <Plus className="mr-1 h-3 w-3" />Add a dataset
+      </Button>
+    </div>
+  )
+}
+
+function DateExtremeRow({ src, datasets, domain, onChange, onRemove }: {
+  src: { dataset?: string; date_col?: string }; datasets: string[]; domain: string
+  onChange: (r: { dataset?: string; date_col?: string }) => void; onRemove: () => void
+}) {
+  const cols = useCols(domain, src.dataset || undefined)
+  return (
+    <div className="flex items-center gap-1.5">
+      <PickCol value={src.dataset} options={datasets} placeholder="dataset"
+               onChange={(v) => onChange({ dataset: v, date_col: "" })} />
+      <span className="text-[11px] text-muted-foreground">date in</span>
+      <PickCol value={src.date_col} options={cols.length ? cols : (src.date_col ? [src.date_col] : [])}
+               onChange={(v) => onChange({ ...src, date_col: v })} />
+      <Button type="button" size="icon" variant="ghost" className="h-7 w-7" onClick={onRemove}>
+        <Trash2 className="h-3 w-3" /></Button>
     </div>
   )
 }

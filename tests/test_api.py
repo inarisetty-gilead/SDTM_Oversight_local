@@ -534,7 +534,8 @@ def test_custom_functions_apply_and_templates_can_be_switched_off():
         client.post("/api/raw", json={"path": str(tmp / "raw")})
 
         lib = client.get("/api/functions").json()
-        assert {t["variable"] for t in lib["templates"]} == {"AGE", "AGEU", "DTHDTC", "DTHFL"}
+        assert {"AGE", "AGEU", "DTHDTC", "DTHFL", "RFSTDTC", "RFENDTC", "RFICDTC",
+                "VSBLFL"} <= {t["variable"] for t in lib["templates"]}
 
         # DTHFL: replace the built-in with the user's own rule, a fixed N for everyone
         r = client.post("/api/functions", json={

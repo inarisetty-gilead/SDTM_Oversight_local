@@ -18,6 +18,29 @@ from .util import upper
 REPORTED_AGE = ("AGE_REP", "AGE", "AGEYR", "AGE_YEARS")
 AGE_UNIT = ("AGEU", "_AGEU", "AGE_UNIT")
 DEATH_DATE = ("DEATHDAT_RAW", "DEATHDAT", "DTHDAT_RAW", "DTHDAT", "DTHDTC", "DEATHDT")
+EXPOSURE_START = ("EXSTDAT", "EXSTDTC", "DOSSTDAT", "DOSESTDAT", "DOSEDT", "EXDAT", "DOSDAT")
+EXPOSURE_END = ("EXENDAT", "EXENDTC", "DOSENDAT", "DOSEENDAT")
+VISIT_DATE = ("VISDAT", "VISITDAT", "SVSTDAT", "VISDTC", "SVDAT")
+CONSENT_DATE = ("ICDAT", "ICDTC", "CONSDAT", "CONSENTDT", "RFICDAT", "MAINCONSDAT", "CONSDTC")
+DISPOSITION_DATE = ("DSSTDAT", "DSSTDTC", "DSDAT", "COMPDAT", "EOSDAT")
+
+
+def _date_sources(store, *column_banks) -> list[dict]:
+    """Every (dataset, date column) in the study carrying one of these columns — the
+    sources a per-subject earliest/latest date pools over."""
+    out, seen = [], set()
+    for bank in column_banks:
+        for name in sorted(store.refs):
+            cols = {upper(c): c for c in store.columns(name)}
+            for want in bank:
+                if want in cols and (name, want) not in seen:
+                    seen.add((name, want))
+                    out.append({"dataset": name, "date_col": cols[want]})
+    return out
+
+
+def _named(sources: list[dict]) -> str:
+    return ", ".join(f"{x['dataset']}.{x['date_col']}" for x in sources)
 
 
 def _find_source(store, column_names) -> tuple[str, str] | None:
@@ -107,6 +130,85 @@ def _apply_dthfl(b: Block, by_var: dict, store, base_ds: str) -> str | None:
     return f"'Y' when a death date exists in {ds}.{col}, blank otherwise"
 
 
+def _extreme(b: Block, sources: list[dict], func: str) -> None:
+    b.mtype, b.recipe = "derived", "date_extreme"
+    b.dataset, b.column = "", ""
+    b.args = {"func": func, "sources": sources}
+
+
+def _apply_rfstdtc(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    if b.mtype != "unmapped":
+        return None
+    src = _date_sources(store, EXPOSURE_START)
+    if not src:
+        return None
+    _extreme(b, src, "min")
+    return f"the first study treatment exposure ({_named(src)})"
+
+
+def _apply_rfxstdtc(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    return _apply_rfstdtc(b, by_var, store, base_ds)
+
+
+def _apply_rfendtc(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    if b.mtype != "unmapped":
+        return None
+    src = _date_sources(store, VISIT_DATE) or _date_sources(store, EXPOSURE_END, EXPOSURE_START)
+    if not src:
+        return None
+    _extreme(b, src, "max")
+    return f"the last visit/contact date ({_named(src)})"
+
+
+def _apply_rfxendtc(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    if b.mtype != "unmapped":
+        return None
+    src = _date_sources(store, EXPOSURE_END) or _date_sources(store, EXPOSURE_START)
+    if not src:
+        return None
+    _extreme(b, src, "max")
+    return f"the last study treatment exposure ({_named(src)})"
+
+
+def _apply_rficdtc(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    if b.mtype != "unmapped":
+        return None
+    src = _date_sources(store, CONSENT_DATE)
+    if not src:
+        return None
+    _extreme(b, src, "min")
+    return f"the earliest informed-consent date ({_named(src)})"
+
+
+def _apply_rfpendtc(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+    if b.mtype != "unmapped":
+        return None
+    src = _date_sources(store, VISIT_DATE, EXPOSURE_END, DISPOSITION_DATE)
+    if not src:
+        return None
+    _extreme(b, src, "max")
+    return f"the last date of participation ({_named(src)})"
+
+
+def _make_blfl(dom: str):
+    """--BLFL: 'Y' on the last non-missing result on or before RFSTDTC, per subject and
+    test — the SDTMIG baseline convention, run by the same engine as --LOBXFL."""
+    def apply(b: Block, by_var: dict, store, base_ds: str) -> str | None:
+        if b.mtype != "unmapped":
+            return None
+        tc, dtc = f"{dom}TESTCD", f"{dom}DTC"
+        for need in (tc, dtc):
+            v = by_var.get(need)
+            if v is None or v.mtype in ("drop", "unmapped"):
+                return None
+        b.mtype, b.recipe = "derived", "lobxfl"
+        b.args = {"testcd_var": tc, "dtc_var": dtc, "result_var": f"{dom}ORRES",
+                  "ref_var": "RFSTDTC"}
+        return (f"'Y' on the last non-missing {dom}ORRES on or before RFSTDTC, "
+                f"per subject and {tc}")
+    return apply
+
+
 REGISTRY: list[Template] = [
     Template("AGE", ("DM",), "dm-merge template",
              "reported age, else whole years from birth to the reference start", _apply_age),
@@ -116,6 +218,24 @@ REGISTRY: list[Template] = [
              "the collected death date", _apply_dthdtc),
     Template("DTHFL", ("DM",), "dm-merge template",
              "Y when a death date exists", _apply_dthfl),
+    Template("RFSTDTC", ("DM",), "dm-merge template",
+             "first study treatment exposure date", _apply_rfstdtc),
+    Template("RFENDTC", ("DM",), "dm-merge template",
+             "last visit or contact date", _apply_rfendtc),
+    Template("RFXSTDTC", ("DM",), "dm-merge template",
+             "first study treatment exposure date", _apply_rfxstdtc),
+    Template("RFXENDTC", ("DM",), "dm-merge template",
+             "last study treatment exposure date", _apply_rfxendtc),
+    Template("RFICDTC", ("DM",), "dm-merge template",
+             "earliest informed consent date", _apply_rficdtc),
+    Template("RFPENDTC", ("DM",), "dm-merge template",
+             "last date of participation", _apply_rfpendtc),
+    Template("VSBLFL", ("VS",), "SDTMIG baseline convention",
+             "Y on the last result on or before RFSTDTC", _make_blfl("VS")),
+    Template("EGBLFL", ("EG",), "SDTMIG baseline convention",
+             "Y on the last result on or before RFSTDTC", _make_blfl("EG")),
+    Template("LBBLFL", ("LB",), "SDTMIG baseline convention",
+             "Y on the last result on or before RFSTDTC", _make_blfl("LB")),
 ]
 
 

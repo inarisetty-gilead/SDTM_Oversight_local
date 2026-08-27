@@ -250,7 +250,7 @@ export default function App() {
                         ? `${spec.active?.length}/${spec.domains.length}` : undefined}
                       tone="violet" />
             <RailItem icon={<FunctionSquare className="h-4 w-4" />} label="Functions"
-                      active={view === "functions"} disabled={!spec}
+                      active={view === "functions"}
                       onClick={() => setView("functions")} tone="violet" />
             <RailItem icon={<Database className="h-4 w-4" />} label="Build"
                       active={view === "build"} disabled={!raw} onClick={() => setView("build")}

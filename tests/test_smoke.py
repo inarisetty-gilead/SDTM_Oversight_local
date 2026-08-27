@@ -677,6 +677,52 @@ def test_numeric_and_blank_equivalence():
     assert c.total_differences == 0, [(d.variable, d.examples) for d in c.diffs if d.differing]
 
 
+def test_reference_date_and_baseline_templates():
+    """The dm-merge reference dates and the SDTMIG baseline flag are in the registry:
+    RFSTDTC pools first-exposure dates, RFENDTC the last visit, RFICDTC the earliest
+    consent; VSBLFL rides the lobxfl engine against RFSTDTC — and each applies only
+    when its inputs actually exist in the study."""
+    import pandas as pd
+    from sdtm_builder import templates
+    from sdtm_builder.blocks import Block
+    from sdtm_builder.rawio import RawStore
+
+    with tempfile.TemporaryDirectory() as td:
+        raw = Path(td) / "raw"
+        raw.mkdir()
+        pd.DataFrame({"SUBJID": ["001"], "EXSTDAT": ["2024-01-02"],
+                      "EXENDAT": ["2024-03-04"]}).to_csv(raw / "dosing.csv", index=False)
+        pd.DataFrame({"SUBJID": ["001"], "VISDAT": ["2024-04-01"]}).to_csv(
+            raw / "visits.csv", index=False)
+        pd.DataFrame({"SUBJID": ["001"], "ICDAT": ["2023-12-01"]}).to_csv(
+            raw / "consent.csv", index=False)
+        store = RawStore.discover(raw)
+
+        blocks = [Block(variable=v, domain="DM") for v in
+                  ("RFSTDTC", "RFENDTC", "RFXENDTC", "RFICDTC", "RFPENDTC")]
+        applied = templates.apply_templates(blocks, store, "DM", "dm")
+        by = {b.variable: b for b in blocks}
+        assert by["RFSTDTC"].recipe == "date_extreme"
+        assert by["RFSTDTC"].args["func"] == "min"
+        assert {s_["date_col"] for s_ in by["RFSTDTC"].args["sources"]} == {"EXSTDAT"}
+        assert by["RFENDTC"].args["func"] == "max"
+        assert {s_["date_col"] for s_ in by["RFENDTC"].args["sources"]} == {"VISDAT"}
+        assert {s_["date_col"] for s_ in by["RFXENDTC"].args["sources"]} == {"EXENDAT"}
+        assert {s_["date_col"] for s_ in by["RFICDTC"].args["sources"]} == {"ICDAT"}
+        assert len(by["RFPENDTC"].args["sources"]) == 2   # visit + exposure end; no disposition
+        assert len(applied) == 5
+
+        # VSBLFL applies only when VSTESTCD and VSDTC are mapped in the domain
+        vs = [Block(variable="VSBLFL", domain="VS")]
+        assert templates.apply_templates(vs, store, "VS", "vs") == []
+        vs = [Block(variable="VSBLFL", domain="VS"),
+              Block(variable="VSTESTCD", domain="VS", mtype="assign", dataset="vs", column="T"),
+              Block(variable="VSDTC", domain="VS", mtype="assign", dataset="vs", column="D")]
+        applied = templates.apply_templates(vs, store, "VS", "vs")
+        assert vs[0].recipe == "lobxfl" and vs[0].args["ref_var"] == "RFSTDTC"
+        assert applied and "VSBLFL" in applied[0]
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
