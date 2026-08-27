@@ -127,6 +127,60 @@ def test_questions_fill_from_the_ecrf_spec():
         assert any("eCRF spec" in n for n in report["notes"])
 
 
+def _make_crf_side(path: Path, title: str, items) -> None:
+    """One aCRF: page text lines of questions, an annotation box beside each."""
+    from pypdf import PdfWriter
+    from pypdf.annotations import FreeText
+    w = PdfWriter()
+    p1 = w.add_blank_page(width=612, height=792)
+    lines = [(50, 760, 12, title)]
+    y = 700
+    for question, _annotation in items:
+        lines.append((50, y, 10, question))
+        y -= 60
+    _page_text(w, p1, lines)
+    y = 700
+    for _question, annotation in items:
+        w.add_annotation(0, FreeText(text=annotation, rect=(320, y - 10, 470, y + 10)))
+        y -= 60
+    with open(path, "wb") as fh:
+        w.write(fh)
+
+
+def test_vendor_crf_vs_standards_crf():
+    """The oversight comparison: the same (or related) question annotated differently.
+    'T-Primary Diagnosis' -> RS in the standards but FA from the vendor is the finding
+    this exists to catch; agreeing questions pair green; one-sided questions surface."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        std, ven = tmp / "standards_acrf.pdf", tmp / "vendor_acrf.pdf"
+        _make_crf_side(std, "Oncology Assessments", [
+            ("T-Primary Diagnosis", "RS.RSTESTCD"),
+            ("What is the laterality of the eye?", "OE.OELAT"),
+            ("Date of surgery", "PR.PRSTDTC"),
+        ])
+        _make_crf_side(ven, "Oncology Assessments", [
+            ("Primary diagnosis of the tumor", "FA.FAOBJ"),
+            ("What is the laterality of the eye?", "OE.OELAT"),
+            ("Concomitant medication name", "CM.CMTRT"),
+        ])
+        cmp_ = acrf.compare_crfs(ven, std)
+        by = {p["standard_question"]: p for p in cmp_["pairs"]}
+
+        diag = by["T-Primary Diagnosis"]
+        assert diag["vendor_question"] == "Primary diagnosis of the tumor"
+        assert diag["match"] == "similar" and diag["similarity"] >= 0.5
+        assert diag["verdict"] == "different_domain"
+        assert "RS" in diag["advice"] and "FA" in diag["advice"]
+
+        eye = by["What is the laterality of the eye?"]
+        assert eye["match"] == "exact" and eye["verdict"] == "same_mapping"
+
+        assert [x["question"] for x in cmp_["standard_only"]] == ["Date of surgery"]
+        assert [x["question"] for x in cmp_["vendor_only"]] == ["Concomitant medication name"]
+        assert cmp_["counts"]["different_domain"] == 1
+
+
 def test_acrf_refuses_bad_inputs():
     with tempfile.TemporaryDirectory() as td:
         tmp = _fixture(Path(td))

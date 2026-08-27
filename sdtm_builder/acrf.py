@@ -515,3 +515,158 @@ def check(pdf_path: str | Path, standards_path: str | Path,
     return {"pages": pages, "rows": rows, "missing": missing, "counts": counts,
             "domains_annotated": sorted(annotated_by_domain),
             "origins_recorded": origins_recorded, "notes": notes}
+
+
+# ── vendor CRF vs the internal standards CRF ────────────────────────────────
+# The check above judges one aCRF against a mapping workbook. This compares TWO aCRFs —
+# the vendor's delivery against the company's own standard CRF — question by question:
+# the same (or related) question mapped to a different domain or variable is exactly the
+# finding an oversight review is after.
+
+# SDTMIG domain codes, so extraction works even before any spec is loaded
+SDTM_DOMAINS = frozenset("""
+    AE AG AP BE BS CE CM CO CP CV DA DD DM DS DV EC EG EX FA FT GF HO IE IS LB MB MH MI
+    MK ML MS NV OE PC PE PP PR QS RE RELREC RP RS SC SE SM SR SS SU SV TA TD TE TI TM TR
+    TS TU TV UR VS
+""".split())
+
+_QSTOP = frozenset({"the", "a", "an", "of", "is", "was", "were", "what", "which", "for",
+                    "to", "in", "on", "at", "and", "or", "t", "any", "please", "specify",
+                    "date", "if", "yes", "no", "other"})
+
+
+def _q_tokens(q: str) -> list[str]:
+    return [t for t in re.findall(r"[a-z0-9]+", (q or "").lower()) if t not in _QSTOP]
+
+
+def question_similarity(a: str, b: str) -> float:
+    """0..1, deterministic: the better of character similarity and word overlap, so
+    'T-Primary Diagnosis' and 'Primary diagnosis of the tumor' still find each other."""
+    ta, tb = _q_tokens(a), _q_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    from difflib import SequenceMatcher
+    char = SequenceMatcher(None, " ".join(ta), " ".join(tb)).ratio()
+    inter = len(set(ta) & set(tb))
+    jacc = inter / len(set(ta) | set(tb))
+    return max(char, jacc)
+
+
+def _extract_side(pdf_path, ecrf_path, standards: dict) -> list[dict]:
+    """One CRF's annotations with questions filled from every available source."""
+    prefixes = {d[:2] for d in SDTM_DOMAINS} | {d[:2] for d in standards}
+    rows, _pages = extract_annotations(pdf_path, prefixes)
+    rows = [r for r in rows if r["kind"] != "note"]
+    ecrf = load_ecrf(ecrf_path) if s(ecrf_path) else {}
+    if ecrf:
+        _fill_questions_from_ecrf(rows, standards, {}, ecrf)
+    return rows
+
+
+def _mapping_of(rows: list[dict]) -> str:
+    parts = []
+    for r in rows:
+        name = f"{r['domain']}.{r['variable']}" if r["domain"] and r["variable"]             else (r["variable"] or r["value"])
+        if name and name not in parts:
+            parts.append(name)
+    return ", ".join(parts)
+
+
+def _domains_of(rows: list[dict]) -> set[str]:
+    out = set()
+    for r in rows:
+        dom = r["domain"].split("/")[0] if r["domain"] else r["variable"][:2]
+        if dom:
+            out.add(dom[4:] if dom.startswith("SUPP") else dom)
+    return out
+
+
+def compare_crfs(vendor_pdf, standard_pdf, vendor_ecrf=None, standard_ecrf=None,
+                 standards_path=None, threshold: float = 0.5) -> dict:
+    """Question-level comparison of the vendor's aCRF against the internal standards
+    aCRF. Questions are aligned exactly first, then by similarity (worded differently
+    but related still pairs up, and the score is reported). For each pair the two
+    mappings are held against each other; questions only one side has are listed too,
+    and so are annotation-level differences for pages without question text."""
+    standards = load_standard(standards_path) if s(standards_path) else {}
+    vrows = _extract_side(vendor_pdf, vendor_ecrf, standards)
+    srows = _extract_side(standard_pdf, standard_ecrf, standards)
+
+    def by_question(rows):
+        out: dict[str, list[dict]] = {}
+        for r in rows:
+            if r.get("question"):
+                out.setdefault(r["question"], []).append(r)
+        return out
+
+    vq, sq = by_question(vrows), by_question(srows)
+    pairs, used_vendor = [], set()
+    # exact matches first, then best-similarity pairs, one-to-one, deterministic order
+    candidates = []
+    for squest in sorted(sq):
+        for vquest in sorted(vq):
+            score = 1.0 if squest == vquest else question_similarity(squest, vquest)
+            if score >= threshold:
+                candidates.append((-score, squest, vquest))
+    used_standard: set[str] = set()
+    for negscore, squest, vquest in sorted(candidates):
+        if squest in used_standard or vquest in used_vendor:
+            continue
+        used_standard.add(squest)
+        used_vendor.add(vquest)
+        srow, vrow = sq[squest], vq[vquest]
+        sdoms, vdoms = _domains_of(srow), _domains_of(vrow)
+        smap, vmap = _mapping_of(srow), _mapping_of(vrow)
+        if smap == vmap:
+            verdict, advice = "same_mapping", ""
+        elif sdoms and vdoms and not (sdoms & vdoms):
+            verdict = "different_domain"
+            advice = (f"The standards map this question to {'/'.join(sorted(sdoms))} but the "
+                      f"vendor annotated {'/'.join(sorted(vdoms))} — ask the vendor to remap "
+                      "to the standard domain, or document the deviation with its rationale.")
+        else:
+            verdict = "different_variable"
+            advice = (f"Same domain, different variables — standards say {smap}, the vendor "
+                      f"annotated {vmap}. Align the vendor's annotation with the standard.")
+        pairs.append({"standard_question": squest, "vendor_question": vquest,
+                      "similarity": round(-negscore, 2),
+                      "match": "exact" if -negscore >= 0.999 else "similar",
+                      "standard_form": srow[0].get("form", ""),
+                      "vendor_form": vrow[0].get("form", ""),
+                      "standard_mapping": smap, "vendor_mapping": vmap,
+                      "verdict": verdict, "advice": advice})
+
+    standard_only = [{"question": q, "form": sq[q][0].get("form", ""),
+                      "mapping": _mapping_of(sq[q]),
+                      "advice": "In the standards CRF but not found on the vendor CRF — "
+                                "confirm the vendor collects it, or record why not."}
+                     for q in sorted(sq) if q not in used_standard]
+    vendor_only = [{"question": q, "form": vq[q][0].get("form", ""),
+                    "mapping": _mapping_of(vq[q]),
+                    "advice": "On the vendor CRF but not in the standards CRF — a vendor "
+                              "addition; confirm it is wanted and its mapping is sensible."}
+                   for q in sorted(vq) if q not in used_vendor]
+
+    # annotation-level diff for pages where no question text exists
+    def keyset(rows):
+        return {(f"{r['domain']}.{r['variable']}" if r["domain"] and r["variable"]
+                 else r["variable"]) for r in rows if r["variable"]}
+    vk, sk = keyset(vrows), keyset(srows)
+    ann_vendor_only = sorted(vk - sk)
+    ann_standard_only = sorted(sk - vk)
+
+    counts = {"pairs": len(pairs),
+              "agree": len([p for p in pairs if p["verdict"] == "same_mapping"]),
+              "different_domain": len([p for p in pairs if p["verdict"] == "different_domain"]),
+              "different_variable": len([p for p in pairs if p["verdict"] == "different_variable"]),
+              "standard_only": len(standard_only), "vendor_only": len(vendor_only),
+              "ann_vendor_only": len(ann_vendor_only),
+              "ann_standard_only": len(ann_standard_only)}
+    notes = []
+    if not sq and not vq:
+        notes.append("Neither CRF yields question text (printed/flattened PDFs) — the "
+                     "comparison falls back to annotation names only. Provide each side's "
+                     "eCRF spec, or the original PDFs, for question-level alignment.")
+    return {"pairs": pairs, "standard_only": standard_only, "vendor_only": vendor_only,
+            "ann_vendor_only": ann_vendor_only, "ann_standard_only": ann_standard_only,
+            "counts": counts, "notes": notes}

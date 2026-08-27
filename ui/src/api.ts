@@ -185,6 +185,18 @@ export interface AcrfReport {
   notes?: string[]
 }
 
+export interface CrfPair {
+  standard_question: string; vendor_question: string; similarity: number; match: string
+  standard_form: string; vendor_form: string
+  standard_mapping: string; vendor_mapping: string; verdict: string; advice: string
+}
+export interface CrfOnly { question: string; form: string; mapping: string; advice: string }
+export interface CrfCmp {
+  pairs: CrfPair[]; standard_only: CrfOnly[]; vendor_only: CrfOnly[]
+  ann_vendor_only: string[]; ann_standard_only: string[]
+  counts: Record<string, number>; notes: string[]
+}
+
 const post = <T,>(p: string, b?: unknown) =>
   call<T>(p, { method: "POST", body: JSON.stringify(b ?? {}) })
 
@@ -236,7 +248,11 @@ export const api = {
   domainSettings: (d: string, b: unknown) => post(`/api/domain/${d}/settings`, b),
   domainDedup: (d: string, b: unknown) => post(`/api/domain/${d}/dedup`, b),
   rebuild: (d: string) => post(`/api/domain/${d}/build`),
-  getAcrf: () => call<{ acrf: string; standards: string; ta: string; ecrf?: string; report: AcrfReport | null }>("/api/acrf"),
+  getAcrf: () => call<{ acrf: string; standards: string; ta: string; ecrf?: string
+    std_acrf?: string; std_ecrf?: string; report: AcrfReport | null; cmp?: CrfCmp | null }>("/api/acrf"),
+  compareCrfs: (b: { vendor: string; standard: string; vendor_ecrf?: string
+                     standard_ecrf?: string; standards?: string }) =>
+    post<{ ok: boolean; cmp: CrfCmp }>("/api/acrf/compare", b),
   runAcrf: (b: { acrf: string; standards: string; ta: string; ecrf?: string }) =>
     post<{ ok: boolean; report: AcrfReport }>("/api/acrf", b),
 

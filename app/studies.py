@@ -50,6 +50,9 @@ class Study:
     custom_fns: dict = field(default_factory=dict)        # the user's function library
     acrf_path: str = ""
     ecrf_path: str = ""
+    std_acrf_path: str = ""
+    std_ecrf_path: str = ""
+    crf_cmp: dict | None = None
     standards_path: str = ""
     ta_path: str = ""
     acrf_report: dict | None = None

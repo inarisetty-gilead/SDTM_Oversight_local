@@ -62,6 +62,9 @@ class Session:
     custom_fns: dict = field(default_factory=dict)       # name -> user-defined derivation
     acrf_path: str = ""                              # annotated CRF PDF
     ecrf_path: str = ""                              # eCRF spec (question text source)
+    std_acrf_path: str = ""                          # the internal standards aCRF
+    std_ecrf_path: str = ""                          # its eCRF spec (question source)
+    crf_cmp: dict | None = None                      # last vendor-vs-standards CRF comparison
     standards_path: str = ""                         # standards mapping workbook
     ta_path: str = ""                                # therapeutic-area spec workbook
     acrf_report: dict | None = None                  # last aCRF check
@@ -296,6 +299,8 @@ def _autosave() -> None:
     study.acrf_path, study.standards_path, study.ta_path = (
         SESSION.acrf_path, SESSION.standards_path, SESSION.ta_path)
     study.ecrf_path = SESSION.ecrf_path
+    study.std_acrf_path, study.std_ecrf_path = SESSION.std_acrf_path, SESSION.std_ecrf_path
+    study.crf_cmp = SESSION.crf_cmp
     study.acrf_report = SESSION.acrf_report
     study.dedups = SESSION.dedups
     if SESSION.out_dir:
@@ -321,6 +326,8 @@ def _apply_study(study: Study) -> None:
     SESSION.acrf_path, SESSION.standards_path, SESSION.ta_path = (
         study.acrf_path, study.standards_path, study.ta_path)
     SESSION.ecrf_path = study.ecrf_path
+    SESSION.std_acrf_path, SESSION.std_ecrf_path = study.std_acrf_path, study.std_ecrf_path
+    SESSION.crf_cmp = study.crf_cmp or None
     SESSION.acrf_report = study.acrf_report or None
     SESSION.dedups = dict(study.dedups)
     # reopen the inputs so the reader lands where they left off, not on an empty form
@@ -1400,7 +1407,8 @@ class AcrfIn(BaseModel):
 def get_acrf():
     return {"acrf": SESSION.acrf_path, "standards": SESSION.standards_path,
             "ta": SESSION.ta_path, "ecrf": SESSION.ecrf_path,
-            "report": SESSION.acrf_report}
+            "std_acrf": SESSION.std_acrf_path, "std_ecrf": SESSION.std_ecrf_path,
+            "report": SESSION.acrf_report, "cmp": SESSION.crf_cmp}
 
 
 @app.post("/api/acrf")
@@ -1427,6 +1435,44 @@ def run_acrf(body: AcrfIn):
     SESSION.acrf_report = report
     _autosave()
     return {"ok": True, "report": report}
+
+
+class CrfCmpIn(BaseModel):
+    vendor: str
+    standard: str
+    vendor_ecrf: str = ""
+    standard_ecrf: str = ""
+    standards: str = ""            # mapping workbook — helps question filling, optional
+
+
+@app.post("/api/acrf/compare")
+def compare_crfs_api(body: CrfCmpIn):
+    """The vendor's aCRF against the internal standards aCRF — questions aligned
+    (worded differently still pairs, with the score shown) and their mappings compared."""
+    for label, path, required in (("vendor aCRF", body.vendor, True),
+                                  ("standards aCRF", body.standard, True),
+                                  ("vendor eCRF spec", body.vendor_ecrf, False),
+                                  ("standards eCRF spec", body.standard_ecrf, False),
+                                  ("standards mapping", body.standards, False)):
+        if required and not s(path):
+            raise HTTPException(400, f"point at the {label} first")
+        if s(path) and not Path(path).expanduser().exists():
+            raise HTTPException(400, _fs_hint(f"the {label} was not found at {path}"))
+    try:
+        cmp_ = acrf_module.compare_crfs(
+            Path(body.vendor).expanduser(), Path(body.standard).expanduser(),
+            vendor_ecrf=body.vendor_ecrf or None, standard_ecrf=body.standard_ecrf or None,
+            standards_path=body.standards or None)
+    except acrf_module.AcrfError as exc:
+        raise HTTPException(400, str(exc))
+    SESSION.acrf_path = body.vendor
+    SESSION.ecrf_path = body.vendor_ecrf
+    SESSION.std_acrf_path, SESSION.std_ecrf_path = body.standard, body.standard_ecrf
+    if s(body.standards):
+        SESSION.standards_path = body.standards
+    SESSION.crf_cmp = cmp_
+    _autosave()
+    return {"ok": True, "cmp": cmp_}
 
 
 @app.get("/api/acrf/export")
@@ -1460,6 +1506,20 @@ def export_acrf():
          ).to_excel(xw, sheet_name="Annotations", index=False)
         (miss if len(miss) else pd.DataFrame({"note": ["nothing missing"]})
          ).to_excel(xw, sheet_name="Never annotated", index=False)
+        if SESSION.crf_cmp:
+            cmpr = SESSION.crf_cmp
+            pd.DataFrame([{
+                "Standard question": x["standard_question"], "Vendor question": x["vendor_question"],
+                "Match": x["match"], "Similarity": x["similarity"],
+                "Standard form": x["standard_form"], "Vendor form": x["vendor_form"],
+                "Standard mapping": x["standard_mapping"], "Vendor mapping": x["vendor_mapping"],
+                "Verdict": x["verdict"].replace("_", " "), "What to do": x["advice"],
+            } for x in cmpr.get("pairs", [])] or [{"note": "no aligned questions"}]
+            ).to_excel(xw, sheet_name="CRF vs CRF", index=False)
+            pd.DataFrame(cmpr.get("standard_only", []) or [{"note": "none"}]
+            ).to_excel(xw, sheet_name="Standards CRF only", index=False)
+            pd.DataFrame(cmpr.get("vendor_only", []) or [{"note": "none"}]
+            ).to_excel(xw, sheet_name="Vendor CRF only", index=False)
     return FileResponse(out, filename="acrf_check.xlsx")
 
 
