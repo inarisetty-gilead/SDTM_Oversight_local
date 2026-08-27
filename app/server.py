@@ -410,7 +410,8 @@ def delete_study(study_id: str):
 
 
 # ── filesystem browser ──────────────────────────────────────────────────────
-DATA_EXT = {".sas7bdat", ".xpt", ".csv", ".parquet", ".xlsx", ".xls", ".xlsm", ".txt", ".tsv"}
+DATA_EXT = {".sas7bdat", ".xpt", ".csv", ".parquet", ".xlsx", ".xls", ".xlsm", ".txt", ".tsv",
+            ".pdf"}   # the aCRF check reads annotated CRF PDFs
 
 
 @app.get("/api/browse")
