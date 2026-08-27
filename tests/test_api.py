@@ -562,6 +562,30 @@ def test_custom_functions_apply_and_templates_can_be_switched_off():
         assert vars_["DTHFL"]["method_source"] != "custom"
 
 
+def test_acrf_check_saves_with_the_study():
+    """The aCRF check runs through the API, and its paths + report persist in the session
+    so a reopened study shows the last check without re-running."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_acrf import _make_acrf
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        pdf = tmp / "acrf.pdf"
+        _make_acrf(pdf)
+        client, _srv = _client(Path(td) / "runs")
+        r = client.post("/api/acrf", json={"acrf": str(pdf),
+                                           "standards": str(tmp / "mapping_spec.xlsx"),
+                                           "ta": ""})
+        assert r.status_code == 200
+        rep = r.json()["report"]
+        assert rep["counts"]["off_standard"] == 2
+        got = client.get("/api/acrf").json()
+        assert got["acrf"] == str(pdf) and got["report"]["pages"] == 2
+
+        # a missing standards path refuses with a named reason, not a stack trace
+        bad = client.post("/api/acrf", json={"acrf": str(pdf), "standards": str(tmp / "no.xlsx")})
+        assert bad.status_code == 400
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

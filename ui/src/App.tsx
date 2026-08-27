@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import {
   Database, FileSpreadsheet, GitCompare, Layers, Settings2, ShieldCheck, Sparkles,
-  FunctionSquare,
+  FileSearch, FunctionSquare,
 } from "lucide-react"
 import { api } from "@/api"
 import type { BuildResults, CompareRow, JobState, RawInfo, SpecInfo } from "@/api"
@@ -15,9 +15,10 @@ import { StudiesView } from "@/views/StudiesView"
 import { BuildView } from "@/views/BuildView"
 import { CompareView } from "@/views/CompareView"
 import { FunctionsView } from "@/views/FunctionsView"
+import { CrfView } from "@/views/CrfView"
 import { DomainView } from "@/views/DomainView"
 
-type View = "studies" | "setup" | "spec" | "build" | "functions" | "compare" | { domain: string }
+type View = "studies" | "setup" | "spec" | "build" | "functions" | "compare" | "acrf" | { domain: string }
 
 export default function App() {
   const [view, setView] = useState<View>("studies")
@@ -259,6 +260,8 @@ export default function App() {
                       onClick={() => setView("compare")}
                       meta={compare?.length || undefined}
                       tone={compare?.some((c) => c.status === "differences") ? "red" : "green"} />
+            <RailItem icon={<FileSearch className="h-4 w-4" />} label="aCRF"
+                      active={view === "acrf"} onClick={() => setView("acrf")} tone="violet" />
           </RailSection>
 
           {okDomains.length > 0 && (
@@ -301,6 +304,7 @@ export default function App() {
             {view === "functions" && (
               <FunctionsView specDomains={spec?.domains ?? []} ready={!!spec && !!raw} />
             )}
+            {view === "acrf" && <CrfView />}
             {view === "compare" && (
               <CompareView vendorPath={vendorPath} setVendorPath={setVendorPath}
                            rows={compare} job={job?.kind === "compare" ? job : null}

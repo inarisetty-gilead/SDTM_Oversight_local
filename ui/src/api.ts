@@ -172,6 +172,18 @@ export interface FnContext {
   variables: Array<{ variable: string }>
 }
 
+export interface AcrfRow {
+  page: number; kind: string; domain: string; variable: string; value: string
+  text: string; verdict: string; advice: string
+}
+export interface AcrfMissing {
+  domain: string; variable: string; label: string; origin: string; advice: string
+}
+export interface AcrfReport {
+  pages: number; rows: AcrfRow[]; missing: AcrfMissing[]
+  counts: Record<string, number>; domains_annotated: string[]; origins_recorded: boolean
+}
+
 const post = <T,>(p: string, b?: unknown) =>
   call<T>(p, { method: "POST", body: JSON.stringify(b ?? {}) })
 
@@ -223,6 +235,10 @@ export const api = {
   domainSettings: (d: string, b: unknown) => post(`/api/domain/${d}/settings`, b),
   domainDedup: (d: string, b: unknown) => post(`/api/domain/${d}/dedup`, b),
   rebuild: (d: string) => post(`/api/domain/${d}/build`),
+  getAcrf: () => call<{ acrf: string; standards: string; ta: string; report: AcrfReport | null }>("/api/acrf"),
+  runAcrf: (b: { acrf: string; standards: string; ta: string }) =>
+    post<{ ok: boolean; report: AcrfReport }>("/api/acrf", b),
+
   listFunctions: () => call<{ templates: TemplateFn[]; custom: CustomFn[] }>("/api/functions"),
   saveFunction: (fn: CustomFn) => post("/api/functions", fn),
   deleteFunction: (name: string) =>

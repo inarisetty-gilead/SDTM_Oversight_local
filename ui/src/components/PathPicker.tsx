@@ -8,13 +8,14 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 type Entry = { name: string; path: string; size?: number }
 
 export function PathPicker({
-  open, mode, start, onClose, onPick,
+  open, mode, start, onClose, onPick, accept,
 }: {
   open: boolean
   mode: "file" | "dir"
   start: string
   onClose: () => void
   onPick: (path: string) => void
+  accept?: RegExp
 }) {
   const [cwd, setCwd] = useState("")
   const [parent, setParent] = useState<string | null>(null)
@@ -30,11 +31,11 @@ export function PathPicker({
       const d = await api.browse(path)
       setCwd(d.path); setParent(d.parent); setDirs(d.dirs)
       setFiles(mode === "file"
-        ? d.files.filter((f) => /\.(xlsx|xlsm|xls)$/i.test(f.name))
+        ? d.files.filter((f) => (accept ?? /\.(xlsx|xlsm|xls)$/i).test(f.name))
         : d.files)
       setShortcuts(d.shortcuts)
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
-  }, [mode])
+  }, [mode, accept])
 
   useEffect(() => { if (open) void load(start) }, [open, start, load])
 

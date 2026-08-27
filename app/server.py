@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from sdtm_builder import __version__, prep as prep_module, report
+from sdtm_builder import __version__, acrf as acrf_module, prep as prep_module, report
 from sdtm_builder.build import build_domain, build_study
 from sdtm_builder.compare import compare_study, discover_vendor
 from sdtm_builder.rawio import RawStore
@@ -60,6 +60,10 @@ class Session:
     pipelines: dict = field(default_factory=dict)    # DOMAIN -> [prep step, ...]
     draft_pipelines: dict = field(default_factory=dict)  # DOMAIN -> steps being edited, not yet applied
     custom_fns: dict = field(default_factory=dict)       # name -> user-defined derivation
+    acrf_path: str = ""                              # annotated CRF PDF
+    standards_path: str = ""                         # standards mapping workbook
+    ta_path: str = ""                                # therapeutic-area spec workbook
+    acrf_report: dict | None = None                  # last aCRF check
     template_overrides: dict = field(default_factory=dict)  # VARIABLE -> {"enabled": False}
     preview_outputs: set = field(default_factory=set)  # prepared datasets from an unapplied run
     study_id: str = ""
@@ -288,6 +292,9 @@ def _autosave() -> None:
     study.draft_pipelines = SESSION.draft_pipelines
     study.custom_fns = SESSION.custom_fns
     study.template_overrides = SESSION.template_overrides
+    study.acrf_path, study.standards_path, study.ta_path = (
+        SESSION.acrf_path, SESSION.standards_path, SESSION.ta_path)
+    study.acrf_report = SESSION.acrf_report
     study.dedups = SESSION.dedups
     if SESSION.out_dir:
         study.last_run = SESSION.out_dir
@@ -309,6 +316,9 @@ def _apply_study(study: Study) -> None:
     SESSION.draft_pipelines = dict(study.draft_pipelines)
     SESSION.custom_fns = dict(study.custom_fns)
     SESSION.template_overrides = dict(study.template_overrides)
+    SESSION.acrf_path, SESSION.standards_path, SESSION.ta_path = (
+        study.acrf_path, study.standards_path, study.ta_path)
+    SESSION.acrf_report = study.acrf_report or None
     SESSION.dedups = dict(study.dedups)
     # reopen the inputs so the reader lands where they left off, not on an empty form
     SESSION.open_problems = []
@@ -1374,6 +1384,43 @@ def dataset_columns(domain: str, dataset: str):
 
 
 # ── the data-preparation pipeline ───────────────────────────────────────────
+# ── the annotated-CRF check ─────────────────────────────────────────────────
+class AcrfIn(BaseModel):
+    acrf: str
+    standards: str
+    ta: str = ""
+
+
+@app.get("/api/acrf")
+def get_acrf():
+    return {"acrf": SESSION.acrf_path, "standards": SESSION.standards_path,
+            "ta": SESSION.ta_path, "report": SESSION.acrf_report}
+
+
+@app.post("/api/acrf")
+def run_acrf(body: AcrfIn):
+    """Extract the SDTM annotations from the aCRF and judge each against the standards
+    mapping (and the TA spec) — plus the reverse look at what was never annotated."""
+    for label, path in (("annotated CRF", body.acrf), ("standards mapping", body.standards)):
+        if not s(path):
+            raise HTTPException(400, f"point at the {label} first")
+        if not Path(path).expanduser().exists():
+            raise HTTPException(400, _fs_hint(f"the {label} was not found at {path}"))
+    if s(body.ta) and not Path(body.ta).expanduser().exists():
+        raise HTTPException(400, _fs_hint(f"the TA spec was not found at {body.ta}"))
+    try:
+        report = acrf_module.check(Path(body.acrf).expanduser(),
+                                   Path(body.standards).expanduser(),
+                                   Path(body.ta).expanduser() if s(body.ta) else None)
+    except acrf_module.AcrfError as exc:
+        raise HTTPException(400, str(exc))
+    SESSION.acrf_path, SESSION.standards_path = body.acrf, body.standards
+    SESSION.ta_path = body.ta
+    SESSION.acrf_report = report
+    _autosave()
+    return {"ok": True, "report": report}
+
+
 # ── the function library: template derivations + the user's own ────────────
 class FnIn(BaseModel):
     name: str

@@ -48,6 +48,10 @@ class Study:
     pipelines: dict = field(default_factory=dict)
     draft_pipelines: dict = field(default_factory=dict)   # prep steps still being edited
     custom_fns: dict = field(default_factory=dict)        # the user's function library
+    acrf_path: str = ""
+    standards_path: str = ""
+    ta_path: str = ""
+    acrf_report: dict | None = None
     template_overrides: dict = field(default_factory=dict)
     dedups: dict = field(default_factory=dict)
     last_run: str = ""
