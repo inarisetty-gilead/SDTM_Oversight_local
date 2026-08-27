@@ -236,8 +236,8 @@ export const api = {
   domainSettings: (d: string, b: unknown) => post(`/api/domain/${d}/settings`, b),
   domainDedup: (d: string, b: unknown) => post(`/api/domain/${d}/dedup`, b),
   rebuild: (d: string) => post(`/api/domain/${d}/build`),
-  getAcrf: () => call<{ acrf: string; standards: string; ta: string; report: AcrfReport | null }>("/api/acrf"),
-  runAcrf: (b: { acrf: string; standards: string; ta: string }) =>
+  getAcrf: () => call<{ acrf: string; standards: string; ta: string; ecrf?: string; report: AcrfReport | null }>("/api/acrf"),
+  runAcrf: (b: { acrf: string; standards: string; ta: string; ecrf?: string }) =>
     post<{ ok: boolean; report: AcrfReport }>("/api/acrf", b),
 
   listFunctions: () => call<{ templates: TemplateFn[]; custom: CustomFn[] }>("/api/functions"),

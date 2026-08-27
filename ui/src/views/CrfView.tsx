@@ -27,21 +27,23 @@ export function CrfView() {
   const [acrf, setAcrf] = useState("")
   const [standards, setStandards] = useState("")
   const [ta, setTa] = useState("")
+  const [ecrf, setEcrf] = useState("")
   const [report, setReport] = useState<AcrfReport | null>(null)
-  const [browse, setBrowse] = useState<"" | "acrf" | "standards" | "ta">("")
+  const [browse, setBrowse] = useState<"" | "acrf" | "standards" | "ta" | "ecrf">("")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState("")
 
   useEffect(() => {
     void api.getAcrf().then((r) => {
-      setAcrf(r.acrf); setStandards(r.standards); setTa(r.ta); setReport(r.report)
+      setAcrf(r.acrf); setStandards(r.standards); setTa(r.ta)
+      setEcrf(r.ecrf ?? ""); setReport(r.report)
     }).catch(() => {})
   }, [])
 
   const run = async () => {
     setBusy(true); setErr("")
     try {
-      const r = await api.runAcrf({ acrf, standards, ta })
+      const r = await api.runAcrf({ acrf, standards, ta, ecrf })
       setReport(r.report)
     } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
@@ -77,18 +79,25 @@ export function CrfView() {
             <PathField value={ta} onChange={setTa} mode="file"
                        placeholder="/path/to/ta_spec.xlsx" onBrowse={() => setBrowse("ta")} />
           </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">eCRF spec (.xlsx — optional, supplies the question text)</Label>
+            <PathField value={ecrf} onChange={setEcrf} mode="file"
+                       placeholder="/path/to/ecrf_spec.xlsx" onBrowse={() => setBrowse("ecrf")} />
+          </div>
         </div>
         {err && <div className="mt-3"><Callout tone="bad">{err}</Callout></div>}
       </Panel>
 
       <PathPicker open={browse !== ""} mode="file"
                   accept={browse === "acrf" ? PDF_RE : undefined}
-                  start={(browse === "acrf" ? acrf : browse === "standards" ? standards : ta) || acrf || standards}
+                  start={(browse === "acrf" ? acrf : browse === "standards" ? standards
+                          : browse === "ta" ? ta : ecrf) || acrf || standards}
                   onClose={() => setBrowse("")}
                   onPick={(p) => {
                     if (browse === "acrf") setAcrf(p)
                     else if (browse === "standards") setStandards(p)
-                    else setTa(p)
+                    else if (browse === "ta") setTa(p)
+                    else setEcrf(p)
                     setBrowse("")
                   }} />
 

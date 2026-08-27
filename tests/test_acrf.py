@@ -43,7 +43,7 @@ def _make_acrf(path: Path) -> None:
     w.add_annotation(0, FreeText(text="OE.OELAT", rect=(300, 690, 420, 710)))
     boxes_p1 = ["AETERM", "AESTDTC", "AETRM", "NOT SUBMITTED"]          # AETRM: typo
     boxes_p2 = ["DM.ARMCD", "VSTESTCD = SYSBP", "ZZ.ZZVAR", "SUPPAE.AESOURCE"]
-    y = 700
+    y = 560                     # well away from the OE question — these have no question
     for t in boxes_p1:
         w.add_annotation(0, FreeText(text=t, rect=(50, y - 20, 250, y)))
         y -= 40
@@ -97,6 +97,29 @@ def test_acrf_check_judges_every_annotation():
         missing_vars = {m["variable"] for m in report["missing"] if m["domain"] == "AE"}
         assert "AEDECOD" in missing_vars or len(missing_vars) > 0
         assert report["counts"]["off_standard"] == 3   # AETRM + ZZ.ZZVAR + OE (not in fixture standards)
+
+
+def test_questions_fill_from_the_ecrf_spec():
+    """When the PDF has no question text, an eCRF spec supplies it: matched by the
+    annotation's variable directly, or via the standards' Input Variables."""
+    import pandas as pd
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        pdf = tmp / "acrf.pdf"
+        _make_acrf(pdf)
+        ecrf = tmp / "ecrf_spec.xlsx"
+        with pd.ExcelWriter(ecrf) as xw:
+            pd.DataFrame({"Variable Name": ["AETERM", "ARMCD"],
+                          "Label": ["What is the adverse event term?",
+                                    "Planned arm code"]}).to_excel(
+                xw, sheet_name="Adverse Events", index=False)
+        report = acrf.check(pdf, tmp / "mapping_spec.xlsx", None, ecrf)
+        by = {r["variable"]: r for r in report["rows"] if r["variable"]}
+        assert by["AETERM"]["question"] == "What is the adverse event term?"
+        assert by["ARMCD"]["question"] == "Planned arm code"
+        # a PDF-supplied question is never overwritten by the eCRF spec
+        assert by["OELAT"]["question"] == "What is the laterality of the eye?"
+        assert any("eCRF spec" in n for n in report["notes"])
 
 
 def test_acrf_refuses_bad_inputs():

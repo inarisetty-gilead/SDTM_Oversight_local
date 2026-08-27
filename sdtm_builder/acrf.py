@@ -105,13 +105,15 @@ def _question_for(lines: list[tuple[float, float, str]], y: float, own: str,
     def usable(t: str) -> bool:
         return bool(t) and t != own and own not in t and not is_annotation(t) \
             and not t.strip().isdigit()
+    # a question BELONGS to its annotation only nearby — text half a page away is some
+    # other field's wording, and a wrong question is worse than none
     same = [t for ly, _x, t in lines if abs(ly - y) <= 6 and usable(t)]
     if same:
         return same[0][:140]
-    above = [(ly, t) for ly, _x, t in lines if ly > y + 6 and usable(t)]
+    above = [(ly, t) for ly, _x, t in lines if 6 < ly - y <= 40 and usable(t)]
     if above:
         return min(above, key=lambda p: p[0] - y)[1][:140]
-    below = [(ly, t) for ly, _x, t in lines if ly < y - 6 and usable(t)]
+    below = [(ly, t) for ly, _x, t in lines if 6 < y - ly <= 20 and usable(t)]
     if below:
         return max(below, key=lambda p: p[0])[1][:140]
     return ""
@@ -256,12 +258,83 @@ def load_standard(path: str | Path) -> dict:
         vars_ = {}
         for r in spec.rows(dom):
             if r.variable:
-                vars_[upper(r.variable)] = {"label": r.label, "origin": r.origin}
+                vars_[upper(r.variable)] = {"label": r.label, "origin": r.origin,
+                                            "input": r.input_variables}
         if vars_:
             out[upper(dom)] = vars_
     if not out:
         raise AcrfError(f"{p.name} has no sheets with a Variable column — is it a spec?")
     return out
+
+
+def load_ecrf(path: str | Path) -> dict:
+    """{RAW VARIABLE: {"form", "label"}} from an eCRF spec — one worksheet per form,
+    with the collected variable names and their question text (the Label column).
+    This is where CRF questions live when the aCRF PDF draws its form as graphics."""
+    import pandas as pd
+    p = Path(path)
+    if not p.exists():
+        raise AcrfError(f"{p} does not exist")
+    try:
+        xl = pd.ExcelFile(p)
+    except Exception as exc:
+        raise AcrfError(f"could not read {p.name} as a workbook: {exc}") from exc
+    out: dict[str, dict] = {}
+    for sheet in xl.sheet_names:
+        try:
+            probe = xl.parse(sheet, header=None, nrows=12)
+        except Exception:
+            continue
+        header_row = None
+        for i in range(len(probe)):
+            cells = [str(c).strip().lower() for c in probe.iloc[i].tolist()]
+            if any("variable" in c for c in cells) and any(c.startswith("label") or "question" in c for c in cells):
+                header_row = i
+                break
+        if header_row is None:
+            continue
+        df = xl.parse(sheet, header=header_row)
+        cols = {str(c).strip().lower(): c for c in df.columns}
+        var_col = next((cols[c] for c in cols if "variable" in c), None)
+        q_col = next((cols[c] for c in cols if c.startswith("label") or "question" in c), None)
+        if not (var_col and q_col):
+            continue
+        for _i, row in df.iterrows():
+            var, q = s(row.get(var_col)), s(row.get(q_col))
+            if var and q and upper(var) not in out:
+                out[upper(var)] = {"form": str(sheet), "label": q}
+    if not out:
+        raise AcrfError(f"{p.name} has no sheets with Variable Name and Label columns — "
+                        "is it an eCRF spec?")
+    return out
+
+
+TOKEN_SPLIT_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+
+
+def _fill_questions_from_ecrf(rows: list[dict], standards: dict, ta: dict,
+                              ecrf: dict) -> int:
+    """Where the PDF gave no question, take it from the eCRF spec: the annotation's
+    variable is looked up directly, then via the standards' Input Variables (the raw
+    names the SDTM variable is mapped from). Returns how many were filled."""
+    filled = 0
+    for r in rows:
+        if r.get("question") or not r.get("variable"):
+            continue
+        var = upper(r["variable"])
+        candidates = [var]
+        for spec in (standards, ta):
+            for dom, vars_ in (spec or {}).items():
+                meta = vars_.get(var)
+                if meta and meta.get("input"):
+                    candidates += [upper(t) for t in TOKEN_SPLIT_RE.findall(meta["input"])]
+        hit = next((ecrf[c] for c in candidates if c in ecrf), None)
+        if hit:
+            r["question"] = hit["label"][:140]
+            if not r.get("form"):
+                r["form"] = hit["form"][:80]
+            filled += 1
+    return filled
 
 
 def _domains_for(var: str, *specs: dict) -> list[str]:
@@ -274,11 +347,14 @@ def _domains_for(var: str, *specs: dict) -> list[str]:
 
 
 def check(pdf_path: str | Path, standards_path: str | Path,
-          ta_path: str | Path | None = None) -> dict:
+          ta_path: str | Path | None = None,
+          ecrf_path: str | Path | None = None) -> dict:
     """The whole aCRF check: extraction, verdict per annotation, and the reverse look —
-    what the standards say is collected on the CRF but was never annotated."""
+    what the standards say is collected on the CRF but was never annotated. An eCRF spec,
+    when given, supplies the question text the PDF itself cannot."""
     standards = load_standard(standards_path)
     ta = load_standard(ta_path) if s(ta_path) else {}
+    ecrf = load_ecrf(ecrf_path) if s(ecrf_path) else {}
     known_domains = set(standards) | set(ta) | {f"SUPP{d}" for d in set(standards) | set(ta)}
     known_prefixes = {d[:2] for d in set(standards) | set(ta)} | {"SU"}
 
@@ -378,18 +454,22 @@ def check(pdf_path: str | Path, standards_path: str | Path,
                                        "(the standards workbook records no origins, so "
                                        "derived variables appear here too).")})
     notes = []
-    if rows and not any(r.get("question") for r in rows):
+    pdf_had_questions = any(r.get("question") for r in rows)
+    filled_from_ecrf = _fill_questions_from_ecrf(rows, standards, ta, ecrf) if ecrf else 0
+    if filled_from_ecrf:
+        notes.append(f"{filled_from_ecrf} question(s) came from the eCRF spec — matched by "
+                     "the annotation's variable and the standards' input variables.")
+    if rows and not pdf_had_questions and not filled_from_ecrf:
         imgs = _image_pages(pdf_path)
-        if imgs:
-            notes.append(
-                f"{imgs} page(s) draw the CRF as an image — the questions themselves are "
-                "not text in this PDF, so the CRF-question column stays blank. The "
-                "annotations were still read from the text layer.")
-        else:
-            notes.append(
-                "No CRF question wording was found in this PDF's text — it appears to "
-                "carry only the annotations as text (the form itself is likely an image "
-                "or a separate layer), so the CRF-question column stays blank.")
+        why = (f"{imgs} page(s) draw the CRF as an image" if imgs
+               else "this PDF's text carries only the annotations — the form itself is "
+                    "drawn as graphics")
+        notes.append(
+            f"No CRF question wording could be read: {why}. "
+            + ("The eCRF spec gave no matches either — check its Variable Name column "
+               "against the standards' Input Variables." if ecrf else
+               "Point the check at your eCRF spec (optional field) and the questions "
+               "will be filled from its Label column instead."))
     counts = {"annotations": len([r for r in rows if r["verdict"] != "note"]),
               "matched": len([r for r in rows if r["verdict"] == "matched"]),
               "ta_only": len([r for r in rows if r["verdict"] == "ta_only"]),

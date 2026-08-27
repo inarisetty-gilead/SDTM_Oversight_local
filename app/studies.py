@@ -49,6 +49,7 @@ class Study:
     draft_pipelines: dict = field(default_factory=dict)   # prep steps still being edited
     custom_fns: dict = field(default_factory=dict)        # the user's function library
     acrf_path: str = ""
+    ecrf_path: str = ""
     standards_path: str = ""
     ta_path: str = ""
     acrf_report: dict | None = None
