@@ -120,15 +120,19 @@ REGISTRY: list[Template] = [
 
 
 def apply_templates(blocks: list[Block], store, domain: str, base_ds: str,
-                    disabled: set[str] | None = None) -> list[str]:
+                    overrides: dict | None = None) -> list[str]:
     """Fill unmapped variables from the template registry. Returns what was applied.
-    `disabled` names templates the user switched off in the function library."""
+
+    `overrides` comes from the function library: per variable, {"enabled": False} keeps a
+    template out of the build entirely, and {"edit": {...}} adjusts the derivation the
+    template produced — the user saw it in the Functions section and changed it."""
     dom = upper(domain)
-    off = {upper(x) for x in (disabled or ())}
+    overrides = {upper(k): v for k, v in (overrides or {}).items()}
     by_var = {b.variable: b for b in blocks}
     applied = []
     for t in REGISTRY:
-        if dom not in t.domains or t.variable in off:
+        ov = overrides.get(t.variable) or {}
+        if dom not in t.domains or ov.get("enabled") is False:
             continue
         b = by_var.get(t.variable)
         # each template guards its own applicability; the loop only enforces that a hand
@@ -138,6 +142,14 @@ def apply_templates(blocks: list[Block], store, domain: str, base_ds: str,
         note = t.apply(b, by_var, store, base_ds)
         if note is None:
             continue
+        edit = ov.get("edit") or {}
+        if edit:
+            for k in ("dataset", "column", "value"):
+                if edit.get(k) is not None:
+                    setattr(b, k, edit[k])
+            if edit.get("args"):
+                b.args = {**(b.args or {}), **edit["args"]}
+            note += " — adjusted by you in the function library"
         b.method_source = "template"
         b.confidence = 95
         b.reason = f"standard derivation from the {t.source}: {note}"

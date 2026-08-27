@@ -145,7 +145,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
                  edits: dict[str, dict] | None = None,
                  dedup: dict | None = None,
                  custom_fns: dict | None = None,
-                 templates_off: set[str] | None = None,
+                 template_overrides: dict | None = None,
                  name_match_threshold: int = automap.DEFAULT_THRESHOLD) -> DomainResult:
     dom = upper(domain)
     rows = spec.rows(dom)
@@ -275,7 +275,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
     # a fuzzy guess. Each application is labelled and editable like any other mapping.
     from . import templates as templates_mod
     applied = templates_mod.apply_templates(blocks, store, dom, base_name,
-                                            disabled=templates_off)
+                                            overrides=template_overrides)
     if applied:
         result.warnings.append(
             f"{len(applied)} variable(s) use standard template derivations: "
@@ -484,7 +484,7 @@ def build_study(spec: Spec, store: RawStore, domains: list[str] | None = None,
                 edits: dict[str, dict] | None = None,
                 dedups: dict[str, dict] | None = None,
                 custom_fns: dict | None = None,
-                templates_off: set[str] | None = None,
+                template_overrides: dict | None = None,
                 name_match_threshold: int = automap.DEFAULT_THRESHOLD,
                 progress=None) -> dict[str, DomainResult]:
     """Build every requested domain, in dependency order. A domain that fails is recorded
@@ -518,7 +518,7 @@ def build_study(spec: Spec, store: RawStore, domains: list[str] | None = None,
                            prep_override=prep_overrides.get(dom),
                            prep_steps=prep_pipelines.get(dom),
                            edits=edits.get(dom), dedup=dedups.get(dom),
-                           custom_fns=custom_fns, templates_off=templates_off,
+                           custom_fns=custom_fns, template_overrides=template_overrides,
                            name_match_threshold=name_match_threshold)
         results[dom] = res
         if res.ok:

@@ -3,9 +3,9 @@
 // every variable they fill. No JSON anywhere: the same dropdown builders as the
 // variable editor.
 import { useCallback, useEffect, useRef, useState } from "react"
-import { FunctionSquare, Plus, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronRight, FunctionSquare, Plus, Trash2 } from "lucide-react"
 import { api } from "@/api"
-import type { CustomFn, DomainDetail, TemplateFn } from "@/api"
+import type { CustomFn, DomainDetail, TemplateFn, TemplateResolved } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -71,20 +71,10 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
       {err && <Callout tone="bad">{err}</Callout>}
 
       <Panel title="Standard derivations from the SAS templates"
-             description="These fill variables the spec leaves without a workable mapping — only when their inputs exist in the study. Switch one off to keep it out of every build. To change HOW one applied, open the variable in its domain: it is editable like any other mapping.">
+             description="These fill variables the spec leaves without a workable mapping — only when their inputs exist in the study. Switch one off to keep it out of every build. Open one to see the derivation as it resolved for THIS study — and change it; the change applies on the next build.">
         <div className="divide-y">
           {templates.map((t) => (
-            <div key={t.variable} className="flex flex-wrap items-center gap-3 py-2">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={t.enabled}
-                       onChange={(e) => void api.toggleTemplate(t.variable, e.target.checked).then(refresh)} />
-                <Mono>{t.variable}</Mono>
-              </label>
-              <Chip tone="violet">template</Chip>
-              <span className="text-xs text-muted-foreground">{t.domains.join(", ")}</span>
-              <span className="flex-1 text-xs">{t.describe}</span>
-              <span className="text-[11px] text-muted-foreground">{t.source}</span>
-            </div>
+            <TemplateRow key={t.variable} t={t} refresh={refresh} />
           ))}
         </div>
       </Panel>
@@ -208,6 +198,197 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
           </div>
         </Panel>
       )}
+    </div>
+  )
+}
+
+
+// ── the template derivations, resolved for this study and editable in place ──
+
+function useCols(domain: string, dataset?: string) {
+  const [cols, setCols] = useState<string[]>([])
+  useEffect(() => {
+    let alive = true
+    if (!domain || !dataset) { setCols([]); return }
+    void api.columns(domain, dataset)
+      .then((r) => { if (alive) setCols(r.columns) })
+      .catch(() => { if (alive) setCols([]) })
+    return () => { alive = false }
+  }, [domain, dataset])
+  return cols
+}
+
+function PickCol({ value, options, onChange, width = "w-44", placeholder = "—" }: {
+  value?: string; options: string[]; onChange: (v: string) => void
+  width?: string; placeholder?: string
+}) {
+  const all = value && !options.includes(value) ? [value, ...options] : options
+  return (
+    <Select value={value || "__none"} onValueChange={(v) => onChange(v === "__none" ? "" : v)}>
+      <SelectTrigger className={`h-8 ${width} text-xs`}><SelectValue placeholder={placeholder} /></SelectTrigger>
+      <SelectContent className="max-h-64">
+        <SelectItem value="__none" className="text-xs">—</SelectItem>
+        {all.map((c) => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  )
+}
+
+function TemplateRow({ t, refresh }: { t: TemplateFn; refresh: () => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="py-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={t.enabled}
+                 onChange={(e) => void api.saveTemplate(t.variable, { enabled: e.target.checked }).then(refresh)} />
+          <Mono>{t.variable}</Mono>
+        </label>
+        <Chip tone="violet">template</Chip>
+        {t.edit && <Chip tone="blue">adjusted</Chip>}
+        <span className="text-xs text-muted-foreground">{t.domains.join(", ")}</span>
+        <span className="flex-1 text-xs">{t.describe}</span>
+        <span className="text-[11px] text-muted-foreground">{t.source}</span>
+        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setOpen(!open)}>
+          {open ? <ChevronDown className="mr-1 h-3.5 w-3.5" /> : <ChevronRight className="mr-1 h-3.5 w-3.5" />}
+          derivation
+        </Button>
+      </div>
+      {open && <TemplateDerivation t={t} refresh={refresh} />}
+    </div>
+  )
+}
+
+function TemplateDerivation({ t, refresh }: { t: TemplateFn; refresh: () => void }) {
+  const r = t.resolved
+  const [saving, setSaving] = useState(false)
+  const save = (edit: Record<string, unknown>) => {
+    setSaving(true)
+    void api.saveTemplate(t.variable, { edit: { ...(t.edit ?? {}), ...edit } })
+      .then(refresh).finally(() => setSaving(false))
+  }
+  const clear = () => {
+    setSaving(true)
+    void api.saveTemplate(t.variable, { clear_edit: true }).then(refresh).finally(() => setSaving(false))
+  }
+
+  if (!r) {
+    return (
+      <div className="mt-2 rounded-md border bg-muted/30 p-2.5 text-xs text-muted-foreground">
+        Not applied in the last build — build {t.domains.join("/")} first to see how this
+        derivation resolves for your study (it also stays out when its inputs are missing,
+        or when the spec already maps the variable).
+        {t.edit && (
+          <span className="ml-2">A saved adjustment is waiting for the next build.{" "}
+            <button className="underline" onClick={clear}>Remove it</button></span>)}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-2 space-y-2 rounded-md border bg-muted/30 p-2.5">
+      <p className="text-xs">{r.reason}</p>
+      {r.recipe === "age" && <AgeForm r={r} save={save} />}
+      {r.recipe !== "age" && r.mtype === "assign" && <AssignForm r={r} save={save} />}
+      {r.recipe !== "age" && r.mtype === "constant" && <ConstantForm r={r} save={save} />}
+      {r.recipe === "cond" && <CondSourceForm r={r} save={save} />}
+      <p className="text-[11px] text-muted-foreground">
+        {saving ? "saving…" : "Changes save into the study and apply when you next build."}
+        {t.edit && <>{" · "}<button className="underline" onClick={clear}>back to the template's own derivation</button></>}
+      </p>
+    </div>
+  )
+}
+
+/** AGE: reported age column first, birth→reference whole years underneath. */
+function AgeForm({ r, save }: {
+  r: TemplateResolved; save: (e: Record<string, unknown>) => void
+}) {
+  const a = r.args as { age_col?: string; age_dataset?: string; birth_var?: string; ref_var?: string }
+  const [ctxDatasets, setCtxDatasets] = useState<string[]>([])
+  const [vars, setVars] = useState<string[]>([])
+  useEffect(() => {
+    void api.fnContext(r.domain).then((c) => {
+      setCtxDatasets(c.datasets); setVars(c.variables.map((v) => v.variable))
+    }).catch(() => {})
+  }, [r.domain])
+  const cols = useCols(r.domain, a.age_dataset || undefined)
+  const patch = (args: Record<string, unknown>) => save({ args: { ...a, ...args } })
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+      <span className="text-muted-foreground">reported age from</span>
+      <PickCol value={a.age_dataset} options={ctxDatasets} placeholder="dataset"
+               onChange={(v) => patch({ age_dataset: v, age_col: "" })} />
+      <PickCol value={a.age_col} options={cols.length ? cols : (a.age_col ? [a.age_col] : [])}
+               placeholder="age column" onChange={(v) => patch({ age_col: v })} />
+      <span className="text-muted-foreground">— records with none collected get whole years from</span>
+      <PickCol value={a.birth_var} options={vars} width="w-36" onChange={(v) => patch({ birth_var: v })} />
+      <span className="text-muted-foreground">to</span>
+      <PickCol value={a.ref_var} options={vars} width="w-36" onChange={(v) => patch({ ref_var: v })} />
+      <span className="text-muted-foreground">(anniversary rule; partial birth dates complete with 01)</span>
+    </div>
+  )
+}
+
+/** A straight column pick — DTHDTC's collected death date, AGEU's collected unit. */
+function AssignForm({ r, save }: {
+  r: TemplateResolved; save: (e: Record<string, unknown>) => void
+}) {
+  const [ctxDatasets, setCtxDatasets] = useState<string[]>([])
+  useEffect(() => {
+    void api.fnContext(r.domain).then((c) => setCtxDatasets(c.datasets)).catch(() => {})
+  }, [r.domain])
+  const [ds, setDs] = useState(r.dataset)
+  const cols = useCols(r.domain, ds || undefined)
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+      <span className="text-muted-foreground">take the value from</span>
+      <PickCol value={ds} options={ctxDatasets} placeholder="dataset"
+               onChange={(v) => setDs(v)} />
+      <PickCol value={ds === r.dataset ? r.column : ""} options={cols} placeholder="column"
+               onChange={(v) => v && save({ dataset: ds, column: v })} />
+    </div>
+  )
+}
+
+function ConstantForm({ r, save }: {
+  r: TemplateResolved; save: (e: Record<string, unknown>) => void
+}) {
+  const [v, setV] = useState(r.value)
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-muted-foreground">every record gets the fixed value</span>
+      <Input className="h-8 w-40 text-xs" value={v} onChange={(e) => setV(e.target.value)}
+             onBlur={() => v !== r.value && save({ value: v })} />
+    </div>
+  )
+}
+
+/** DTHFL: Y when a date exists in the chosen source. */
+function CondSourceForm({ r, save }: {
+  r: TemplateResolved; save: (e: Record<string, unknown>) => void
+}) {
+  const rules = (r.args as { rules?: Array<{ src?: { dataset?: string; column?: string } }> }).rules ?? []
+  const src = rules[0]?.src ?? {}
+  const [ctxDatasets, setCtxDatasets] = useState<string[]>([])
+  useEffect(() => {
+    void api.fnContext(r.domain).then((c) => setCtxDatasets(c.datasets)).catch(() => {})
+  }, [r.domain])
+  const [ds, setDs] = useState(src.dataset ?? "")
+  const cols = useCols(r.domain, ds || undefined)
+  const pick = (column: string) => {
+    if (!ds || !column) return
+    save({ args: { rules: [{ src: { dataset: ds, column }, op: "notmissing", value: "",
+                             then: { kind: "text", text: "Y" } }],
+                   else: { kind: "missing" } } })
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+      <span className="text-muted-foreground">set <Mono>Y</Mono> when a date exists in</span>
+      <PickCol value={ds} options={ctxDatasets} placeholder="dataset" onChange={setDs} />
+      <PickCol value={ds === src.dataset ? (src.column ?? "") : ""} options={cols}
+               placeholder="column" onChange={pick} />
+      <span className="text-muted-foreground">, blank otherwise</span>
     </div>
   )
 }

@@ -654,7 +654,7 @@ def start_build(body: BuildIn):
             prep_overrides={d: o["prep"] for d, o in ovr.items()
                             if o.get("prep_mode") == "custom" and o.get("prep")},
             prep_pipelines=SESSION.pipelines, edits=SESSION.edits, dedups=SESSION.dedups,
-            custom_fns=SESSION.custom_fns, templates_off=_templates_off(),
+            custom_fns=SESSION.custom_fns, template_overrides=SESSION.template_overrides,
             name_match_threshold=body.name_match,
             include_unbuilt=body.include_unbuilt, progress=tick)
         # Building a chosen subset ACCUMULATES: DM now, AE next, one by one — each build adds
@@ -995,7 +995,7 @@ def rebuild_domain(domain: str):
                            prep_override=ov.get("prep") if ov.get("prep_mode") == "custom" else None,
                            prep_steps=SESSION.pipelines.get(dom),
                            edits=SESSION.edits.get(dom), dedup=SESSION.dedups.get(dom),
-                           custom_fns=SESSION.custom_fns, templates_off=_templates_off(),
+                           custom_fns=SESSION.custom_fns, template_overrides=SESSION.template_overrides,
                            name_match_threshold=SESSION.name_match)
         SESSION.results[dom] = res
 
@@ -1167,10 +1167,6 @@ def recipes():
     return {"mtypes": ["assign", "constant", "sequence", "derived", "drop"], "recipes": RECIPES}
 
 
-def _templates_off() -> set:
-    return {v for v, ov in SESSION.template_overrides.items() if ov.get("enabled") is False}
-
-
 def _rebuild_one(dom: str, progress=None) -> "object":
     """Build a single domain with the session's current overrides, prep and edits."""
     ov = SESSION.overrides.get(dom, {})
@@ -1183,7 +1179,7 @@ def _rebuild_one(dom: str, progress=None) -> "object":
         prep_override=ov.get("prep") if ov.get("prep_mode") == "custom" else None,
         prep_steps=SESSION.pipelines.get(dom),
         edits=SESSION.edits.get(dom), dedup=SESSION.dedups.get(dom),
-        custom_fns=SESSION.custom_fns, templates_off=_templates_off(),
+        custom_fns=SESSION.custom_fns, template_overrides=SESSION.template_overrides,
         name_match_threshold=SESSION.name_match)
 
 
@@ -1396,9 +1392,21 @@ def list_functions():
     templates = []
     for t in templates_registry.REGISTRY:
         ov = SESSION.template_overrides.get(t.variable, {})
+        resolved = None
+        for dom in t.domains:
+            res = SESSION.results.get(upper(dom))
+            if res is None or not res.ok:
+                continue
+            b = next((x for x in res.blocks if x.variable == t.variable), None)
+            if b is not None and b.method_source == "template":
+                resolved = {"domain": upper(dom), "mtype": b.mtype, "dataset": b.dataset,
+                            "column": b.column, "value": b.value, "recipe": b.recipe,
+                            "args": b.args or {}, "reason": b.reason}
+                break
         templates.append({
             "variable": t.variable, "domains": list(t.domains), "source": t.source,
             "describe": t.describe, "enabled": ov.get("enabled", True) is not False,
+            "resolved": resolved, "edit": ov.get("edit") or None,
         })
     return {"templates": templates,
             "custom": sorted(SESSION.custom_fns.values(), key=lambda f: f.get("name", ""))}
@@ -1427,18 +1435,27 @@ def delete_function(name: str):
     return {"ok": True, "count": len(SESSION.custom_fns)}
 
 
-class TemplateToggle(BaseModel):
-    enabled: bool
+class TemplateSave(BaseModel):
+    enabled: bool | None = None
+    edit: dict | None = None          # {dataset?, column?, value?, args?} applied on top
+    clear_edit: bool = False
 
 
 @app.post("/api/functions/template/{variable}")
-def toggle_template(variable: str, body: TemplateToggle):
+def save_template(variable: str, body: TemplateSave):
     var = upper(variable)
     if var not in {t.variable for t in templates_registry.REGISTRY}:
         raise HTTPException(404, f"no template derivation for {var}")
-    SESSION.template_overrides[var] = {"enabled": body.enabled}
+    ov = dict(SESSION.template_overrides.get(var, {}))
+    if body.enabled is not None:
+        ov["enabled"] = body.enabled
+    if body.clear_edit:
+        ov.pop("edit", None)
+    elif body.edit is not None:
+        ov["edit"] = body.edit
+    SESSION.template_overrides[var] = ov
     _autosave()
-    return {"ok": True}
+    return {"ok": True, "override": ov}
 
 
 @app.get("/api/functions/context/{domain}")

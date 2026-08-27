@@ -489,6 +489,41 @@ def test_prep_draft_survives_a_refresh():
         assert client.get("/api/domain/DM").json()["pipeline_draft"] is None
 
 
+def test_template_derivation_is_visible_and_editable():
+    """The Functions section shows each template's derivation as it resolved for THIS
+    study, and a saved adjustment changes the next build — labelled as adjusted."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        client.post("/api/spec", json={"path": str(tmp / "mapping_spec.xlsx")})
+        client.post("/api/raw", json={"path": str(tmp / "raw")})
+        client.post("/api/build", json={"fmt": "none", "domains": ["DM"]})
+        assert _wait(client)["status"] == "done"
+
+        lib = {t["variable"]: t for t in client.get("/api/functions").json()["templates"]}
+        age = lib["AGE"]["resolved"]
+        assert age and age["recipe"] == "age" and age["args"]["birth_var"] == "BRTHDTC"
+        assert lib["AGEU"]["resolved"]["mtype"] == "constant"
+        assert lib["AGEU"]["resolved"]["value"] == "YEARS"
+
+        # adjust AGEU's constant; the next build carries it, labelled as adjusted
+        client.post("/api/functions/template/AGEU", json={"edit": {"value": "MONTHS"}})
+        client.post("/api/build", json={"fmt": "none", "domains": ["DM"]})
+        assert _wait(client)["status"] == "done"
+        vars_ = {v["variable"]: v for v in client.get("/api/domain/DM").json()["variables"]}
+        assert "adjusted by you" in vars_["AGEU"]["reason"]
+        page = client.get("/api/domain/DM/data").json()
+        names = [c["name"] for c in page["columns"]]
+        assert {row[names.index("AGEU")] for row in page["rows"]} == {"MONTHS"}
+
+        # clearing the edit restores the template's own derivation
+        client.post("/api/functions/template/AGEU", json={"clear_edit": True})
+        client.post("/api/build", json={"fmt": "none", "domains": ["DM"]})
+        assert _wait(client)["status"] == "done"
+        lib = {t["variable"]: t for t in client.get("/api/functions").json()["templates"]}
+        assert lib["AGEU"]["resolved"]["value"] == "YEARS" and lib["AGEU"]["edit"] is None
+
+
 def test_custom_functions_apply_and_templates_can_be_switched_off():
     """A saved custom function fills its variable on the next build, labelled `custom`;
     switching a template derivation off keeps it out of the build entirely."""

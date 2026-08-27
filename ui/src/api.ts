@@ -155,8 +155,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+export interface TemplateResolved {
+  domain: string; mtype: string; dataset: string; column: string; value: string
+  recipe: string; args: Record<string, unknown>; reason: string
+}
 export interface TemplateFn {
   variable: string; domains: string[]; source: string; describe: string; enabled: boolean
+  resolved: TemplateResolved | null; edit: Record<string, unknown> | null
 }
 export interface CustomFn {
   name: string; description: string; variable: string; domains: string[]
@@ -222,8 +227,8 @@ export const api = {
   saveFunction: (fn: CustomFn) => post("/api/functions", fn),
   deleteFunction: (name: string) =>
     call(`/api/functions/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  toggleTemplate: (variable: string, enabled: boolean) =>
-    post(`/api/functions/template/${variable}`, { enabled }),
+  saveTemplate: (variable: string, body: { enabled?: boolean; edit?: Record<string, unknown>; clear_edit?: boolean }) =>
+    post(`/api/functions/template/${variable}`, body),
   fnContext: (d: string) => call<FnContext>(`/api/functions/context/${d}`),
 
   columns: (d: string, ds: string) => call<{ dataset: string; columns: string[] }>(
