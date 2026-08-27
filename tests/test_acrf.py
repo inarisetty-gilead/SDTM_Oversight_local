@@ -51,6 +51,9 @@ def _make_acrf(path: Path) -> None:
     for t in boxes_p2:
         w.add_annotation(1, FreeText(text=t, rect=(50, y - 20, 250, y)))
         y -= 40
+    # a proper aCRF names its forms in the outline
+    w.add_outline_item("Form: Ophthalmic Examination v2", 0)
+    w.add_outline_item("Form: Vitals and ECG", 1)
     with open(path, "wb") as fh:
         w.write(fh)
 
@@ -88,7 +91,9 @@ def test_acrf_check_judges_every_annotation():
         assert by["AESOURCE"]["verdict"] == "supp"
         # the annotation carries the CRF question it answers, and the form name
         assert by["OELAT"]["question"] == "What is the laterality of the eye?"
-        assert by["OELAT"]["form"] == "Ophthalmic Examination"
+        # the bookmark outranks the page-title heuristic
+        assert by["OELAT"]["form"] == "Form: Ophthalmic Examination v2"
+        assert by["ARMCD"]["form"] == "Form: Vitals and ECG"
         assert by["OELAT"]["page"] == 1
         # NOT SUBMITTED is informational
         assert by["NOT SUBMITTED"]["verdict"] == "note"

@@ -132,16 +132,49 @@ def _form_name(lines: list[tuple[float, float, str]], is_annotation) -> str:
     return ""
 
 
+def _bookmark_forms(reader) -> list[tuple[int, str]]:
+    """[(first page index, bookmark title)] sorted — a proper aCRF names its forms in
+    the PDF outline ('Form: 12-lead ECG triplicate'), the most reliable source there is."""
+    marks: list[tuple[int, str]] = []
+
+    def walk(items):
+        for it in items:
+            if isinstance(it, list):
+                walk(it)
+            else:
+                try:
+                    marks.append((reader.get_destination_page_number(it), str(it.title).strip()))
+                except Exception:
+                    continue
+    try:
+        walk(reader.outline)
+    except Exception:
+        pass
+    return sorted(m for m in marks if m[1])
+
+
+def _form_from_bookmarks(marks: list[tuple[int, str]], page_index: int) -> str:
+    title = ""
+    for pg, t in marks:
+        if pg <= page_index:
+            title = t
+        else:
+            break
+    return title[:80]
+
+
 def _annotation_texts(pdf_path: str | Path):
-    """(page number, source, text, y position or None, page lines) for every annotation
-    box and every page's flattened text."""
+    """(page number, source, text, y position or None, page lines, bookmark form) for
+    every annotation box and every page's flattened text."""
     from pypdf import PdfReader
     try:
         reader = PdfReader(str(pdf_path))
     except Exception as exc:
         raise AcrfError(f"could not open the aCRF PDF: {exc}") from exc
+    marks = _bookmark_forms(reader)
     for pnum, page in enumerate(reader.pages, start=1):
         lines = _page_lines(page)
+        bm_form = _form_from_bookmarks(marks, pnum - 1)
         try:
             for ref in (page.get("/Annots") or []):
                 obj = ref.get_object()
@@ -153,12 +186,12 @@ def _annotation_texts(pdf_path: str | Path):
                         y = (float(rect[1]) + float(rect[3])) / 2
                     except Exception:
                         pass
-                    yield pnum, "annotation", str(content), y, lines
+                    yield pnum, "annotation", str(content), y, lines, bm_form
         except Exception:            # a malformed annotation must not sink the page
             pass
         text = " ".join(t for _y, _x, t in lines)
         if text.strip():
-            yield pnum, "page", text, None, lines
+            yield pnum, "page", text, None, lines, bm_form
 
 
 def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[list[dict], int]:
@@ -195,9 +228,10 @@ def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[
                      "value": value, "text": snippet.strip()[:160],
                      "question": question, "form": form})
 
-    for pnum, source, text, y, lines in _annotation_texts(pdf_path):
+    for pnum, source, text, y, lines, bm_form in _annotation_texts(pdf_path):
         pages = max(pages, pnum)
-        form = _form_name(lines, is_annotation)
+        # a bookmark names the form authoritatively; page text is the fallback
+        form = bm_form or _form_name(lines, is_annotation)
         question = (_question_for(lines, y, text, is_annotation)
                     if (source == "annotation" and y is not None) else "")
 
