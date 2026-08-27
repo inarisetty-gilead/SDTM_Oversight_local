@@ -209,8 +209,11 @@ export function CrfView() {
           </div>
           <p className="text-[11px] text-muted-foreground">
             The vendor side uses the aCRF and eCRF spec from the panel above.
+            {!acrf && " Set the vendor aCRF there first — the compare button stays off until both PDFs are named."}
           </p>
         </div>
+        {busy && <p className="mt-3 text-xs text-muted-foreground">Comparing the two CRFs…</p>}
+        {err && <div className="mt-3"><Callout tone="bad">{err}</Callout></div>}
       </Panel>
 
       {cmp && (

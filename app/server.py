@@ -1430,6 +1430,8 @@ def run_acrf(body: AcrfIn):
                                    Path(body.ecrf).expanduser() if s(body.ecrf) else None)
     except acrf_module.AcrfError as exc:
         raise HTTPException(400, str(exc))
+    except Exception as exc:                       # noqa: BLE001 — surface, never a bare 500
+        raise HTTPException(400, f"the check failed on these files: {exc}")
     SESSION.acrf_path, SESSION.standards_path = body.acrf, body.standards
     SESSION.ta_path, SESSION.ecrf_path = body.ta, body.ecrf
     SESSION.acrf_report = report
@@ -1465,6 +1467,8 @@ def compare_crfs_api(body: CrfCmpIn):
             standards_path=body.standards or None)
     except acrf_module.AcrfError as exc:
         raise HTTPException(400, str(exc))
+    except Exception as exc:                       # noqa: BLE001 — surface, never a bare 500
+        raise HTTPException(400, f"the comparison failed on these files: {exc}")
     SESSION.acrf_path = body.vendor
     SESSION.ecrf_path = body.vendor_ecrf
     SESSION.std_acrf_path, SESSION.std_ecrf_path = body.standard, body.standard_ecrf
