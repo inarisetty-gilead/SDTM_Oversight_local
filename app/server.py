@@ -61,7 +61,6 @@ class Session:
     draft_pipelines: dict = field(default_factory=dict)  # DOMAIN -> steps being edited, not yet applied
     custom_fns: dict = field(default_factory=dict)       # name -> user-defined derivation
     acrf_path: str = ""                              # annotated CRF PDF
-    ecrf_path: str = ""                              # eCRF spec (question text source)
     standards_path: str = ""                         # standards mapping workbook
     ta_path: str = ""                                # therapeutic-area spec workbook
     acrf_report: dict | None = None                  # last aCRF check
@@ -295,7 +294,6 @@ def _autosave() -> None:
     study.template_overrides = SESSION.template_overrides
     study.acrf_path, study.standards_path, study.ta_path = (
         SESSION.acrf_path, SESSION.standards_path, SESSION.ta_path)
-    study.ecrf_path = SESSION.ecrf_path
     study.acrf_report = SESSION.acrf_report
     study.dedups = SESSION.dedups
     if SESSION.out_dir:
@@ -320,7 +318,6 @@ def _apply_study(study: Study) -> None:
     SESSION.template_overrides = dict(study.template_overrides)
     SESSION.acrf_path, SESSION.standards_path, SESSION.ta_path = (
         study.acrf_path, study.standards_path, study.ta_path)
-    SESSION.ecrf_path = study.ecrf_path
     SESSION.acrf_report = study.acrf_report or None
     SESSION.dedups = dict(study.dedups)
     # reopen the inputs so the reader lands where they left off, not on an empty form
@@ -1393,14 +1390,12 @@ class AcrfIn(BaseModel):
     acrf: str
     standards: str
     ta: str = ""
-    ecrf: str = ""
 
 
 @app.get("/api/acrf")
 def get_acrf():
     return {"acrf": SESSION.acrf_path, "standards": SESSION.standards_path,
-            "ta": SESSION.ta_path, "ecrf": SESSION.ecrf_path,
-            "report": SESSION.acrf_report}
+            "ta": SESSION.ta_path, "report": SESSION.acrf_report}
 
 
 @app.post("/api/acrf")
@@ -1412,18 +1407,16 @@ def run_acrf(body: AcrfIn):
             raise HTTPException(400, f"point at the {label} first")
         if not Path(path).expanduser().exists():
             raise HTTPException(400, _fs_hint(f"the {label} was not found at {path}"))
-    for label, path in (("TA spec", body.ta), ("eCRF spec", body.ecrf)):
-        if s(path) and not Path(path).expanduser().exists():
-            raise HTTPException(400, _fs_hint(f"the {label} was not found at {path}"))
+    if s(body.ta) and not Path(body.ta).expanduser().exists():
+        raise HTTPException(400, _fs_hint(f"the TA spec was not found at {body.ta}"))
     try:
         report = acrf_module.check(Path(body.acrf).expanduser(),
                                    Path(body.standards).expanduser(),
-                                   Path(body.ta).expanduser() if s(body.ta) else None,
-                                   Path(body.ecrf).expanduser() if s(body.ecrf) else None)
+                                   Path(body.ta).expanduser() if s(body.ta) else None)
     except acrf_module.AcrfError as exc:
         raise HTTPException(400, str(exc))
     SESSION.acrf_path, SESSION.standards_path = body.acrf, body.standards
-    SESSION.ta_path, SESSION.ecrf_path = body.ta, body.ecrf
+    SESSION.ta_path = body.ta
     SESSION.acrf_report = report
     _autosave()
     return {"ok": True, "report": report}
