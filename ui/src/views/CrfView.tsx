@@ -2,7 +2,7 @@
 // against the standards mapping (and the TA spec) — what is off-standard, what to do
 // about it, and what the standards expected on the CRF that never appears.
 import { useEffect, useState } from "react"
-import { FileSearch, Play } from "lucide-react"
+import { Download, FileSearch, Play } from "lucide-react"
 import { api } from "@/api"
 import type { AcrfReport } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -52,9 +52,15 @@ export function CrfView() {
       <Panel title="Annotated CRF vs the standards"
              description="Point at the aCRF PDF and the standards mapping (the TA spec is optional). Every SDTM annotation is extracted — annotation boxes and flattened text — and judged against the specs; the reverse look lists what the standards collect on the CRF that was never annotated."
              actions={
-               <Button onClick={() => void run()} disabled={busy || !acrf || !standards}>
-                 <Play className="mr-1.5 h-3.5 w-3.5" />{busy ? "Checking…" : "Run the check"}
-               </Button>}>
+               <div className="flex items-center gap-2">
+                 {report && (
+                   <Button variant="outline" onClick={() => { window.location.href = "/api/acrf/export" }}>
+                     <Download className="mr-1.5 h-3.5 w-3.5" />Export to Excel
+                   </Button>)}
+                 <Button onClick={() => void run()} disabled={busy || !acrf || !standards}>
+                   <Play className="mr-1.5 h-3.5 w-3.5" />{busy ? "Checking…" : "Run the check"}
+                 </Button>
+               </div>}>
         <div className="space-y-3">
           <div className="space-y-1">
             <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Annotated CRF (.pdf)</Label>
@@ -107,9 +113,14 @@ export function CrfView() {
               cols={[
                 { id: "p", head: "Page", width: 70, align: "right",
                   value: (r) => String(r.page), cell: (r) => r.page },
+                { id: "f", head: "Form", width: 160,
+                  value: (r) => r.form ?? "", cell: (r) => <span className="text-xs">{r.form || "—"}</span> },
                 { id: "a", head: "Annotation", kind: "key", width: 200, sticky: true,
                   value: (r) => r.domain && r.variable ? `${r.domain}.${r.variable}` : (r.variable || r.value),
                   cell: (r) => <Mono>{r.domain && r.variable ? `${r.domain}.${r.variable}` : (r.variable || r.value)}</Mono> },
+                { id: "q", head: "CRF question", width: 240,
+                  value: (r) => r.question ?? "",
+                  cell: (r) => <span className="text-xs">{r.question || "—"}</span> },
                 { id: "val", head: "Value", width: 130,
                   value: (r) => r.value, cell: (r) => r.value },
                 { id: "v", head: "Verdict", kind: "tag", width: 140,

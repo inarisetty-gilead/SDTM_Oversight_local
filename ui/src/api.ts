@@ -174,7 +174,7 @@ export interface FnContext {
 
 export interface AcrfRow {
   page: number; kind: string; domain: string; variable: string; value: string
-  text: string; verdict: string; advice: string
+  text: string; verdict: string; advice: string; question?: string; form?: string
 }
 export interface AcrfMissing {
   domain: string; variable: string; label: string; origin: string; advice: string

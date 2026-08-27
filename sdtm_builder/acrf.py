@@ -36,28 +36,88 @@ BARE_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,7})\b")
 NOTE_RE = re.compile(r"NOT\s+(SUBMITTED|ENTERED|MAPPED|COLLECTED)", re.IGNORECASE)
 
 
+def _page_lines(page) -> list[tuple[float, float, str]]:
+    """The page's text as positioned lines [(y, x, text)], top first — the raw material
+    for finding the CRF question an annotation sits next to, and the form name."""
+    spans: list[tuple[float, float, str]] = []
+
+    def visit(text, cm, tm, font_dict, font_size):
+        t = (text or "").strip()
+        if t:
+            spans.append((float(tm[5]), float(tm[4]), t))
+
+    try:
+        page.extract_text(visitor_text=visit)
+    except Exception:
+        return []
+    lines: dict[float, list[tuple[float, str]]] = {}
+    for y, x, t in spans:
+        key = round(y / 3) * 3           # spans within ~3pt share a line
+        lines.setdefault(key, []).append((x, t))
+    out = []
+    for y in sorted(lines, reverse=True):
+        parts = sorted(lines[y])
+        out.append((y, parts[0][0], " ".join(t for _x, t in parts).strip()))
+    return out
+
+
+def _looks_like_annotation(text: str) -> bool:
+    return bool(QUALIFIED_RE.search(text) or NOTE_RE.search(text))
+
+
+def _question_for(lines: list[tuple[float, float, str]], y: float, own: str) -> str:
+    """The CRF question nearest an annotation at height y: same line first, then the
+    closest line above, skipping other annotations and the annotation's own text."""
+    def usable(t: str) -> bool:
+        return bool(t) and t != own and own not in t and not _looks_like_annotation(t) \
+            and not t.strip().isdigit()
+    same = [t for ly, _x, t in lines if abs(ly - y) <= 6 and usable(t)]
+    if same:
+        return same[0][:140]
+    above = [(ly, t) for ly, _x, t in lines if ly > y + 6 and usable(t)]
+    if above:
+        return min(above, key=lambda p: p[0] - y)[1][:140]
+    below = [(ly, t) for ly, _x, t in lines if ly < y - 6 and usable(t)]
+    if below:
+        return max(below, key=lambda p: p[0])[1][:140]
+    return ""
+
+
+def _form_name(lines: list[tuple[float, float, str]]) -> str:
+    """The form's name — the topmost real text line of the page."""
+    for _y, _x, t in lines:                          # lines come top first
+        if len(t) > 2 and not t.strip().isdigit() and not _looks_like_annotation(t):
+            return t[:80]
+    return ""
+
+
 def _annotation_texts(pdf_path: str | Path):
-    """(page number, text) for every annotation box and every page's flattened text."""
+    """(page number, source, text, y position or None, page lines) for every annotation
+    box and every page's flattened text."""
     from pypdf import PdfReader
     try:
         reader = PdfReader(str(pdf_path))
     except Exception as exc:
         raise AcrfError(f"could not open the aCRF PDF: {exc}") from exc
     for pnum, page in enumerate(reader.pages, start=1):
+        lines = _page_lines(page)
         try:
             for ref in (page.get("/Annots") or []):
                 obj = ref.get_object()
                 content = obj.get("/Contents")
                 if s(content):
-                    yield pnum, "annotation", str(content)
+                    rect = obj.get("/Rect")
+                    y = None
+                    try:
+                        y = (float(rect[1]) + float(rect[3])) / 2
+                    except Exception:
+                        pass
+                    yield pnum, "annotation", str(content), y, lines
         except Exception:            # a malformed annotation must not sink the page
             pass
-        try:
-            text = page.extract_text() or ""
-        except Exception:
-            text = ""
+        text = " ".join(t for _y, _x, t in lines)
         if text.strip():
-            yield pnum, "page", text
+            yield pnum, "page", text, None, lines
 
 
 def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[list[dict], int]:
@@ -72,25 +132,37 @@ def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[
     seen: set[tuple] = set()
     pages = 0
 
-    def add(page: int, kind: str, domain: str, variable: str, value: str, snippet: str):
+    def add(page: int, kind: str, domain: str, variable: str, value: str, snippet: str,
+            question: str = "", form: str = ""):
         key = (page, domain, variable, value)
         if key in seen:
             return
         seen.add(key)
         rows.append({"page": page, "kind": kind, "domain": domain, "variable": variable,
-                     "value": value, "text": snippet.strip()[:160]})
+                     "value": value, "text": snippet.strip()[:160],
+                     "question": question, "form": form})
 
-    for pnum, source, text in _annotation_texts(pdf_path):
+    for pnum, source, text, y, lines in _annotation_texts(pdf_path):
         pages = max(pages, pnum)
+        form = _form_name(lines)
+        question = _question_for(lines, y, text) if (source == "annotation" and y is not None) else ""
+
+        def find_question(m) -> str:
+            """Flattened text: the question is the text just before the variable on its line."""
+            if question:
+                return question
+            before = text[max(0, m.start() - 90):m.start()].strip()
+            before = re.sub(r"[A-Z]{2}\.[A-Z0-9_]{1,8}\s*$", "", before).strip()
+            return before[-90:] if before and not _looks_like_annotation(before) else ""
         for m in NOTE_RE.finditer(text):
             add(pnum, "note", "", "", m.group(0).upper(),
-                text[max(0, m.start() - 40):m.end() + 20])
+                text[max(0, m.start() - 40):m.end() + 20], find_question(m), form)
         consumed: set[str] = set()
         for m in QUALIFIED_RE.finditer(text):
             dom, var = upper(m.group(1)), upper(m.group(2))
             consumed.update((var, dom))         # neither half may resurface as a bare token
             add(pnum, "qualified", dom, var, "",
-                text[max(0, m.start() - 30):m.end() + 30])
+                text[max(0, m.start() - 30):m.end() + 30], find_question(m), form)
         for m in ASSIGN_RE.finditer(text):
             var, val = upper(m.group(1)), m.group(2).strip()
             if var in NOISE or var in consumed:
@@ -98,7 +170,7 @@ def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[
             if var[:2] in known_domains or var[:4] == "SUPP":
                 consumed.add(var)
                 add(pnum, "assignment", "", var, val,
-                    text[max(0, m.start() - 20):m.end() + 10])
+                    text[max(0, m.start() - 20):m.end() + 10], find_question(m), form)
         for m in BARE_RE.finditer(text):
             var = upper(m.group(1))
             if var in NOISE or var in consumed or var in AUTOMATIC:
@@ -107,7 +179,8 @@ def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[
                 continue
             if source == "page" and len(var) < 4:   # flattened text: short tokens are labels
                 continue
-            add(pnum, "bare", "", var, "", text[max(0, m.start() - 25):m.end() + 25])
+            add(pnum, "bare", "", var, "", text[max(0, m.start() - 25):m.end() + 25],
+                find_question(m), form)
     return rows, pages
 
 

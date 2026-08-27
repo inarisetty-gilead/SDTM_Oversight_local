@@ -578,13 +578,26 @@ def test_acrf_check_saves_with_the_study():
                                            "ta": ""})
         assert r.status_code == 200
         rep = r.json()["report"]
-        assert rep["counts"]["off_standard"] == 2
+        assert rep["counts"]["off_standard"] == 3
         got = client.get("/api/acrf").json()
         assert got["acrf"] == str(pdf) and got["report"]["pages"] == 2
 
         # a missing standards path refuses with a named reason, not a stack trace
         bad = client.post("/api/acrf", json={"acrf": str(pdf), "standards": str(tmp / "no.xlsx")})
         assert bad.status_code == 400
+
+        # the whole check exports as an Excel workbook
+        x = client.get("/api/acrf/export")
+        assert x.status_code == 200
+        import io
+
+        import pandas as pd
+        sheets = pd.read_excel(io.BytesIO(x.content), sheet_name=None)
+        assert set(sheets) == {"Summary", "Annotations", "Never annotated"}
+        ann = sheets["Annotations"]
+        assert {"Page", "Form", "CRF question", "Annotation", "Verdict",
+                "What to do"} <= set(ann.columns)
+        assert (ann["Annotation"] == "OE.OELAT").any()
 
 
 if __name__ == "__main__":

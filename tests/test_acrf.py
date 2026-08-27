@@ -14,12 +14,33 @@ from sdtm_builder import acrf                                  # noqa: E402
 HERE = Path(__file__).resolve().parent
 
 
+def _page_text(writer, page, lines) -> None:
+    """Draw text lines onto a page: [(x, y, size, text)] — a form title and questions,
+    so question/form extraction has something real to find."""
+    from pypdf.generic import (DecodedStreamObject, DictionaryObject, NameObject)
+    font = DictionaryObject({NameObject("/Type"): NameObject("/Font"),
+                             NameObject("/Subtype"): NameObject("/Type1"),
+                             NameObject("/BaseFont"): NameObject("/Helvetica")})
+    font_ref = writer._add_object(font)
+    ops = "".join(f"BT /F1 {size} Tf {x} {y} Td ({text}) Tj ET\n"
+                  for x, y, size, text in lines)
+    stream = DecodedStreamObject()
+    stream.set_data(ops.encode("latin-1"))
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font_ref})})
+
+
 def _make_acrf(path: Path) -> None:
     from pypdf import PdfWriter
     from pypdf.annotations import FreeText
     w = PdfWriter()
+    p1 = w.add_blank_page(width=612, height=792)
     w.add_blank_page(width=612, height=792)
-    w.add_blank_page(width=612, height=792)
+    _page_text(w, p1, [(50, 760, 12, "Ophthalmic Examination"),
+                       (50, 700, 10, "What is the laterality of the eye?")])
+    # the annotation box sits beside its question, as on a real aCRF
+    w.add_annotation(0, FreeText(text="OE.OELAT", rect=(300, 690, 420, 710)))
     boxes_p1 = ["AETERM", "AESTDTC", "AETRM", "NOT SUBMITTED"]          # AETRM: typo
     boxes_p2 = ["DM.ARMCD", "VSTESTCD = SYSBP", "ZZ.ZZVAR", "SUPPAE.AESOURCE"]
     y = 700
@@ -65,13 +86,17 @@ def test_acrf_check_judges_every_annotation():
         assert by["ZZVAR"]["verdict"] == "unknown_domain"
         # supplemental annotations are recognised, not condemned
         assert by["AESOURCE"]["verdict"] == "supp"
+        # the annotation carries the CRF question it answers, and the form name
+        assert by["OELAT"]["question"] == "What is the laterality of the eye?"
+        assert by["OELAT"]["form"] == "Ophthalmic Examination"
+        assert by["OELAT"]["page"] == 1
         # NOT SUBMITTED is informational
         assert by["NOT SUBMITTED"]["verdict"] == "note"
 
         # reverse look: AE was annotated, so unannotated AE variables surface
         missing_vars = {m["variable"] for m in report["missing"] if m["domain"] == "AE"}
         assert "AEDECOD" in missing_vars or len(missing_vars) > 0
-        assert report["counts"]["off_standard"] == 2   # AETRM + ZZ.ZZVAR
+        assert report["counts"]["off_standard"] == 3   # AETRM + ZZ.ZZVAR + OE (not in fixture standards)
 
 
 def test_acrf_refuses_bad_inputs():

@@ -1422,6 +1422,40 @@ def run_acrf(body: AcrfIn):
     return {"ok": True, "report": report}
 
 
+@app.get("/api/acrf/export")
+def export_acrf():
+    """The aCRF check as an Excel workbook — one sheet per table, ready to share."""
+    if not SESSION.acrf_report:
+        raise HTTPException(400, "run the aCRF check first")
+    import tempfile
+
+    import pandas as pd
+    rep = SESSION.acrf_report
+    ann = pd.DataFrame([{
+        "Page": r.get("page"), "Form": r.get("form", ""),
+        "CRF question": r.get("question", ""),
+        "Annotation": (f"{r['domain']}.{r['variable']}" if r.get("domain") and r.get("variable")
+                       else (r.get("variable") or r.get("value", ""))),
+        "Value": r.get("value", ""), "Verdict": r.get("verdict", ""),
+        "What to do": r.get("advice", ""), "As annotated": r.get("text", ""),
+    } for r in rep.get("rows", [])])
+    miss = pd.DataFrame([{
+        "Domain": m.get("domain"), "Variable": m.get("variable"),
+        "Label": m.get("label", ""), "Origin": m.get("origin", ""),
+        "What to do": m.get("advice", ""),
+    } for m in rep.get("missing", [])])
+    summary = pd.DataFrame([{"Measure": k.replace("_", " "), "Count": v}
+                            for k, v in rep.get("counts", {}).items()])
+    out = Path(tempfile.mkdtemp(prefix="acrf_")) / "acrf_check.xlsx"
+    with pd.ExcelWriter(out, engine="openpyxl") as xw:
+        summary.to_excel(xw, sheet_name="Summary", index=False)
+        (ann if len(ann) else pd.DataFrame({"note": ["no annotations found"]})
+         ).to_excel(xw, sheet_name="Annotations", index=False)
+        (miss if len(miss) else pd.DataFrame({"note": ["nothing missing"]})
+         ).to_excel(xw, sheet_name="Never annotated", index=False)
+    return FileResponse(out, filename="acrf_check.xlsx")
+
+
 # ── the function library: template derivations + the user's own ────────────
 class FnIn(BaseModel):
     name: str
