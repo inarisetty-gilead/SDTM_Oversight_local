@@ -182,6 +182,7 @@ export interface AcrfMissing {
 export interface AcrfReport {
   pages: number; rows: AcrfRow[]; missing: AcrfMissing[]
   counts: Record<string, number>; domains_annotated: string[]; origins_recorded: boolean
+  notes?: string[]
 }
 
 const post = <T,>(p: string, b?: unknown) =>

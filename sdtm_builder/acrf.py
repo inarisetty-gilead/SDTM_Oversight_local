@@ -31,8 +31,13 @@ NOISE = frozenset({
 AUTOMATIC = frozenset({"STUDYID", "DOMAIN", "USUBJID"})
 
 QUALIFIED_RE = re.compile(r"\b(SUPP[A-Z]{2}|[A-Z]{2})\.([A-Z][A-Z0-9_]{1,7})\b")
-ASSIGN_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9_]{1,6})\s*(?:=|IN|WHEN)\s+[\"']?([A-Za-z0-9][A-Za-z0-9_ /.-]{0,40})")
-BARE_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,7})\b")
+# '=' may be glued (EGPOS=SUPINE); IN / WHEN need their own spaces. Flattened aCRF text
+# also glues WORDS ('andEGTESTCD', 'EGTRCVYNin') — a lowercase letter on either side
+# still bounds the variable token.
+# the value is matched with a lookahead so one assignment's value can never swallow the
+# next assignment ('EGORRESU= ms EGTPT =ENDOF...' is two annotations, not one)
+ASSIGN_RE = re.compile(r"(?<![A-Z0-9_])([A-Z]{2}[A-Z0-9_]{1,6})(?:\s*=\s*|\s+(?:IN|WHEN)\s+)(?=[\"']?([A-Za-z0-9][A-Za-z0-9_ /.-]{0,40}))")
+BARE_RE = re.compile(r"(?<![A-Z0-9_])([A-Z][A-Z0-9_]{2,7})(?=[a-z]|\b)")
 NOTE_RE = re.compile(r"NOT\s+(SUBMITTED|ENTERED|MAPPED|COLLECTED)", re.IGNORECASE)
 
 
@@ -61,15 +66,44 @@ def _page_lines(page) -> list[tuple[float, float, str]]:
     return out
 
 
-def _looks_like_annotation(text: str) -> bool:
-    return bool(QUALIFIED_RE.search(text) or NOTE_RE.search(text))
+VAR_TOKEN_RE = re.compile(r"(?<![A-Z0-9_])(?:SUPP)?[A-Z]{2}[A-Z0-9_]{2,8}(?=[a-z]|\b)")
+FORM_TITLE_RE = re.compile(r"\b[A-Z][A-Z0-9]{1,7}\s*\(.{3,60}\)")
 
 
-def _question_for(lines: list[tuple[float, float, str]], y: float, own: str) -> str:
+def _annotation_detector(prefixes: set[str]):
+    """True for text that is itself annotation content — dotted names, NOT SUBMITTED
+    notes, or any token that starts with a domain code the specs define. Real CRF
+    wording (questions, form titles) is what remains."""
+    def looks(text: str) -> bool:
+        if QUALIFIED_RE.search(text) or NOTE_RE.search(text):
+            return True
+        return any(t.startswith("SUPP") or (len(t) >= 4 and t[:2] in prefixes)
+                   for t in VAR_TOKEN_RE.findall(text))
+    return looks
+
+
+def _image_pages(pdf_path: str | Path) -> int:
+    """How many pages draw images — a scanned CRF body means the questions are pixels,
+    not text, and the question column cannot be filled from this PDF."""
+    from pypdf import PdfReader
+    n = 0
+    try:
+        for page in PdfReader(str(pdf_path)).pages:
+            res = page.get("/Resources") or {}
+            xo = res.get("/XObject")
+            if xo and len(xo.get_object() or {}):
+                n += 1
+    except Exception:
+        return 0
+    return n
+
+
+def _question_for(lines: list[tuple[float, float, str]], y: float, own: str,
+                  is_annotation) -> str:
     """The CRF question nearest an annotation at height y: same line first, then the
     closest line above, skipping other annotations and the annotation's own text."""
     def usable(t: str) -> bool:
-        return bool(t) and t != own and own not in t and not _looks_like_annotation(t) \
+        return bool(t) and t != own and own not in t and not is_annotation(t) \
             and not t.strip().isdigit()
     same = [t for ly, _x, t in lines if abs(ly - y) <= 6 and usable(t)]
     if same:
@@ -83,10 +117,15 @@ def _question_for(lines: list[tuple[float, float, str]], y: float, own: str) -> 
     return ""
 
 
-def _form_name(lines: list[tuple[float, float, str]]) -> str:
-    """The form's name — the topmost real text line of the page."""
+def _form_name(lines: list[tuple[float, float, str]], is_annotation) -> str:
+    """The form's name. aCRF pages usually title themselves 'EG (ECG Test Results)' —
+    that pattern wins wherever it sits; otherwise the topmost non-annotation line."""
+    for _y, _x, t in lines:
+        m = FORM_TITLE_RE.search(t)
+        if m:
+            return m.group(0)[:80]
     for _y, _x, t in lines:                          # lines come top first
-        if len(t) > 2 and not t.strip().isdigit() and not _looks_like_annotation(t):
+        if len(t) > 2 and not t.strip().isdigit() and not is_annotation(t):
             return t[:80]
     return ""
 
@@ -131,6 +170,18 @@ def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[
     rows: list[dict] = []
     seen: set[tuple] = set()
     pages = 0
+    is_annotation = _annotation_detector(known_domains)
+
+    def trim_value(val: str) -> str:
+        """An assignment's value ends where the NEXT annotation token begins —
+        'BEFOREINFUSION EGREPNUM' is a value and then a different annotation.
+        Case matters: uppercasing would hide where a glued word ends."""
+        for m in VAR_TOKEN_RE.finditer(val):
+            t = m.group(0)
+            if m.start() > 0 and (t.startswith("SUPP")
+                                  or (len(t) >= 4 and t[:2] in known_domains)):
+                return val[:m.start()].strip()
+        return val.strip()
 
     def add(page: int, kind: str, domain: str, variable: str, value: str, snippet: str,
             question: str = "", form: str = ""):
@@ -144,8 +195,9 @@ def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[
 
     for pnum, source, text, y, lines in _annotation_texts(pdf_path):
         pages = max(pages, pnum)
-        form = _form_name(lines)
-        question = _question_for(lines, y, text) if (source == "annotation" and y is not None) else ""
+        form = _form_name(lines, is_annotation)
+        question = (_question_for(lines, y, text, is_annotation)
+                    if (source == "annotation" and y is not None) else "")
 
         def find_question(m) -> str:
             """Flattened text: the question is the text just before the variable on its line."""
@@ -153,7 +205,7 @@ def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[
                 return question
             before = text[max(0, m.start() - 90):m.start()].strip()
             before = re.sub(r"[A-Z]{2}\.[A-Z0-9_]{1,8}\s*$", "", before).strip()
-            return before[-90:] if before and not _looks_like_annotation(before) else ""
+            return before[-90:] if before and not is_annotation(before) else ""
         for m in NOTE_RE.finditer(text):
             add(pnum, "note", "", "", m.group(0).upper(),
                 text[max(0, m.start() - 40):m.end() + 20], find_question(m), form)
@@ -165,10 +217,15 @@ def extract_annotations(pdf_path: str | Path, known_domains: set[str]) -> tuple[
                 text[max(0, m.start() - 30):m.end() + 30], find_question(m), form)
         for m in ASSIGN_RE.finditer(text):
             var, val = upper(m.group(1)), m.group(2).strip()
-            if var in NOISE or var in consumed:
+            if var in NOISE:
                 continue
+            # the same variable can be assigned twice on a page (EGTESTCD = QTCFAG and
+            # EGTESTCD = EGALL are two annotations) — every assignment's VALUE tokens are
+            # values, never annotations of their own
             if var[:2] in known_domains or var[:4] == "SUPP":
                 consumed.add(var)
+                val = trim_value(val)
+                consumed.update(t.upper() for t in VAR_TOKEN_RE.findall(val))
                 add(pnum, "assignment", "", var, val,
                     text[max(0, m.start() - 20):m.end() + 10], find_question(m), form)
         for m in BARE_RE.finditer(text):
@@ -276,6 +333,13 @@ def check(pdf_path: str | Path, standards_path: str | Path,
                             "TA addition is intended for this study, or align the standards.")
             for d in in_ta_doms:
                 annotated_by_domain.setdefault(d, set()).add(var)
+        elif var.startswith("SUPP") or f"SUPP{var[:2]}" in a.get("text", "").upper():
+            # 'EGTRCVYN in SUPPEG' — a supplemental qualifier, annotated the usual way
+            supp_dom = var[4:] if var.startswith("SUPP") else f"SUPP{var[:2]}"
+            row["verdict"] = "supp"
+            row["advice"] = (f"Annotated as a supplemental qualifier ({supp_dom or 'SUPP--'}) "
+                             "— confirm the QNAM/QLABEL are defined in the standards' "
+                             "SUPP conventions.")
         else:
             near_pool = (list(standards.get(core_dom, {})) if core_dom in standards
                          else sorted(all_std_vars | all_ta_vars))
@@ -313,6 +377,19 @@ def check(pdf_path: str | Path, standards_path: str | Path,
                                        "annotated — check whether it is collected "
                                        "(the standards workbook records no origins, so "
                                        "derived variables appear here too).")})
+    notes = []
+    if rows and not any(r.get("question") for r in rows):
+        imgs = _image_pages(pdf_path)
+        if imgs:
+            notes.append(
+                f"{imgs} page(s) draw the CRF as an image — the questions themselves are "
+                "not text in this PDF, so the CRF-question column stays blank. The "
+                "annotations were still read from the text layer.")
+        else:
+            notes.append(
+                "No CRF question wording was found in this PDF's text — it appears to "
+                "carry only the annotations as text (the form itself is likely an image "
+                "or a separate layer), so the CRF-question column stays blank.")
     counts = {"annotations": len([r for r in rows if r["verdict"] != "note"]),
               "matched": len([r for r in rows if r["verdict"] == "matched"]),
               "ta_only": len([r for r in rows if r["verdict"] == "ta_only"]),
@@ -323,4 +400,4 @@ def check(pdf_path: str | Path, standards_path: str | Path,
               "missing": len(missing)}
     return {"pages": pages, "rows": rows, "missing": missing, "counts": counts,
             "domains_annotated": sorted(annotated_by_domain),
-            "origins_recorded": origins_recorded}
+            "origins_recorded": origins_recorded, "notes": notes}

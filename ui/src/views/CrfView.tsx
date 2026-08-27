@@ -94,6 +94,9 @@ export function CrfView() {
 
       {report && (
         <>
+          {(report.notes ?? []).map((n, i) => (
+            <Callout key={i} tone="warn">{n}</Callout>
+          ))}
           <Metrics>
             <Metric value={report.pages} label="CRF pages" />
             <Metric value={c.annotations ?? 0} label="annotations" />
