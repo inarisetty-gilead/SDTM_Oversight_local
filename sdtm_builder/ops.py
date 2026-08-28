@@ -668,12 +668,16 @@ def _result_series(ctx, res: dict, selfvar: str) -> pd.Series:
 
 
 def op_cond(ctx, b: Block) -> pd.Series:
-    """if / else-if / else. First matching rule wins, as in a SAS IF-THEN-ELSE chain."""
+    """if / else-if / else. First matching rule wins, as in a SAS IF-THEN-ELSE chain.
+    A rule may carry extra conditions in rule['and'] — all must hold, as in
+    IF not missing(RGMDTN) AND RGSCAT = '…' THEN …"""
     a = b.args or {}
     rules = a.get("rules") or []
     out = _result_series(ctx, a.get("else") or {"kind": "missing"}, b.variable)
     for rule in reversed(rules):                      # reverse so the FIRST rule wins
         mask = _cond_mask(ctx, rule, b.variable).fillna(False)
+        for extra in (rule or {}).get("and") or []:   # compound IF … AND … AND …
+            mask &= _cond_mask(ctx, extra, b.variable).fillna(False)
         out = out.mask(mask, _result_series(ctx, rule.get("then"), b.variable))
     return out
 

@@ -629,6 +629,71 @@ def test_ct_step_normalises_to_submission_values():
         client.delete("/api/functions/ct%20check")
 
 
+def test_a_rule_can_require_several_conditions_with_and():
+    """condition_add with a compound test: IF SEXCD is not missing AND RACECD = '…' THEN.
+    Without the AND every subject matches; with it, only the matching race does."""
+    import copy
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        _load_and_build(client, tmp)
+
+        base = {"mtype": "derived", "recipe": "cond",
+                "args": {"rules": [{"src": {"dataset": "dm", "column": "SEXCD"},
+                                    "op": "notmissing",
+                                    "then": {"kind": "text", "text": "HIT"}}],
+                         "else": {"kind": "text", "text": "MISS"}}}
+        prev = client.post("/api/domain/DM/variable/DTHFL/preview", json=base).json()
+        assert prev["ok"], prev
+        assert "HIT" in prev["samples"] and "MISS" not in prev["samples"]   # everyone has a sex code
+
+        both = copy.deepcopy(base)
+        both["args"]["rules"][0]["and"] = [{"src": {"dataset": "dm", "column": "RACECD"},
+                                            "op": "eq", "value": "BLACK OR AFRICAN AMERICAN"}]
+        prev = client.post("/api/domain/DM/variable/DTHFL/preview", json=both).json()
+        assert prev["ok"], prev
+        assert "HIT" in prev["samples"] and "MISS" in prev["samples"]       # the AND narrowed it
+
+
+def test_reopening_a_study_rebuilds_the_prepared_datasets():
+    """The pipeline steps persist in study.json — but their OUTPUTS are in-memory frames.
+    Reopening the study must re-run the pipelines so the prepared datasets are back in
+    every dataset picker, or the reader's preparation looks lost."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, srv = _client(Path(td) / "runs")
+        srv.STUDIES = srv.StudyStore(Path(td) / "studies")
+
+        client.post("/api/studies", json={"name": "Prep Resume"})
+        sid = client.get("/api/studies").json()["studies"][0]["id"]
+        _load_and_build(client, tmp)
+        step = {"op": "merge", "name": "ae_plus_dm", "params": {
+                "how": "left", "on": ["USUBJID"],
+                "inputs": [{"dataset": "ae"}, {"dataset": "dm", "columns": ["SEXCD"]}]}}
+        assert client.post("/api/domain/AE/pipeline",
+                           json={"steps": [step]}).status_code == 200
+
+        client.post(f"/api/studies/{sid}/close")
+        client.post(f"/api/studies/{sid}/open")
+        detail = client.get("/api/domain/AE").json()
+        assert detail["pipeline"] == [step]                     # the steps came back
+        assert "ae_plus_dm" in detail["prepared_datasets"]      # named as prepared
+        assert "ae_plus_dm" in detail["datasets"]               # AND actually in the store
+        cols = client.get("/api/domain/AE/columns/ae_plus_dm").json()["columns"]
+        assert "SEXCD" in cols                                  # usable as a source at once
+
+        # a draft (not yet applied) comes back too, with its preview output usable
+        client.post("/api/domain/DM/pipeline/preview", json={"steps": [
+            {"op": "select", "name": "dm_slim", "params": {
+                "dataset": "dm", "columns": ["USUBJID", "SEXCD"]}}]})
+        client.post(f"/api/studies/{sid}/close")
+        client.post(f"/api/studies/{sid}/open")
+        detail = client.get("/api/domain/DM").json()
+        assert detail["pipeline_draft"] is not None
+        assert "dm_slim" in detail["datasets"]
+        assert "dm_slim" in detail["unapplied_datasets"]
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

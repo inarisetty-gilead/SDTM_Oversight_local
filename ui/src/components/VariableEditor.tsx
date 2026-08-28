@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { CondControl, FnControl, PipelineControl } from "./derivation"
+import { CondControl, CtControl, FnControl, PipelineControl } from "./derivation"
 import { Mono } from "./grid"
 import { Callout } from "./shell"
 
@@ -84,6 +84,14 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
                             "chars", "sep", "width"].includes(k)) {
       return null                        // FnControl renders the function and its parameters
     }
+    if (recipe === "ct" && k === "sources") {
+      return (
+        <div key={k} className="col-span-full space-y-1">
+          <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Controlled terminology</Label>
+          <CtControl args={args} detail={detail} onChange={(a) => setArgs(a)} />
+        </div>)
+    }
+    if (recipe === "ct" && k === "codelist") return null   // CtControl renders the codelist dropdown
     if (recipe === "cond" && k === "rules") {
       return (
         <div key={k} className="col-span-full space-y-1">
@@ -165,7 +173,13 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
           </div>
           <div className="space-y-1">
             <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Codelist</Label>
-            <Input className="h-8 text-xs" value={codelist} onChange={(e) => setCodelist(e.target.value)} />
+            {(detail.codelists ?? []).length ? (
+              <Picker value={codelist} options={detail.codelists ?? []} onChange={setCodelist} />
+            ) : (
+              <Input className="h-8 text-xs" value={codelist} onChange={(e) => setCodelist(e.target.value)} />
+            )}
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              From the spec's Codelist sheet — raw values normalise to its submission values.</p>
           </div>
         </>}
 

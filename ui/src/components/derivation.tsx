@@ -179,34 +179,60 @@ export function CondControl({ args, onChange, detail }: {
     )
   }
 
+  const patchRule = (i: number, patch: Dict) =>
+    set({ rules: rules.map((x, k) => k === i ? { ...x, ...patch } : x) })
+
+  // src + operator + value inputs for one condition — the rule itself or an AND extra
+  const CondInputs = ({ cond, onPatch }: { cond: Dict; onPatch: (p: Dict) => void }) => {
+    const op = (cond.op as string) ?? "eq"
+    return (
+      <>
+        <SourceControl value={(cond.src as Dict) ?? {}} detail={detail}
+                       onChange={(v) => onPatch({ src: v })} />
+        <Sel width="w-40" value={op} options={OPERATORS} onChange={(o) => onPatch({ op: o })} />
+        {!NO_VALUE.has(op) && (
+          <Input className="h-8 w-36 text-xs"
+                 placeholder={op === "in" || op === "notin" ? "A, B, C" : "value"}
+                 value={(cond.value as string) ?? ""}
+                 onChange={(e) => onPatch({ value: e.target.value })} />)}
+        {op === "between" && (
+          <Input className="h-8 w-24 text-xs" placeholder="and"
+                 value={(cond.value2 as string) ?? ""}
+                 onChange={(e) => onPatch({ value2: e.target.value })} />)}
+      </>
+    )
+  }
+
   return (
     <div className="space-y-2">
       {rules.map((r, i) => {
-        const op = (r.op as string) ?? "eq"
+        const ands = (r.and as Dict[]) ?? []
         return (
           <div key={i} className="space-y-1.5 rounded-md border p-2">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] font-medium">{i === 0 ? "IF" : "ELSE IF"}</span>
-              <SourceControl value={(r.src as Dict) ?? {}} detail={detail}
-                             onChange={(v) => set({ rules: rules.map((x, k) => k === i ? { ...x, src: v } : x) })} />
-              <Sel width="w-40" value={op} options={OPERATORS}
-                   onChange={(o) => set({ rules: rules.map((x, k) => k === i ? { ...x, op: o } : x) })} />
-              {!NO_VALUE.has(op) && (
-                <Input className="h-8 w-36 text-xs"
-                       placeholder={op === "in" || op === "notin" ? "A, B, C" : "value"}
-                       value={(r.value as string) ?? ""}
-                       onChange={(e) => set({ rules: rules.map((x, k) => k === i ? { ...x, value: e.target.value } : x) })} />)}
-              {op === "between" && (
-                <Input className="h-8 w-24 text-xs" placeholder="and"
-                       value={(r.value2 as string) ?? ""}
-                       onChange={(e) => set({ rules: rules.map((x, k) => k === i ? { ...x, value2: e.target.value } : x) })} />)}
+              <CondInputs cond={r} onPatch={(p) => patchRule(i, p)} />
+              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
+                      title="add another condition this rule must ALSO satisfy"
+                      onClick={() => patchRule(i, { and: [...ands, { src: {}, op: "eq", value: "" }] })}>
+                + AND</Button>
               <Button type="button" size="sm" variant="ghost" className="ml-auto h-7 px-2 text-xs"
                       onClick={() => set({ rules: rules.filter((_, k) => k !== i) })}>Remove</Button>
             </div>
+            {ands.map((c, j) => (
+              <div key={j} className="flex flex-wrap items-center gap-1.5 pl-6">
+                <span className="text-[11px] font-medium">AND</span>
+                <CondInputs cond={c}
+                            onPatch={(p) => patchRule(i, { and: ands.map((x, k) => k === j ? { ...x, ...p } : x) })} />
+                <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                        onClick={() => patchRule(i, { and: ands.filter((_, k) => k !== j) })}>
+                  Remove</Button>
+              </div>
+            ))}
             <div className="flex flex-wrap items-center gap-1.5 pl-6">
               <span className="text-[11px] font-medium">THEN {detail ? "" : ""}set it to</span>
               <Result value={(r.then as Dict) ?? { kind: "text", text: "" }}
-                      onChange={(v) => set({ rules: rules.map((x, k) => k === i ? { ...x, then: v } : x) })} />
+                      onChange={(v) => patchRule(i, { then: v })} />
             </div>
           </div>
         )
@@ -219,7 +245,9 @@ export function CondControl({ args, onChange, detail }: {
         <span className="text-[11px] font-medium">OTHERWISE</span>
         <Result value={els} onChange={(v) => set({ else: v })} />
       </div>
-      <p className="text-[10px] text-muted-foreground">Rules run in order — the first that matches wins, like a SAS IF/ELSE IF chain.</p>
+      <p className="text-[10px] text-muted-foreground">Rules run in order — the first that matches wins,
+        like a SAS IF/ELSE IF chain. “+ AND” adds extra conditions to a rule; all of them must hold
+        (e.g. IF RGMDTN is not missing AND RGSCAT = …).</p>
     </div>
   )
 }

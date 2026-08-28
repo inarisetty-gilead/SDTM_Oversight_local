@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Chip, DataGrid, Mono, STATUS_TONE, SegmentBar } from "@/components/grid"
+import { Chip, DataGrid, Mono, STATUS_TONE, SegmentBar, type ChipTone } from "@/components/grid"
 import { Callout, Metric, Metrics, PageHeader, Panel } from "@/components/shell"
 import { DataView, RecordTable, VariableRecords, useDomainRecords } from "@/components/DataView"
 import { PipelineEditor } from "@/components/PipelineEditor"
@@ -17,6 +17,13 @@ import { VariableEditor } from "@/components/VariableEditor"
 
 const FILTERS = ["all", "built", "empty", "dropped", "not_built", "error"] as const
 type Filter = (typeof FILTERS)[number]
+
+// spec Mapping Action -> chip tone, matching SDTM Designer's color language:
+// direct copies green, derivations teal, drops muted, supplemental violet
+const ACTION_TONE: Record<string, ChipTone> = {
+  ASSIGN: "green", CODE: "teal", DERIVED: "teal", DERIVE: "teal",
+  DROP: "slate", SUPP: "violet", CONSTANT: "amber", HARDCODE: "amber",
+}
 
 export function DomainView({ domain, onBack, onChanged }: {
   domain: string; onBack: () => void; onChanged: () => void
@@ -209,6 +216,13 @@ export function DomainView({ domain, onBack, onChanged }: {
                   cell: (v) => v.variable },
                 { id: "l", head: "Label", kind: "text", width: 210,
                   cell: (v) => <span className="text-muted-foreground">{v.label}</span> },
+                // the spec's verdict for the row — ASSIGN / CODE / DERIVED / DROP / SUPP,
+                // prominent like SDTM Designer's "Mapping Action" column
+                { id: "act", head: "Action", kind: "tag",
+                  cell: (v) => v.spec_action ? <Chip tone={ACTION_TONE[v.spec_action.toUpperCase()] ?? "blue"}>
+                    {v.spec_action.toUpperCase()}</Chip> : null },
+                { id: "cl", head: "Codelist", kind: "tag",
+                  cell: (v) => v.codelist ? <Chip tone="teal">{v.codelist}</Chip> : null },
                 { id: "s", head: "Status", kind: "tag",
                   cell: (v) => <Chip tone={STATUS_TONE[v.status] ?? "slate"}>
                     {v.status.replace("_", " ")}</Chip> },
@@ -227,8 +241,6 @@ export function DomainView({ domain, onBack, onChanged }: {
                 { id: "vals", head: "Values", kind: "text", width: 220,
                   cell: (v) => <span className="flex gap-1">
                     {v.samples.slice(0, 3).map((x, i) => <Mono key={i}>{x}</Mono>)}</span> },
-                { id: "cl", head: "Codelist", kind: "tag",
-                  cell: (v) => v.codelist ? <Chip tone="teal">{v.codelist}</Chip> : null },
                 { id: "why", head: "Reason", kind: "text", width: 300,
                   cell: (v) => <span className={v.error ? "text-destructive" : "text-muted-foreground"}>
                     {v.error || v.reason}</span> },

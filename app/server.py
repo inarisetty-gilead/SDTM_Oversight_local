@@ -348,6 +348,27 @@ def _apply_study(study: Study) -> None:
         except Exception as exc:                                 # noqa: BLE001
             SESSION.store = None
             SESSION.open_problems.append(f"the raw data could not be reopened: {_fs_hint(exc)}")
+    # Re-materialise the prepared datasets. The pipeline STEPS were restored above, but
+    # their OUTPUTS were in-memory frames — without re-running them, a reopened study
+    # lists the steps while every dataset picker is missing the prepared datasets,
+    # which reads as "my preparation is gone".
+    if SESSION.store is not None:
+        for dom, steps in list(SESSION.pipelines.items()):
+            try:
+                outputs, _reports = prep_module.run_pipeline(steps, SESSION.store, dom)
+                for name, frame in outputs.items():
+                    SESSION.store.put(name, frame)
+            except Exception as exc:                             # noqa: BLE001
+                SESSION.open_problems.append(
+                    f"{dom}: the prepared datasets could not be rebuilt: {exc}")
+        for dom, steps in list(SESSION.draft_pipelines.items()):
+            try:
+                outputs, _reports = prep_module.run_pipeline(steps, SESSION.store, dom)
+                for name, frame in outputs.items():
+                    SESSION.store.put(name, frame)
+                    SESSION.preview_outputs.add(name)
+            except Exception:                                    # noqa: BLE001
+                pass          # a draft may be half-finished — restoring the steps is enough
     # resume the last build, so reopening a study lands where the reader left it —
     # built domains, comparison and all — rather than on an empty build view
     if study.last_run and Path(study.last_run).is_dir():
@@ -1143,6 +1164,17 @@ RECIPES = [
          {"k": "chars", "t": "text", "label": "Characters to remove", "help": "COMPRESS"},
          {"k": "sep", "t": "text", "label": "Separator", "help": "CATX"},
          {"k": "width", "t": "text", "label": "Width", "help": "ZEROPAD"},
+     ]},
+    {"id": "ct",
+     "label": "Apply controlled terminology (assign_ct)",
+     "desc": "Normalise a raw column, fixed text or another variable to a codelist's "
+             "submission values ('male', 'M', 'Male' → M), sdtm.oak style. Unmatched "
+             "values pass through for validation to flag — never dropped, never invented.",
+     "fields": [
+         {"k": "sources", "t": "json", "label": "Input",
+          "help": '[{"dataset": "dm", "column": "SEXCD"}] or [{"kind": "text", "text": "male"}]'},
+         {"k": "codelist", "t": "text", "label": "Codelist",
+          "help": "a name from the spec's Codelist sheet"},
      ]},
     {"id": "cond",
      "label": "If / else-if / else",

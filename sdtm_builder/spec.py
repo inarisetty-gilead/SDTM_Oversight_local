@@ -303,8 +303,10 @@ def _read_codelist_sheet(xl: pd.ExcelFile, sheet: str) -> dict[str, dict[str, st
         return None
 
     c_name = pick("codelist", "codelist_name", "id", "oid", "name")
-    c_sub = pick("submission_value", "submissionvalue", "term", "value", "coded_value")
-    c_dec = pick("decode", "decoded_value", "preferred_term", "translated_value")
+    c_sub = pick("submission_value", "submissionvalue", "term", "value", "coded_value",
+                 "codelist_value")            # Designer-style sheets: 'Codelist Value'
+    c_dec = pick("decode", "decoded_value", "preferred_term", "translated_value",
+                 "codelist_value_decode")     # …and 'Codelist Value Decode'
     c_syn = pick("synonyms", "synonym", "aliases")
     if not (c_name and c_sub):
         return {}

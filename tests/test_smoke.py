@@ -723,6 +723,29 @@ def test_reference_date_and_baseline_templates():
         assert applied and "VSBLFL" in applied[0]
 
 
+def test_designer_style_codelist_headers_are_read():
+    """A Designer-format workbook names its columns 'Codelist Name' / 'Codelist Value' /
+    'Codelist Value Decode' / 'Synonym'. Those spellings must feed the codelist dropdown
+    and the CT normalisation exactly like the native headers."""
+    import pandas as pd
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "designer_spec.xlsx"
+        with pd.ExcelWriter(p, engine="openpyxl") as xw:
+            pd.DataFrame([{"Variable": "STUDYID", "Label": "Study Identifier",
+                           "Mapping / Assignment": "raw.dm.STUDYID"}]).to_excel(
+                xw, sheet_name="DM", index=False)
+            pd.DataFrame([
+                {"Codelist Name": "SEX", "Codelist Value": "M",
+                 "Codelist Value Decode": "Male", "Synonym": "m;male"},
+                {"Codelist Name": "SEX", "Codelist Value": "F",
+                 "Codelist Value Decode": "Female", "Synonym": "f;female"},
+            ]).to_excel(xw, sheet_name="Codelist", index=False)
+        spec = load_spec(p)
+        assert "SEX" in spec.codelists
+        m = spec.codelists["SEX"]
+        assert m["MALE"] == "M" and m["F"] == "F" and m["FEMALE"] == "F"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
