@@ -190,23 +190,24 @@ def _apply_rfpendtc(b: Block, by_var: dict, store, base_ds: str) -> str | None:
     return f"the last date of participation ({_named(src)})"
 
 
-def _make_blfl(dom: str):
+def _apply_blfl(b: Block, by_var: dict, store, base_ds: str) -> str | None:
     """--BLFL: 'Y' on the last non-missing result on or before RFSTDTC, per subject and
-    test — the SDTMIG baseline convention, run by the same engine as --LOBXFL."""
-    def apply(b: Block, by_var: dict, store, base_ds: str) -> str | None:
-        if b.mtype != "unmapped":
+    test — ONE SDTMIG convention for every findings domain with a baseline flag, run by
+    the same engine as --LOBXFL. Where a domain's sorting or grouping differs, edit the
+    applied variable in its domain — its args are editable like any mapping."""
+    if b.mtype != "unmapped":
+        return None
+    dom = b.domain
+    tc, dtc = f"{dom}TESTCD", f"{dom}DTC"
+    for need in (tc, dtc):
+        v = by_var.get(need)
+        if v is None or v.mtype in ("drop", "unmapped"):
             return None
-        tc, dtc = f"{dom}TESTCD", f"{dom}DTC"
-        for need in (tc, dtc):
-            v = by_var.get(need)
-            if v is None or v.mtype in ("drop", "unmapped"):
-                return None
-        b.mtype, b.recipe = "derived", "lobxfl"
-        b.args = {"testcd_var": tc, "dtc_var": dtc, "result_var": f"{dom}ORRES",
-                  "ref_var": "RFSTDTC"}
-        return (f"'Y' on the last non-missing {dom}ORRES on or before RFSTDTC, "
-                f"per subject and {tc}")
-    return apply
+    b.mtype, b.recipe = "derived", "lobxfl"
+    b.args = {"testcd_var": tc, "dtc_var": dtc, "result_var": f"{dom}ORRES",
+              "ref_var": "RFSTDTC"}
+    return (f"'Y' on the last non-missing {dom}ORRES on or before RFSTDTC, "
+            f"per subject and {tc}")
 
 
 REGISTRY: list[Template] = [
@@ -230,12 +231,9 @@ REGISTRY: list[Template] = [
              "earliest informed consent date", _apply_rficdtc),
     Template("RFPENDTC", ("DM",), "dm-merge template",
              "last date of participation", _apply_rfpendtc),
-    Template("VSBLFL", ("VS",), "SDTMIG baseline convention",
-             "Y on the last result on or before RFSTDTC", _make_blfl("VS")),
-    Template("EGBLFL", ("EG",), "SDTMIG baseline convention",
-             "Y on the last result on or before RFSTDTC", _make_blfl("EG")),
-    Template("LBBLFL", ("LB",), "SDTMIG baseline convention",
-             "Y on the last result on or before RFSTDTC", _make_blfl("LB")),
+    Template("--BLFL", (), "SDTMIG baseline convention",
+             "Y on the last result on or before RFSTDTC — any domain with a baseline flag",
+             _apply_blfl),
 ]
 
 
@@ -252,9 +250,11 @@ def apply_templates(blocks: list[Block], store, domain: str, base_ds: str,
     applied = []
     for t in REGISTRY:
         ov = overrides.get(t.variable) or {}
-        if dom not in t.domains or ov.get("enabled") is False:
+        # empty domains = every domain; '--VAR' resolves to this domain's variable
+        if (t.domains and dom not in t.domains) or ov.get("enabled") is False:
             continue
-        b = by_var.get(t.variable)
+        name = dom + t.variable[2:] if t.variable.startswith("--") else t.variable
+        b = by_var.get(name)
         # each template guards its own applicability; the loop only enforces that a hand
         # edit is never touched
         if b is None or b.edited:
@@ -273,7 +273,7 @@ def apply_templates(blocks: list[Block], store, domain: str, base_ds: str,
         b.method_source = "template"
         b.confidence = 95
         b.reason = f"standard derivation from the {t.source}: {note}"
-        applied.append(f"{t.variable} — {note}")
+        applied.append(f"{name} — {note}")
     return applied
 
 

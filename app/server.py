@@ -1546,11 +1546,14 @@ def list_functions():
     for t in templates_registry.REGISTRY:
         ov = SESSION.template_overrides.get(t.variable, {})
         resolved = None
-        for dom in t.domains:
+        # a '--' template applies in any domain — look across everything built
+        doms = [upper(d) for d in t.domains] or sorted(SESSION.results)
+        for dom in doms:
             res = SESSION.results.get(upper(dom))
             if res is None or not res.ok:
                 continue
-            b = next((x for x in res.blocks if x.variable == t.variable), None)
+            name = dom + t.variable[2:] if t.variable.startswith("--") else t.variable
+            b = next((x for x in res.blocks if x.variable == name), None)
             if b is not None and b.method_source == "template":
                 resolved = {"domain": upper(dom), "mtype": b.mtype, "dataset": b.dataset,
                             "column": b.column, "value": b.value, "recipe": b.recipe,

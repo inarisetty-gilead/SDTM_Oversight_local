@@ -246,7 +246,8 @@ function TemplateRow({ t, refresh }: { t: TemplateFn; refresh: () => void }) {
         </label>
         <Chip tone="violet">template</Chip>
         {t.edit && <Chip tone="blue">adjusted</Chip>}
-        <span className="text-xs text-muted-foreground">{t.domains.join(", ")}</span>
+        <span className="text-xs text-muted-foreground">
+          {t.domains.length ? t.domains.join(", ") : "any domain with a baseline"}</span>
         <span className="flex-1 text-xs">{t.describe}</span>
         <span className="text-[11px] text-muted-foreground">{t.source}</span>
         <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setOpen(!open)}>
