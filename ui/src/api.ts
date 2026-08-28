@@ -267,6 +267,10 @@ export const api = {
   columns: (d: string, ds: string) => call<{ dataset: string; columns: string[] }>(
     `/api/domain/${d}/columns/${encodeURIComponent(ds)}`),
 
+  domainProgram: (d: string, lang: "python" | "sas") =>
+    call<{ domain: string; lang: string; program: string; filename: string }>(
+      `/api/domain/${d}/program/${lang}`),
+
   variableProfile: (d: string, v: string) =>
     call<VariableProfile>(`/api/domain/${d}/variable/${v}/profile`),
   suggestArgs: (d: string, v: string, recipe: string) =>

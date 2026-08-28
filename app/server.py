@@ -1216,6 +1216,34 @@ RECIPES = [
 ]
 
 
+@app.get("/api/domain/{domain}/program/{lang}")
+def domain_program(domain: str, lang: str):
+    """The build, written out as a standalone program — Python/pandas or house-style SAS.
+    Generated from the same structured blocks the build executed (hand edits included),
+    with clearly-marked TODOs where a recipe has no standalone translation."""
+    from sdtm_builder import programs
+    dom = upper(domain)
+    res = SESSION.results.get(dom)
+    if res is None:
+        raise HTTPException(409, "build the domain first — the program is generated from "
+                                 "the executed build, so it says exactly what the tool did")
+    lang = lang.lower()
+    if lang not in ("python", "sas"):
+        raise HTTPException(400, "lang must be python or sas")
+    kwargs = dict(
+        domain=dom, blocks=res.blocks, base_dataset=res.base_dataset,
+        prep_step=res.prep_step.as_dict() if res.prep_step else None,
+        pipeline=SESSION.pipelines.get(dom, []),
+        sort_by=(SESSION.overrides.get(dom, {}) or {}).get("sort") or [],
+        dedup=SESSION.dedups.get(dom, {}),
+        codelists=SESSION.spec.codelists if SESSION.spec else {},
+        raw_path=SESSION.raw_path, studyid=SESSION.studyid, version=__version__)
+    text = programs.python_program(**kwargs) if lang == "python" else programs.sas_program(**kwargs)
+    ext = "py" if lang == "python" else "sas"
+    return {"domain": dom, "lang": lang, "program": text,
+            "filename": f"{dom.lower()}_build.{ext}"}
+
+
 @app.get("/api/recipes")
 def recipes():
     return {"mtypes": ["assign", "constant", "sequence", "derived", "drop"], "recipes": RECIPES}

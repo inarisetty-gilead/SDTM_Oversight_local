@@ -1,0 +1,148 @@
+"""Generated programs: the standalone Python must REPRODUCE the build, and the SAS
+program must be a structured, honest hand-off (real statements, clearly-marked TODOs).
+
+The gold-standard check runs the generated pandas program in a subprocess against the
+fixture raw data and compares its output, column by column, with the tool's own build —
+skipping only the variables the program itself declares as TODO.
+"""
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import pandas as pd
+
+from sdtm_builder import programs                              # noqa: E402
+from sdtm_builder.build import build_domain                    # noqa: E402
+from sdtm_builder.rawio import RawStore                        # noqa: E402
+from sdtm_builder.spec import load_spec                        # noqa: E402
+
+HERE = Path(__file__).resolve().parent
+
+
+def _fixture(tmp: Path) -> Path:
+    subprocess.run([sys.executable, str(HERE / "make_fixture.py"), str(tmp)],
+                   check=True, capture_output=True)
+    return tmp
+
+
+def _gen_and_run(tmp: Path, dom: str):
+    """Build one domain, generate its Python program, run it, return (tool, program) frames."""
+    spec = load_spec(tmp / "mapping_spec.xlsx")
+    store = RawStore.discover(tmp / "raw")
+    res = build_domain(spec, store, dom, studyid="S1")
+    assert res.ok, res.error
+    text = programs.python_program(
+        domain=dom, blocks=res.blocks, base_dataset=res.base_dataset,
+        prep_step=res.prep_step.as_dict() if res.prep_step else None,
+        pipeline=[], sort_by=[], dedup={}, codelists=spec.codelists,
+        raw_path=str(tmp / "raw"), studyid="S1", version="test")
+    todos = set(re.findall(r"# TODO \(hand-code\): (\w+)", text))
+    workdir = tmp / f"prog_{dom}"
+    workdir.mkdir(exist_ok=True)
+    (workdir / f"{dom.lower()}_build.py").write_text(text)
+    run = subprocess.run([sys.executable, f"{dom.lower()}_build.py"],
+                         cwd=workdir, capture_output=True, text=True)
+    assert run.returncode == 0, f"{dom} program failed:\n{run.stderr[-2000:]}\n---\n{text[-1500:]}"
+    out = pd.read_csv(workdir / f"{dom}.csv", dtype=str, keep_default_na=False)
+    return res, out, todos, text
+
+
+def _clean(col: pd.Series) -> list[str]:
+    return [("" if s in ("nan", "<NA>", "None") else s)
+            for s in col.astype("string").fillna("").str.strip().tolist()]
+
+
+def _compare(res, out: pd.DataFrame, todos: set, dom: str) -> int:
+    """Column-by-column equality for everything the program claims to build."""
+    tool = res.dataset
+    assert len(out) == len(tool), f"{dom}: {len(out)} rows vs the tool's {len(tool)}"
+    compared = 0
+    for b in res.blocks:
+        v = b.variable
+        if b.supp or v in todos or b.status not in ("built", "empty"):
+            continue
+        assert v in out.columns, f"{dom}.{v} missing from the program's output"
+        got, want = _clean(out[v]), _clean(tool[v])
+        # numeric round-trip through CSV: 1 vs 1.0
+        norm = lambda xs: [x[:-2] if x.endswith(".0") else x for x in xs]   # noqa: E731
+        assert norm(got) == norm(want), (
+            f"{dom}.{v} differs — program {got[:5]}… vs tool {want[:5]}…")
+        compared += 1
+    return compared
+
+
+def test_generated_python_reproduces_the_dm_build():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        res, out, todos, _text = _gen_and_run(tmp, "DM")
+        n = _compare(res, out, todos, "DM")
+        assert n >= 8, f"only {n} DM columns were comparable — the program is mostly TODOs"
+
+
+def test_generated_python_reproduces_a_stacked_build():
+    """DS builds on the automatic stack of three raw forms — the program must stack too."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        res, out, todos, text = _gen_and_run(tmp, "DS")
+        assert "pd.concat" in text                              # the stack is real code
+        n = _compare(res, out, todos, "DS")
+        assert n >= 4, f"only {n} DS columns were comparable"
+
+
+def test_generated_python_reproduces_a_transposed_build():
+    """EG builds on the wide-to-long findings transpose — one record per test."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        res, out, todos, _text = _gen_and_run(tmp, "EG")
+        n = _compare(res, out, todos, "EG")
+        assert n >= 3, f"only {n} EG columns were comparable"
+
+
+def test_sas_program_is_structured_and_honest():
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        spec = load_spec(tmp / "mapping_spec.xlsx")
+        store = RawStore.discover(tmp / "raw")
+        res = build_domain(spec, store, "DM", studyid="S1")
+        text = programs.sas_program(
+            domain="DM", blocks=res.blocks, base_dataset=res.base_dataset,
+            prep_step=res.prep_step.as_dict() if res.prep_step else None,
+            pipeline=[], sort_by=[], dedup={}, codelists=spec.codelists,
+            raw_path=str(tmp / "raw"), studyid="S1", version="test")
+        assert "%macro fetch" in text and "%fetch(dm);" in text
+        assert "data dm_work;" in text and "data DM;" in text
+        # controlled terminology is a real SELECT/WHEN block, from the spec's codelist
+        assert "select (upcase(strip(SEX)));" in text
+        assert re.search(r"when \('M', 'MALE'\) SEX = 'M';", text)
+        # what it cannot translate is an explicit TODO, never a silent gap
+        assert "TODO (hand-code)" in text
+        # --SEQ numbered on the final sorted records (DS repeats; DM has no --SEQ)
+        res_ds = build_domain(spec, store, "DS", studyid="S1")
+        text_ds = programs.sas_program(
+            domain="DS", blocks=res_ds.blocks, base_dataset=res_ds.base_dataset,
+            prep_step=res_ds.prep_step.as_dict() if res_ds.prep_step else None,
+            pipeline=[], sort_by=[], dedup={}, codelists=spec.codelists,
+            raw_path=str(tmp / "raw"), studyid="S1", version="test")
+        assert "retain DSSEQ" in text_ds and "DSSEQ + 1;" in text_ds
+        # the stacked base is real SAS, not a TODO
+        assert "indsname=__src" in text_ds
+
+
+if __name__ == "__main__":
+    failures = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print(f"PASS  {name}")
+            except AssertionError as exc:
+                failures += 1
+                print(f"FAIL  {name}: {exc}")
+    print(f"\n{'all tests passed' if not failures else f'{failures} test(s) failed'}")
+    raise SystemExit(1 if failures else 0)

@@ -25,6 +25,69 @@ const ACTION_TONE: Record<string, ChipTone> = {
   DROP: "slate", SUPP: "violet", CONSTANT: "amber", HARDCODE: "amber",
 }
 
+/** The build written out as a standalone program — Python/pandas or house-style SAS,
+ *  generated from the exact blocks the build executed (hand edits included). */
+function ProgramPane({ domain, refreshKey }: { domain: string; refreshKey: number }) {
+  const [lang, setLang] = useState<"python" | "sas">("python")
+  const [prog, setProg] = useState<{ program: string; filename: string } | null>(null)
+  const [err, setErr] = useState("")
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    setProg(null); setErr(""); setCopied(false)
+    api.domainProgram(domain, lang)
+      .then((p) => { if (live) setProg(p) })
+      .catch((e) => { if (live) setErr((e as Error).message) })
+    return () => { live = false }
+  }, [domain, lang, refreshKey])
+
+  const copy = () => {
+    if (!prog) return
+    void navigator.clipboard.writeText(prog.program).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  const download = () => {
+    if (!prog) return
+    const url = URL.createObjectURL(new Blob([prog.program], { type: "text/plain" }))
+    const a = document.createElement("a")
+    a.href = url; a.download = prog.filename; a.click()
+    URL.revokeObjectURL(url)
+  }
+  const todos = prog ? (prog.program.match(/TODO \(hand-code\)/g) ?? []).length : 0
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {(["python", "sas"] as const).map((l) => (
+          <Button key={l} size="sm" variant={lang === l ? "default" : "outline"}
+                  className="h-7 text-xs" onClick={() => setLang(l)}>
+            {l === "python" ? "Python (pandas)" : "SAS"}</Button>
+        ))}
+        <div className="ml-auto flex gap-1.5">
+          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!prog} onClick={copy}>
+            {copied ? "✓ Copied" : "Copy"}</Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!prog} onClick={download}>
+            Download {prog ? prog.filename : ""}</Button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Generated from the exact mappings this build executed — hand edits included, the
+        spec's controlled terminology inlined{todos > 0 ? <>; <b>{todos}</b> spot(s) the tool
+        runs internally are marked <Mono>TODO</Mono> for a programmer to hand-code</> : null}.
+        Regenerated on every build.
+      </p>
+      {err && <Callout tone="bad">{err}</Callout>}
+      {!err && !prog && <p className="text-sm text-muted-foreground">Generating…</p>}
+      {prog && (
+        <pre className="max-h-[36rem] overflow-auto rounded-xl border bg-muted/30 p-4 text-[11.5px] leading-relaxed">
+          {prog.program}</pre>
+      )}
+    </div>
+  )
+}
+
 export function DomainView({ domain, onBack, onChanged }: {
   domain: string; onBack: () => void; onChanged: () => void
 }) {
@@ -148,6 +211,7 @@ export function DomainView({ domain, onBack, onChanged }: {
             <TabsTrigger value="variables">Variables</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
             <TabsTrigger value="data">Data</TabsTrigger>
+            <TabsTrigger value="program">Program</TabsTrigger>
           </TabsList>
 
           <TabsContent value="variables" className="space-y-3 pt-4">
@@ -267,6 +331,10 @@ export function DomainView({ domain, onBack, onChanged }: {
 
           <TabsContent value="data" className="pt-4">
             <DataView domain={d.domain} datasets={d.datasets} refreshKey={dataKey} />
+          </TabsContent>
+
+          <TabsContent value="program" className="pt-4">
+            <ProgramPane domain={d.domain} refreshKey={dataKey} />
           </TabsContent>
 
           <TabsContent value="prepare" className="pt-4">
