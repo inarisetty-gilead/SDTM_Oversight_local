@@ -79,6 +79,20 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
         </div>
       </Panel>
 
+      <Panel title="The sdtm.oak function set — in Python, all dropdowns"
+             description="Every mapping algorithm from the pharmaverse {sdtm.oak} R package has its equivalent here. The building blocks are steps in a variable derivation or a custom function; the rest run automatically on every build.">
+        <div className="divide-y">
+          {OAK_MAP.map((r) => (
+            <div key={r.oak} className="flex flex-wrap items-center gap-3 py-1.5">
+              <Mono>{r.oak}</Mono>
+              <Chip tone={r.kind === "step" ? "blue" : r.kind === "auto" ? "green" : "violet"}>
+                {r.kind === "step" ? "dropdown step" : r.kind === "auto" ? "automatic" : "template"}</Chip>
+              <span className="flex-1 text-xs">{r.here}</span>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
       <Panel title="Your custom functions"
              description="Reusable derivations of your own. A function fills its variable in the chosen domains on the next build — deliberately, so it outranks the built-in templates and any name-match guess, and (only if you say so) the spec itself. Hand edits always win."
              actions={
@@ -453,3 +467,30 @@ function DateExtremeRow({ src, datasets, domain, onChange, onRemove }: {
     </div>
   )
 }
+
+
+// the pharmaverse {sdtm.oak} algorithm set and where each one lives here
+const OAK_MAP: Array<{ oak: string; kind: "step" | "auto" | "template"; here: string }> = [
+  { oak: "assign_no_ct", kind: "step",
+    here: "Take a raw column — in variable mappings and as a derivation step." },
+  { oak: "assign_ct", kind: "step",
+    here: "Apply controlled terminology — a step that normalises any value to a codelist's submission values; also automatic wherever the spec names a codelist on a variable." },
+  { oak: "assign_datetime / create_iso8601", kind: "step",
+    here: "Collected date → ISO 8601 — a step with dataset/column pickers; also the automatic --DTC pass on every build, split date parts included." },
+  { oak: "hardcode_no_ct", kind: "step",
+    here: "Set a fixed value — in variable mappings and as a derivation step." },
+  { oak: "hardcode_ct", kind: "step",
+    here: "Set a fixed value, then Apply controlled terminology — chain the two steps." },
+  { oak: "condition_add", kind: "step",
+    here: "If / then rules — conditions with plain-word comparisons, as a step or a whole derivation." },
+  { oak: "derive_seq", kind: "auto",
+    here: "--SEQ is numbered on every build after sorting — nothing to configure." },
+  { oak: "derive_study_day", kind: "step",
+    here: "Study day — a step; every --DY the spec defines is also derived automatically from its --DTC and RFSTDTC." },
+  { oak: "derive_blfl", kind: "template",
+    here: "--BLFL in the template library above — one switch, any domain with a baseline flag; sorting stays editable per variable." },
+  { oak: "oak_id_vars / generate_oak_id_vars", kind: "auto",
+    here: "Subject and record keys (STUDYID, USUBJID, --SEQ) are guaranteed on every build." },
+  { oak: "read_ct_spec / ct_spec", kind: "auto",
+    here: "The mapping spec's Codelist sheet — loaded with the spec and offered in every codelist dropdown." },
+]

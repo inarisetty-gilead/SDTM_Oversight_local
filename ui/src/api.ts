@@ -82,7 +82,7 @@ export interface DomainDetail {
   edits: Record<string, unknown>; pipeline: Array<Record<string, unknown>>;
   pipeline_draft?: Array<Record<string, unknown>> | null;
   datasets: string[]; prepared_datasets: string[]; unapplied_datasets: string[]
-  built_domains: string[]; variables: VariableRow[];
+  built_domains: string[]; variables: VariableRow[]; codelists?: string[];
 }
 
 export interface DataColumn {

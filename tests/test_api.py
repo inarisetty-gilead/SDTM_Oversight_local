@@ -600,6 +600,35 @@ def test_acrf_check_saves_with_the_study():
         assert (ann["Annotation"] == "OE.OELAT").any()
 
 
+def test_ct_step_normalises_to_submission_values():
+    """The assign_ct equivalent: a custom function pipes a raw column through the spec's
+    codelist and unmatched values pass through for validation, sdtm.oak semantics."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        client.post("/api/spec", json={"path": str(tmp / "mapping_spec.xlsx")})
+        client.post("/api/raw", json={"path": str(tmp / "raw")})
+        # the fixture spec has a SEX codelist; run SEXCD through it into DTHFL's slot?
+        # no — use a real unmapped variable: fill DTHFL with CT of a raw column is odd,
+        # so instead check the recipe through the pipeline of an editable variable.
+        lib = client.get("/api/functions").json()
+        assert lib is not None
+        r = client.post("/api/functions", json={
+            "name": "ct check", "variable": "DTHFL", "domains": ["DM"],
+            "override": False,
+            "steps": [{"op": "constant", "value": "male"},
+                      {"op": "ct", "args": {"sources": [{"kind": "self"}],
+                                            "codelist": "SEX"}}]})
+        assert r.status_code == 200
+        client.post("/api/build", json={"fmt": "none", "domains": ["DM"]})
+        assert _wait(client)["status"] == "done"
+        page = client.get("/api/domain/DM/data").json()
+        names = [c["name"] for c in page["columns"]]
+        vals = {row[names.index("DTHFL")] for row in page["rows"]}
+        assert vals == {"M"}, vals          # 'male' normalised by the SEX codelist
+        client.delete("/api/functions/ct%20check")
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

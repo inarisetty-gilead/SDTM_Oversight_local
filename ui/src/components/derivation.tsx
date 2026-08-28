@@ -225,10 +225,28 @@ export function CondControl({ args, onChange, detail }: {
 }
 
 /* ── a pipeline: ordered steps on one variable ──────────────────────────── */
+// the sdtm.oak algorithm set, as dropdown steps — same names a mapper knows from R
 const STEP_KINDS: [string, string][] = [
-  ["assign", "Take a raw column"], ["constant", "Set a fixed value"],
-  ["fn", "Apply a SAS function"], ["cond", "If / then rules"],
+  ["assign", "Take a raw column — assign_no_ct"],
+  ["constant", "Set a fixed value — hardcode_no_ct"],
+  ["ct", "Apply controlled terminology — assign_ct"],
+  ["iso_date", "Collected date \u2192 ISO 8601 — assign_datetime"],
+  ["study_day", "Study day — derive_study_day"],
+  ["date_extreme", "Earliest / latest date per subject"],
+  ["fn", "Apply a SAS function"],
+  ["cond", "If / then rules — condition_add"],
 ]
+
+const STEP_INIT: Record<string, Dict> = {
+  assign: { op: "assign" },
+  constant: { op: "constant" },
+  ct: { op: "ct", args: { sources: [{}], codelist: "" } },
+  iso_date: { op: "iso_date", args: { dataset: "", date_col: "" } },
+  study_day: { op: "study_day", args: { dtc_var: "", ref_var: "RFSTDTC" } },
+  date_extreme: { op: "date_extreme", args: { func: "min", sources: [] } },
+  fn: { op: "fn", args: { fn: "", sources: [{ kind: "self" }] } },
+  cond: { op: "cond", args: { rules: [], else: { kind: "missing" } } },
+}
 
 export function PipelineControl({ steps, onChange, detail }: {
   steps: Dict[]; onChange: (s: Dict[]) => void; detail: DomainDetail
@@ -250,11 +268,10 @@ export function PipelineControl({ steps, onChange, detail }: {
           <div key={i} className="rounded-md border p-2">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="grid h-5 w-5 place-items-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
-              <Sel width="w-44" value={op} options={STEP_KINDS}
-                   onChange={(o) => upd(i, o === "fn"
-                     ? { op: o, args: { fn: "", sources: [{ kind: "self" }] }, dataset: undefined, column: undefined, value: undefined }
-                     : o === "cond" ? { op: o, args: { rules: [], else: { kind: "missing" } } }
-                     : { op: o, args: undefined })} />
+              <Sel width="w-64" value={op} options={STEP_KINDS}
+                   onChange={(o) => upd(i, { dataset: undefined, column: undefined,
+                                             value: undefined, args: undefined,
+                                             ...(STEP_INIT[o] ?? { op: o }) })} />
               {op === "assign" && <>
                 <Sel width="w-40" placeholder="dataset" value={(st.dataset as string) ?? ""}
                      options={[...detail.prepared_datasets.map((d): [string, string] => [d, `${d} (prepared)`]),
@@ -289,6 +306,26 @@ export function PipelineControl({ steps, onChange, detail }: {
                 <CondControl args={(st.args as Dict) ?? {}} detail={detail}
                              onChange={(a) => upd(i, { args: a })} />
               </div>)}
+            {op === "ct" && (
+              <div className="mt-2 pl-6">
+                <CtControl args={(st.args as Dict) ?? {}} detail={detail} allowSelf={i > 0}
+                           onChange={(a) => upd(i, { args: a })} />
+              </div>)}
+            {op === "iso_date" && (
+              <div className="mt-2 pl-6">
+                <IsoDateControl args={(st.args as Dict) ?? {}} detail={detail}
+                                onChange={(a) => upd(i, { args: a })} />
+              </div>)}
+            {op === "study_day" && (
+              <div className="mt-2 pl-6">
+                <StudyDayControl args={(st.args as Dict) ?? {}} detail={detail}
+                                 onChange={(a) => upd(i, { args: a })} />
+              </div>)}
+            {op === "date_extreme" && (
+              <div className="mt-2 pl-6">
+                <DateExtremeControl args={(st.args as Dict) ?? {}} detail={detail}
+                                    onChange={(a) => upd(i, { args: a })} />
+              </div>)}
           </div>
         )
       })}
@@ -299,6 +336,140 @@ export function PipelineControl({ steps, onChange, detail }: {
       {steps.length === 0 && (
         <p className="text-[11px] text-muted-foreground">
           Start with the column to take, then add the transformations to apply to it.</p>)}
+    </div>
+  )
+}
+
+
+/* ── sdtm.oak-style step controls ─────────────────────────────────────────── */
+
+/** assign_ct / hardcode_ct: a source normalised to the codelist's submission values. */
+export function CtControl({ args, onChange, detail, allowSelf }: {
+  args: Dict; onChange: (a: Dict) => void; detail: DomainDetail; allowSelf?: boolean
+}) {
+  const sources = (args.sources as Dict[]) ?? [{}]
+  const codelists = ((detail as unknown as { codelists?: string[] }).codelists) ?? []
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="text-muted-foreground">normalise</span>
+      <SourceControl value={sources[0] ?? {}} detail={detail} allowSelf={allowSelf}
+                     onChange={(v) => onChange({ ...args, sources: [v] })} />
+      <span className="text-muted-foreground">to the submission values of codelist</span>
+      {codelists.length ? (
+        <Sel width="w-44" placeholder="codelist" value={(args.codelist as string) ?? ""}
+             options={codelists.map((c): [string, string] => [c, c])}
+             onChange={(c) => onChange({ ...args, codelist: c })} />
+      ) : (
+        <Input className="h-8 w-40 text-xs" placeholder="codelist name"
+               value={(args.codelist as string) ?? ""}
+               onChange={(e) => onChange({ ...args, codelist: e.target.value })} />
+      )}
+      <span className="text-muted-foreground">— unmatched values pass through and are flagged</span>
+    </div>
+  )
+}
+
+/** assign_datetime / create_iso8601: a collected date (and time) to ISO 8601. */
+export function IsoDateControl({ args, onChange, detail }: {
+  args: Dict; onChange: (a: Dict) => void; detail: DomainDetail
+}) {
+  const ds = (args.dataset as string) ?? ""
+  const [cols, setCols] = useState<string[]>([])
+  useEffect(() => {
+    if (!ds) { setCols([]); return }
+    let live = true
+    api.columns(detail.domain, ds).then((r) => live && setCols(r.columns)).catch(() => setCols([]))
+    return () => { live = false }
+  }, [ds, detail.domain])
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="text-muted-foreground">the date collected in</span>
+      <Sel width="w-40" placeholder="dataset" value={ds}
+           options={[...detail.prepared_datasets.map((d): [string, string] => [d, `${d} (prepared)`]),
+                     ...detail.datasets.filter((d) => !detail.prepared_datasets.includes(d))
+                       .map((d): [string, string] => [d, d])]}
+           onChange={(d) => onChange({ ...args, dataset: d, date_col: "", time_col: "" })} />
+      <Sel width="w-40" placeholder="date column" value={(args.date_col as string) ?? ""}
+           options={cols.map((c): [string, string] => [c, c])}
+           onChange={(c) => onChange({ ...args, date_col: c })} />
+      <span className="text-muted-foreground">time (optional)</span>
+      <Sel width="w-36" placeholder="none" value={(args.time_col as string) ?? ""}
+           options={cols.map((c): [string, string] => [c, c])}
+           onChange={(c) => onChange({ ...args, time_col: c })} />
+      <span className="text-muted-foreground">
+        → ISO 8601; split year/month/day parts beside the column are found on their own</span>
+    </div>
+  )
+}
+
+/** derive_study_day: (--DTC − reference) + 1, no day zero. */
+export function StudyDayControl({ args, onChange, detail }: {
+  args: Dict; onChange: (a: Dict) => void; detail: DomainDetail
+}) {
+  const vars = detail.variables.map((x): [string, string] => [x.variable, x.variable])
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="text-muted-foreground">days from</span>
+      <Sel width="w-40" placeholder="reference (RFSTDTC)" value={(args.ref_var as string) ?? "RFSTDTC"}
+           options={vars} onChange={(v) => onChange({ ...args, ref_var: v })} />
+      <span className="text-muted-foreground">to the event date</span>
+      <Sel width="w-40" placeholder="--DTC variable" value={(args.dtc_var as string) ?? ""}
+           options={vars} onChange={(v) => onChange({ ...args, dtc_var: v })} />
+      <span className="text-muted-foreground">— +1 on or after the reference, never day 0</span>
+    </div>
+  )
+}
+
+/** Earliest / latest date per subject, pooled across datasets. */
+export function DateExtremeControl({ args, onChange, detail }: {
+  args: Dict; onChange: (a: Dict) => void; detail: DomainDetail
+}) {
+  const sources = (args.sources as Dict[]) ?? []
+  return (
+    <div className="space-y-1.5 text-xs">
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">take the</span>
+        <Sel width="w-32" value={(args.func as string) ?? "min"}
+             options={[["min", "earliest"], ["max", "latest"]]}
+             onChange={(f) => onChange({ ...args, func: f })} />
+        <span className="text-muted-foreground">per subject, across:</span>
+      </div>
+      {sources.map((src, i) => (
+        <DateExtremeSourceRow key={i} src={src} detail={detail}
+          onChange={(nr) => onChange({ ...args, sources: sources.map((x, k) => (k === i ? nr : x)) })}
+          onRemove={() => onChange({ ...args, sources: sources.filter((_, k) => k !== i) })} />
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => onChange({ ...args, sources: [...sources, {}] })}>
+        Add a dataset</Button>
+    </div>
+  )
+}
+
+function DateExtremeSourceRow({ src, detail, onChange, onRemove }: {
+  src: Dict; detail: DomainDetail; onChange: (v: Dict) => void; onRemove: () => void
+}) {
+  const ds = (src.dataset as string) ?? ""
+  const [cols, setCols] = useState<string[]>([])
+  useEffect(() => {
+    if (!ds) { setCols([]); return }
+    let live = true
+    api.columns(detail.domain, ds).then((r) => live && setCols(r.columns)).catch(() => setCols([]))
+    return () => { live = false }
+  }, [ds, detail.domain])
+  return (
+    <div className="flex items-center gap-1.5">
+      <Sel width="w-40" placeholder="dataset" value={ds}
+           options={[...detail.prepared_datasets.map((d): [string, string] => [d, `${d} (prepared)`]),
+                     ...detail.datasets.filter((d) => !detail.prepared_datasets.includes(d))
+                       .map((d): [string, string] => [d, d])]}
+           onChange={(d) => onChange({ dataset: d, date_col: "" })} />
+      <span className="text-[11px] text-muted-foreground">date in</span>
+      <Sel width="w-40" placeholder="date column" value={(src.date_col as string) ?? ""}
+           options={cols.map((c): [string, string] => [c, c])}
+           onChange={(c) => onChange({ ...src, date_col: c })} />
+      <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
+              onClick={onRemove}>Remove</Button>
     </div>
   )
 }

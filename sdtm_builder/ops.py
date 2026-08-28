@@ -708,8 +708,25 @@ def op_pipeline(ctx, b: Block) -> pd.Series:
         ctx.registers.update(saved_regs)
 
 
+def op_ct(ctx, b: Block) -> pd.Series:
+    """Controlled terminology, sdtm.oak style (assign_ct / hardcode_ct): the input — a
+    raw column, fixed text, or the running value — is normalised to the codelist's
+    submission values. Unmatched values pass through unchanged for validation to flag,
+    never dropped, never invented."""
+    a = b.args or {}
+    src = (a.get("sources") or [a])[0]
+    ser = _series_for(ctx, src, b.variable, "string")
+    codelist = s(a.get("codelist")) or b.codelist
+    if not codelist:
+        raise OpError("name the codelist to apply")
+    if upper(codelist) not in ctx.codelists:
+        raise OpError(f"codelist '{codelist}' is not in the spec's Codelist sheet")
+    return apply_codelist(ctx, ser, codelist, a.get("ct_overrides"))
+
+
 RECIPE_OPS = {
     "iso_date": op_iso_date,
+    "ct": op_ct,
     "study_day": op_study_day,
     "lobxfl": op_lobxfl,
     "concat": op_concat,

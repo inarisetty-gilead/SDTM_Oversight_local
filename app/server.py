@@ -958,6 +958,7 @@ def _domain_payload(dom: str) -> dict:
         "dedup": SESSION.dedups.get(dom, {}),
         "pipeline": SESSION.pipelines.get(dom, []),
         "pipeline_draft": SESSION.draft_pipelines.get(dom),
+        "codelists": sorted(SESSION.spec.codelists) if SESSION.spec else [],
         "prep_reports": res.prep_reports,
         "prep_outputs": res.prep_outputs,
         "edits": SESSION.edits.get(dom, {}),
@@ -1626,7 +1627,8 @@ def fn_context(domain: str):
                  for r in SESSION.spec.rows(dom) if r.variable]
     return {"domain": dom, "datasets": datasets,
             "prepared_datasets": sorted(SESSION.preview_outputs),
-            "variables": variables}
+            "variables": variables,
+            "codelists": sorted(SESSION.spec.codelists) if SESSION.spec else []}
 
 
 @app.get("/api/prep/ops")
