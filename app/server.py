@@ -123,6 +123,10 @@ class SynthIn(BaseModel):
 
 class PipelineIn(BaseModel):
     steps: list[dict] = []
+    # which output the domain's records (and matching mappings) follow:
+    # None = leave the current choice alone, "" = follow the LAST step (the default),
+    # a name = pin to that output, so adding prep2 later never moves prep1's mappings
+    base: str | None = None
 
 
 class DedupIn(BaseModel):
@@ -1911,6 +1915,8 @@ def set_pipeline(domain: str, body: PipelineIn):
         SESSION.preview_outputs -= {norm_key(st.get("name", "")) for st in body.steps}
         SESSION.pipelines[dom] = body.steps
         SESSION.overrides.setdefault(dom, {})["prep_mode"] = "custom"
+        if body.base is not None:
+            SESSION.overrides[dom]["base"] = norm_key(body.base) if body.base else ""
     else:
         SESSION.pipelines.pop(dom, None)
         if SESSION.overrides.get(dom, {}).get("prep_mode") == "custom":

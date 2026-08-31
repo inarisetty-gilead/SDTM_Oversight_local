@@ -469,6 +469,10 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
   // per-step minimize/maximize + the remembered previews toggle — as in SDTM Designer's
   // prep studio (👁 previews on/off, steps collapse to their one-line summary)
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
+  // which output the domain's records follow. "" = the last step (the default). Pinning
+  // it means adding prep2 later never silently moves the variables off prep1.
+  const [recordsFrom, setRecordsFrom] = useState<string>(
+    () => ((detail.override as { base?: string })?.base ?? ""))
   const [showPrev, setShowPrev] = useState<boolean>(() => {
     try { return localStorage.getItem("prepPreviews") !== "off" } catch { return true }
   })
@@ -522,7 +526,12 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
       return { ...st, params: p }
     }))
 
-  const datasetsFor = (i: number) => [...steps.slice(0, i).map((s, k) => s.name || `prep${k + 1}`), ...detail.datasets]
+  // earlier steps' outputs first, then the raw datasets — deduplicated: once a step's
+  // preview has run, its output is ALSO in the store (detail.datasets), and a name
+  // listed twice renders as "prep1 prep1" in every picker
+  const datasetsFor = (i: number) =>
+    Array.from(new Set([...steps.slice(0, i).map((s, k) => s.name || `prep${k + 1}`),
+                        ...detail.datasets]))
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError("")
@@ -555,9 +564,27 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
           {live ? <><Loader2 className="h-3 w-3 animate-spin" />running…</>
                 : steps.length ? <>live preview</> : null}
         </span>
+        {steps.length > 0 && (
+          <span className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground"
+                  title="the output the domain's records are built from — variables whose columns it carries follow it; hand-edited variables always keep their own source">
+              records from</span>
+            <Select value={recordsFrom || "__last"}
+                    onValueChange={(v) => setRecordsFrom(v === "__last" ? "" : v)}>
+              <SelectTrigger className="h-7 w-44 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__last" className="text-xs">the last step (default)</SelectItem>
+                {steps.map((s, k) => {
+                  const n = s.name || `prep${k + 1}`
+                  return <SelectItem key={n} value={n} className="text-xs">{n} (pinned)</SelectItem>
+                })}
+              </SelectContent>
+            </Select>
+          </span>
+        )}
         <Button size="sm" className="h-7 text-xs" disabled={busy}
                 onClick={() => void act(async () => {
-                  await api.setPipeline(detail.domain, steps)
+                  await api.setPipeline(detail.domain, steps, recordsFrom)
                   await api.rebuild(detail.domain); onDone()
                 })}>Apply &amp; rebuild</Button>
         {steps.length > 0 && (

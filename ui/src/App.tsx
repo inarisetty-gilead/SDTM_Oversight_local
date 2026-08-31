@@ -17,10 +17,19 @@ import { CompareView } from "@/views/CompareView"
 import { FunctionsView } from "@/views/FunctionsView"
 import { CrfView } from "@/views/CrfView"
 import { DomainView } from "@/views/DomainView"
+import { SpecWindow } from "@/components/SpecPeek"
 
 type View = "studies" | "setup" | "spec" | "build" | "functions" | "compare" | "acrf" | { domain: string }
 
 export default function App() {
+  // #spec/DM opens a standalone read-only spec window — a reference the reader can put
+  // on a second monitor while mapping in the main window (same server session)
+  const specHash = /^#spec\/([A-Za-z0-9_]+)$/.exec(window.location.hash)
+  if (specHash) return <SpecWindow domain={specHash[1].toUpperCase()} />
+  return <MainApp />
+}
+
+function MainApp() {
   const [view, setView] = useState<View>("studies")
   const [study, setStudy] = useState<{ id: string; name: string } | null>(null)
   const [specPath, setSpecPath] = useState("")

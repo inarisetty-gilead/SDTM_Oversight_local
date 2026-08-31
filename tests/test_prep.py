@@ -30,6 +30,27 @@ def run(steps, store):
     return prep.run_pipeline(steps, store)[0]
 
 
+def test_merge_collision_keeps_one_column_and_the_later_dataset_wins():
+    """Two datasets both carrying a column must NOT produce a silent _r twin — the reader
+    maps the original name, finds the twin instead, and gets a column of nothing. As in a
+    SAS MERGE, one name survives and the later dataset's value wins where it has one."""
+    with tempfile.TemporaryDirectory() as td:
+        store = _store(Path(td))
+        # both sides carry SEXCD: the right side gets a planted copy with new values
+        ae = store.get(store.resolve("ae")).copy()
+        ae["SEXCD"] = "X"
+        store.put("ae2", ae)
+        out = run([{"op": "merge", "name": "both", "params": {
+            "how": "left", "on": ["USUBJID"],
+            "inputs": [{"dataset": "dm"}, {"dataset": "ae2"}]}}], store)["both"]
+        assert "SEXCD_r" not in out.columns                     # no twin
+        assert "SEXCD" in out.columns
+        matched = out["USUBJID"].isin(set(ae["USUBJID"]))
+        assert (out.loc[matched, "SEXCD"] == "X").all()         # the later dataset won
+        if (~matched).any():                                    # left value kept where no match
+            assert (out.loc[~matched, "SEXCD"] != "X").all()
+
+
 def test_stack_merge_and_column_ops():
     with tempfile.TemporaryDirectory() as td:
         store = _store(Path(td))

@@ -462,6 +462,11 @@ def _py_prep_lines(g: _Py, step: dict) -> list[str]:
             key_expr = (repr(on) if on
                         else f'[k for k in {list(SUBJECT_KEYS)!r} if k in {name}.columns and k in {fr}.columns][:1]')
             L.append(f'{name} = {name}.merge({fr}, on={key_expr}, how="{how}", suffixes=("", "_r"))')
+            L.append(f'for _c in [c for c in {name}.columns if c.endswith("_r") '
+                     f'and c[:-2] in {name}.columns]:   # SAS MERGE: the later dataset wins')
+            L.append(f'    {name}[_c[:-2]] = {name}[_c].combine_first({name}[_c[:-2]])')
+            L.append(f'{name} = {name}.drop(columns=[c for c in {name}.columns '
+                     f'if c.endswith("_r") and c[:-2] in {name}.columns])')
         return L
     if op == "select":
         L.append(f'{name} = {g.frame(p.get("dataset"))}'

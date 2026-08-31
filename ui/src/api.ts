@@ -306,7 +306,8 @@ export const api = {
     ok: boolean; error?: string; reports?: Array<Record<string, unknown>>;
     outputs?: Record<string, { rows: number; columns: string[]; sample: string[][] }>
   }>(`/api/domain/${d}/pipeline/preview`, { steps }),
-  setPipeline: (d: string, steps: unknown) => post(`/api/domain/${d}/pipeline`, { steps }),
+  setPipeline: (d: string, steps: unknown, base?: string) =>
+    post(`/api/domain/${d}/pipeline`, base === undefined ? { steps } : { steps, base }),
   pipelineFromAuto: (d: string) => post<{ steps: Array<Record<string, unknown>> }>(
     `/api/domain/${d}/pipeline/from-auto`),
 

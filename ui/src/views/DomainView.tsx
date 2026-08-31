@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react"
-import { ArrowLeft, Search } from "lucide-react"
+import { ArrowLeft, BookOpen, ExternalLink, Search } from "lucide-react"
 import { api } from "@/api"
 import type { CtInspect, DomainDetail, JobState, VariableRow } from "@/api"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { SpecRowsPanel } from "@/components/SpecPeek"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -214,6 +216,7 @@ export function DomainView({ domain, onBack, onChanged }: {
   const [group, setGroup] = useState("none")
   const [editing, setEditing] = useState<VariableRow | null>(null)
   const [ctVar, setCtVar] = useState<string | null>(null)   // CT inspector target
+  const [specOpen, setSpecOpen] = useState(false)           // spec slide-over
   const [pane, setPane] = useState<"data" | "edit">("data")
   const [job, setJob] = useState<JobState | null>(null)
   const [error, setError] = useState("")
@@ -277,8 +280,18 @@ export function DomainView({ domain, onBack, onChanged }: {
         </span>}
         subtitle={<>{d.rows.toLocaleString()} record(s) from <Mono>{d.base}</Mono>
           {d.supp_rows ? <> · SUPP{d.domain}: {d.supp_rows.toLocaleString()}</> : null}</>}
-        actions={<Button variant="ghost" onClick={onBack}>
-          <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />All domains</Button>} />
+        actions={<span className="flex items-center gap-1">
+          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setSpecOpen(true)}
+                  title="the spec's rows for this domain, beside your mapping">
+            <BookOpen className="mr-1.5 h-3.5 w-3.5" />Spec</Button>
+          <Button variant="outline" size="sm" className="h-8 px-2 text-xs"
+                  title="open the spec in its own window (for a second monitor)"
+                  onClick={() => window.open(`#spec/${d.domain}`, "_blank",
+                                             "width=920,height=860,noopener")}>
+            <ExternalLink className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" onClick={onBack}>
+            <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />All domains</Button>
+        </span>} />
 
       <div className="space-y-4">
         {error && <Callout tone="bad">{error}</Callout>}
@@ -459,6 +472,17 @@ export function DomainView({ domain, onBack, onChanged }: {
           <TabsContent value="program" className="pt-4">
             <ProgramPane domain={d.domain} refreshKey={dataKey} />
           </TabsContent>
+
+          <Sheet open={specOpen} onOpenChange={setSpecOpen}>
+            <SheetContent side="right" className="flex w-full flex-col sm:max-w-xl">
+              <SheetHeader>
+                <SheetTitle className="text-[14px]">{d.domain} — mapping spec</SheetTitle>
+              </SheetHeader>
+              <div className="min-h-0 flex-1 pt-1">
+                <SpecRowsPanel domain={d.domain} highlight={editing?.variable} />
+              </div>
+            </SheetContent>
+          </Sheet>
 
           {ctVar && (
             <CtInspector domain={d.domain} variable={ctVar}

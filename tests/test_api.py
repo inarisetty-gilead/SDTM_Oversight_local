@@ -712,6 +712,37 @@ def test_ct_inspector_shows_data_against_the_codelist_and_maps_by_hand():
         assert client.get("/api/domain/DM/variable/SEX/ct").json()["overrides"] == {}
 
 
+def test_records_can_be_pinned_to_one_prep_output():
+    """By default the domain's records follow the LAST pipeline step — so adding prep2
+    used to silently move every variable off prep1. Pinning 'records from' to a named
+    output keeps them where the reader put them."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        _load_and_build(client, tmp)
+        p1 = {"op": "merge", "name": "ae_plus_dm", "params": {
+              "how": "left", "on": ["USUBJID"],
+              "inputs": [{"dataset": "ae"}, {"dataset": "dm", "columns": ["SEXCD"]}]}}
+        p2 = {"op": "select", "name": "dm_small", "params": {
+              "dataset": "dm", "columns": ["USUBJID", "SEXCD"]}}
+
+        # default: the records follow the last step
+        assert client.post("/api/domain/AE/pipeline",
+                           json={"steps": [p1, p2]}).status_code == 200
+        assert client.post("/api/domain/AE/build", json={}).status_code == 200
+        assert _wait(client)["status"] == "done"
+        assert client.get("/api/domain/AE").json()["base"] == "dm_small"
+
+        # pinned: a later step no longer moves the records
+        assert client.post("/api/domain/AE/pipeline",
+                           json={"steps": [p1, p2], "base": "ae_plus_dm"}).status_code == 200
+        assert client.post("/api/domain/AE/build", json={}).status_code == 200
+        assert _wait(client)["status"] == "done"
+        after = client.get("/api/domain/AE").json()
+        assert after["base"] == "ae_plus_dm"
+        assert after["override"].get("base") == "ae_plus_dm"    # persists with the study
+
+
 def test_reopening_a_study_rebuilds_the_prepared_datasets():
     """The pipeline steps persist in study.json — but their OUTPUTS are in-memory frames.
     Reopening the study must re-run the pipelines so the prepared datasets are back in

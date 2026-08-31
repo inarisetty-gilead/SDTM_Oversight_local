@@ -92,7 +92,12 @@ def source_series(ctx, dataset: str, column: str) -> pd.Series:
     col = upper(column)
     frame = ctx.raw(dataset)
     if col not in frame.columns:
-        raise OpError(f"column {col} is not in raw dataset '{dataset}'")
+        # prepared frames can carry mixed-case columns (e.g. a merge suffix) — a picked
+        # column must never miss on case alone
+        ci = next((c for c in frame.columns if upper(c) == col), None)
+        if ci is None:
+            raise OpError(f"column {col} is not in raw dataset '{dataset}'")
+        col = ci
     base = ctx.base
     if frame is base or (len(frame) == len(base) and frame.index.equals(base.index)):
         return frame[col]

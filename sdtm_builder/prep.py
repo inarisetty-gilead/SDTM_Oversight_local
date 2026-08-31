@@ -305,7 +305,8 @@ def retarget(step: PrepStep, blocks: list[Block], store, out_cols: list[str]) ->
 
 PREP_OPS = {
     "stack": "Stack — append the records of several datasets",
-    "merge": "Merge — join datasets on key columns",
+    "merge": "Merge — join datasets on key columns (a colliding column keeps ONE name; "
+             "the later dataset's value wins, as in a SAS MERGE)",
     "filter": "Filter — keep only the records that match",
     "select": "Select — keep only these columns",
     "drop": "Drop — remove these columns",
@@ -467,6 +468,14 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
             if not keys:
                 raise PrepError("merge found no column in common to join on — name the join keys")
             out = out.merge(d, on=keys, how=how, suffixes=("", "_r"))
+            # SAS MERGE semantics for a colliding column: the later dataset's value wins
+            # wherever it has one. Never a silent COUNTRY_r twin — the reader maps COUNTRY,
+            # finds the twin instead, and gets a column of nothing.
+            twins = [c for c in out.columns if c.endswith("_r") and c[:-2] in out.columns]
+            for c in twins:
+                out[c[:-2]] = out[c].combine_first(out[c[:-2]])
+            if twins:
+                out = out.drop(columns=twins)
         return out, extra
 
     if op == "filter":
