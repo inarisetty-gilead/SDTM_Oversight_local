@@ -655,6 +655,29 @@ def test_a_rule_can_require_several_conditions_with_and():
         assert "HIT" in prev["samples"] and "MISS" in prev["samples"]       # the AND narrowed it
 
 
+def test_an_edit_away_from_an_assign_stops_claiming_the_old_source():
+    """Hand-editing a column copy into a derived rule must not leave the variables table
+    showing the OLD raw source — a mapping display that is no longer true."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        _load_and_build(client, tmp)
+        before = next(v for v in client.get("/api/domain/DM").json()["variables"]
+                      if v["variable"] == "RACE")
+        assert before["source"]                                  # a real assign shows its source
+        edit = {"mtype": "derived", "recipe": "cond", "dataset": "", "column": "",
+                "args": {"rules": [{"src": {"dataset": "dm", "column": "RACECD"}, "op": "notmissing",
+                                    "then": {"kind": "text", "text": "KNOWN"}}],
+                         "else": {"kind": "missing"}}}
+        assert client.post("/api/domain/DM/variable/RACE", json=edit).status_code == 200
+        assert client.post("/api/domain/DM/build", json={}).status_code == 200
+        assert _wait(client)["status"] == "done"
+        after = next(v for v in client.get("/api/domain/DM").json()["variables"]
+                     if v["variable"] == "RACE")
+        assert after["source"] == "", after["source"]            # the old dm.RACECD is gone
+        assert after["mapping_type"] == "derived" and after["edited"] is True
+
+
 def test_ct_inspector_shows_data_against_the_codelist_and_maps_by_hand():
     """The Designer-style CT click-through: the codelist's terms, what the data holds and
     what each value normalises to — plus a manual mapping, which must respect

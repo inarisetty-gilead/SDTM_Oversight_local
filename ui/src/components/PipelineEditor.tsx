@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { ArrowDown, ArrowUp, Loader2, Plus, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, Plus, Trash2 } from "lucide-react"
 import { api } from "@/api"
 import type { DomainDetail } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -462,10 +462,21 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
     JSON.parse(JSON.stringify(detail.pipeline_draft ?? detail.pipeline ?? [])))
   const [ops, setOps] = useState<Array<{ id: string; label: string }>>([])
   const [reports, setReports] = useState<Report[]>((detail.prep_reports as unknown as Report[]) ?? [])
-  const [out, setOut] = useState<{ name: string; columns: string[]; sample: string[][]; rows: number } | null>(null)
+  const [outs, setOuts] = useState<Record<string, { columns: string[]; sample: string[][]; rows: number }>>({})
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [live, setLive] = useState(false)
+  // per-step minimize/maximize + the remembered previews toggle — as in SDTM Designer's
+  // prep studio (👁 previews on/off, steps collapse to their one-line summary)
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
+  const [showPrev, setShowPrev] = useState<boolean>(() => {
+    try { return localStorage.getItem("prepPreviews") !== "off" } catch { return true }
+  })
+  const togglePrev = () => setShowPrev((v) => {
+    const n = !v
+    try { localStorage.setItem("prepPreviews", n ? "on" : "off") } catch { /* fine */ }
+    return n
+  })
 
   useEffect(() => { void api.prepOps().then((r) => setOps(r.ops)) }, [])
 
@@ -474,7 +485,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
   const firstRun = useRef(true)
   useEffect(() => {
     if (!steps.length) {
-      setReports([]); setOut(null)
+      setReports([]); setOuts({})
       // removing every step must also forget the saved draft, or it comes back on refresh
       if (!firstRun.current) void api.previewPipeline(detail.domain, [])
       firstRun.current = false
@@ -491,12 +502,12 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
     setLive(true)
     try {
       const r = await api.previewPipeline(detail.domain, list)
-      if (!r.ok) { setReports([]); setOut(null); setError(r.error ?? "failed"); return }
+      if (!r.ok) { setReports([]); setOuts({}); setError(r.error ?? "failed"); return }
       setError("")
       setReports((r.reports ?? []) as Report[])
-      const names = Object.keys(r.outputs ?? {})
-      const last = names[names.length - 1]
-      setOut(last ? { name: last, ...(r.outputs![last]) } : null)
+      // EVERY step's output, so each step keeps its own preview table — adding prep2
+      // must never take prep1's preview away
+      setOuts((r.outputs ?? {}) as Record<string, { columns: string[]; sample: string[][]; rows: number }>)
     } catch (e) { setError((e as Error).message) } finally { setLive(false); if (!quiet) setBusy(false) }
   }
 
@@ -534,6 +545,12 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
             Start from the detected step
           </Button>
         )}
+        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={togglePrev}
+                title={showPrev ? "hide the per-step preview tables (steps still run)"
+                                : "show a preview table under every step"}>
+          {showPrev ? <Eye className="mr-1 h-3.5 w-3.5" /> : <EyeOff className="mr-1 h-3.5 w-3.5" />}
+          previews {showPrev ? "on" : "off"}
+        </Button>
         <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           {live ? <><Loader2 className="h-3 w-3 animate-spin" />running…</>
                 : steps.length ? <>live preview</> : null}
@@ -561,9 +578,15 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
 
       {steps.map((st, i) => {
         const rep = reports.find((r) => r.step === i + 1)
+        const isMin = !!collapsed[i]
         return (
           <div key={i} className="space-y-3 border-b px-3 pb-3 last:border-b-0">
             <div className="flex flex-wrap items-center gap-2">
+              <Button size="icon" variant="ghost" className="h-7 w-7"
+                      title={isMin ? "maximise this step" : "minimise this step"}
+                      onClick={() => setCollapsed((c) => ({ ...c, [i]: !c[i] }))}>
+                {isMin ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </Button>
               <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
               <Select value={st.op} onValueChange={(v) => upd(i, { op: v, params: {} })}>
                 <SelectTrigger className="h-8 w-72 text-xs"><SelectValue /></SelectTrigger>
@@ -585,7 +608,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {!isMin && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {(FIELDS[st.op] ?? []).map((f) => {
                 // a parameter appears only for the function it belongs to
                 if (f.funcs && !f.funcs.includes(st.params.func as string)) return null
@@ -695,27 +718,24 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                     {control}
                   </div>)
               })}
-            </div>
+            </div>}
 
             {rep && (rep.ok
               ? <p className="text-xs text-muted-foreground">→ <Mono>{rep.name}</Mono>{" "}
                   {rep.rows?.toLocaleString()} records, {rep.columns?.length} columns
                   {rep.extra_outputs?.length ? ` · also produced ${rep.extra_outputs.join(", ")}` : ""}</p>
               : <p className="text-xs text-destructive">✗ {rep.error}</p>)}
+            {/* every step keeps its OWN preview — adding a later step never hides it */}
+            {showPrev && !isMin && rep?.ok && outs[rep.name] && (
+              <DataGrid height="11rem" rowNumbers={false} rows={outs[rep.name].sample}
+                cols={outs[rep.name].columns.map((c, ci) => ({ id: c, head: c, kind: "text" as const,
+                                                               cell: (r: string[]) => r[ci] }))} />
+            )}
           </div>
         )
       })}
 
       {error && <div className="px-3 pb-3"><Callout tone="bad">{error}</Callout></div>}
-      {out && (
-        <div className="space-y-2 px-3 pb-3">
-          <p className="text-xs text-muted-foreground">
-            <Mono>{out.name}</Mono> — first records of {out.rows.toLocaleString()}</p>
-          <DataGrid height="14rem" rowNumbers={false} rows={out.sample}
-            cols={out.columns.map((c, ci) => ({ id: c, head: c, kind: "text" as const,
-                                                cell: (r: string[]) => r[ci] }))} />
-        </div>
-      )}
     </div>
   )
 }

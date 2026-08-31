@@ -47,7 +47,13 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
   const active = useMemo(() => recipes?.recipes.find((r) => r.id === recipe), [recipes, recipe])
 
   const payload = () => ({
-    mtype, dataset, column, value, codelist,
+    mtype,
+    // a derived / constant / sequence mapping reads no direct source column — sending
+    // the stale assign picks would leave the OLD source showing in the variables table
+    dataset: mtype === "assign" ? dataset : "",
+    column: mtype === "assign" ? column : "",
+    value: mtype === "constant" ? value : "",
+    codelist,
     recipe: mtype === "derived" ? recipe : "",
     args: mtype === "derived" ? args : mtype === "sequence" ? args : {},
   })

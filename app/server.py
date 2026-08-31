@@ -958,7 +958,11 @@ def _domain_payload(dom: str) -> dict:
             "target": f"SUPP{dom}" if b.supp else dom,
             "how": b.method or b.describe_source(),
             "mapping_type": b.mtype, "recipe": b.recipe,
-            "source": f"{b.dataset}.{b.column}" if b.dataset and b.column else "",
+            # a hand edit away from a direct assign no longer reads that column — showing
+            # the old source would tell the reader a mapping that is no longer true
+            "source": (f"{b.dataset}.{b.column}"
+                       if b.dataset and b.column and not (b.edited and b.mtype != "assign")
+                       else ""),
             "constant": b.value, "codelist": b.codelist, "origin": b.origin, "role": b.role,
             "spec_action": b.action, "spec_input": b.input_variables,
             "spec_rule": b.mapping_rule, "spec_sas": b.sas_code, "spec_row": b.sheet_row,
