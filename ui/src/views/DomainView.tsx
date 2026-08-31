@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { ArrowLeft, BookOpen, ExternalLink, Search } from "lucide-react"
 import { api } from "@/api"
 import type { CtInspect, DomainDetail, JobState, VariableRow } from "@/api"
@@ -526,6 +526,20 @@ function DomainSettings({ detail, onDone }: { detail: DomainDetail; onDone: () =
   const [ddKeep, setDdKeep] = useState((dd.keep as string) ?? "first")
   const [busy, setBusy] = useState(false)
   const split = (v: string) => v.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean)
+  // dirty = edited since the last Save — this form has no autosave (an untried record
+  // source or dedup rule must never take effect on its own), so show it instead.
+  const [dirty, setDirty] = useState(false)
+  const firstRun = useRef(true)
+  useEffect(() => {
+    if (firstRun.current) { firstRun.current = false; return }
+    setDirty(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base, prepMode, sort, keys, ddOn, ddKeys, ddKeep])
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); e.returnValue = "" } }
+    window.addEventListener("beforeunload", handler)
+    return () => window.removeEventListener("beforeunload", handler)
+  }, [dirty])
 
   return (
     <div className="space-y-4">
@@ -579,15 +593,20 @@ function DomainSettings({ detail, onDone }: { detail: DomainDetail; onDone: () =
         </div>
       </Panel>
 
-      <Button disabled={busy} onClick={() => void (async () => {
-        setBusy(true)
-        try {
-          await api.domainSettings(detail.domain, {
-            base, sort: split(sort), prep_mode: prepMode, keys: split(keys) })
-          await api.domainDedup(detail.domain, { enabled: ddOn, keys: split(ddKeys), keep: ddKeep })
-          await api.rebuild(detail.domain); onDone()
-        } finally { setBusy(false) }
-      })()}>Save &amp; rebuild {detail.domain}</Button>
+      <div className="flex items-center gap-3">
+        <Button disabled={busy} onClick={() => void (async () => {
+          setBusy(true)
+          try {
+            await api.domainSettings(detail.domain, {
+              base, sort: split(sort), prep_mode: prepMode, keys: split(keys) })
+            await api.domainDedup(detail.domain, { enabled: ddOn, keys: split(ddKeys), keep: ddKeep })
+            await api.rebuild(detail.domain)
+            setDirty(false)
+            onDone()
+          } finally { setBusy(false) }
+        })()}>Save &amp; rebuild {detail.domain}</Button>
+        {dirty && <span className="text-[11px] text-amber-600">unsaved changes — Save to keep them</span>}
+      </div>
     </div>
   )
 }

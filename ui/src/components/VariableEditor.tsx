@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { api } from "@/api"
 import type { DomainDetail, VariableRow } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -32,6 +32,22 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
   const [error, setError] = useState("")
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [suggested, setSuggested] = useState("")
+  // dirty = edited since the last Apply — nothing here autosaves (an untested mapping
+  // change must never take effect on its own), so the reader needs a visible cue instead.
+  const [dirty, setDirty] = useState(false)
+  const firstRun = useRef(true)
+  useEffect(() => {
+    if (firstRun.current) { firstRun.current = false; return }
+    setDirty(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mtype, dataset, column, value, codelist, recipe, JSON.stringify(args)])
+  // a native "leave site?" prompt is the only honest way to warn of unsaved work here —
+  // silently applying a half-typed mapping would be worse than losing it
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); e.returnValue = "" } }
+    window.addEventListener("beforeunload", handler)
+    return () => window.removeEventListener("beforeunload", handler)
+  }, [dirty])
 
   useEffect(() => { void api.recipes().then(setRecipes) }, [])
   useEffect(() => {
@@ -267,7 +283,7 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
               {preview.samples.map((s, i) => <Mono key={i}>{s}</Mono>)}</div></Callout>
         : <Callout tone="bad">{preview.text}</Callout>)}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" disabled={busy} onClick={() => void run(async () => {
           const r = await api.previewEdit(detail.domain, variable.variable, payload())
           setPreview(r.ok
@@ -278,16 +294,21 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
         <Button size="sm" disabled={busy} onClick={() => void run(async () => {
           await api.setEdit(detail.domain, variable.variable, payload())
           await api.rebuild(detail.domain)
+          setDirty(false)
           onDone()
         })}>Apply &amp; rebuild {detail.domain}</Button>
         {variable.edited && (
           <Button variant="outline" size="sm" disabled={busy} onClick={() => void run(async () => {
             await api.clearEdit(detail.domain, variable.variable)
             await api.rebuild(detail.domain)
+            setDirty(false)
             onDone()
           })}>Revert to the spec</Button>
         )}
-        <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+        <Button variant="ghost" size="sm"
+                onClick={() => { if (!dirty || window.confirm("Discard the unsaved changes to this variable?")) onClose() }}>
+          Cancel</Button>
+        {dirty && <span className="text-[11px] text-amber-600">unsaved changes — Apply to keep them</span>}
       </div>
     </div>
   )

@@ -466,6 +466,10 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [live, setLive] = useState(false)
+  // dirty = edited since the last successful autosave. Shown next to "live preview" so the
+  // reader can SEE it is safe to refresh instead of having to trust a timer they can't see.
+  const [dirty, setDirty] = useState(false)
+  const [saveFailed, setSaveFailed] = useState(false)
   // per-step minimize/maximize + the remembered previews toggle — as in SDTM Designer's
   // prep studio (👁 previews on/off, steps collapse to their one-line summary)
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
@@ -497,10 +501,12 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
 
   // Live preview: the pipeline runs as it is edited. Asking for a button press means working
   // blind between presses, which is where a wrong step survives long enough to be trusted.
+  // The debounce is short (200ms) so little is at risk if a refresh interrupts it, and the
+  // "dirty" flag below plus the beforeunload/visibility flush cover the rest of that gap.
   const firstRun = useRef(true)
   const hadSteps = useRef(false)
   useEffect(() => {
-    if (!firstRun.current) touched.current = true   // any change after mount pins this editor
+    if (!firstRun.current) { touched.current = true; setDirty(true) }   // any change after mount pins this editor
     if (!steps.length) {
       setReports([]); setOuts({})
       // removing every step must forget the saved draft — but ONLY when the reader
@@ -511,7 +517,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
       return
     }
     hadSteps.current = true
-    const t = window.setTimeout(() => { void run(steps, true) }, firstRun.current ? 0 : 450)
+    const t = window.setTimeout(() => { void run(steps, true) }, firstRun.current ? 0 : 200)
     firstRun.current = false
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -522,14 +528,41 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
     setLive(true)
     try {
       const r = await api.previewPipeline(detail.domain, list)
-      if (!r.ok) { setReports([]); setOuts({}); setError(r.error ?? "failed"); return }
-      setError("")
+      if (!r.ok) { setReports([]); setOuts({}); setError(r.error ?? "failed"); setSaveFailed(true); return }
+      setError(""); setSaveFailed(false); setDirty(false)
       setReports((r.reports ?? []) as Report[])
       // EVERY step's output, so each step keeps its own preview table — adding prep2
       // must never take prep1's preview away
       setOuts((r.outputs ?? {}) as Record<string, { columns: string[]; sample: string[][]; rows: number }>)
-    } catch (e) { setError((e as Error).message) } finally { setLive(false); if (!quiet) setBusy(false) }
+    } catch (e) { setError((e as Error).message); setSaveFailed(true) } finally { setLive(false); if (!quiet) setBusy(false) }
   }
+
+  // Flush a pending draft the instant the reader might leave: refresh/close (beforeunload),
+  // switching tabs (visibilitychange), or navigating elsewhere in the app (unmount). Without
+  // this, a change made inside the debounce window is lost if any of those happen first —
+  // which is exactly how a second prep step can silently vanish.
+  const stepsRef = useRef(steps)
+  useEffect(() => { stepsRef.current = steps }, [steps])
+  const dirtyRef = useRef(dirty)
+  useEffect(() => { dirtyRef.current = dirty }, [dirty])
+  useEffect(() => {
+    const flush = () => {
+      if (!dirtyRef.current) return
+      try {
+        const blob = new Blob([JSON.stringify({ steps: stepsRef.current })], { type: "application/json" })
+        navigator.sendBeacon(`/api/domain/${detail.domain}/pipeline/preview`, blob)
+      } catch { /* best effort — nothing more can be done on the way out */ }
+    }
+    const onVisibility = () => { if (document.visibilityState === "hidden") flush() }
+    window.addEventListener("beforeunload", flush)
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => {
+      window.removeEventListener("beforeunload", flush)
+      document.removeEventListener("visibilitychange", onVisibility)
+      flush()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail.domain])
 
   const upd = (i: number, patch: Partial<Step>) =>
     setSteps((s) => s.map((st, k) => (k === i ? { ...st, ...patch } : st)))
@@ -577,8 +610,10 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
           previews {showPrev ? "on" : "off"}
         </Button>
         <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          {live ? <><Loader2 className="h-3 w-3 animate-spin" />running…</>
-                : steps.length ? <>live preview</> : null}
+          {live ? <><Loader2 className="h-3 w-3 animate-spin" />saving…</>
+                : saveFailed ? <span className="text-destructive">draft not saved — will retry</span>
+                : dirty ? <>unsaved…</>
+                : steps.length ? <>saved</> : null}
         </span>
         {steps.length > 0 && (
           <span className="flex items-center gap-1.5">
