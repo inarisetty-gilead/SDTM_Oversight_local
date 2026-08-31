@@ -158,50 +158,56 @@ export function FnControl({ args, onChange, detail, allowSelf }: {
 }
 
 /* ── if / then rules ────────────────────────────────────────────────────── */
+/* Both helpers live at MODULE level on purpose: defined inside CondControl they would
+   be a new component type on every keystroke, React would remount the <Input>, and the
+   reader could never type more than one letter before losing focus. */
+function CondResult({ value, onChange: oc, detail }: {
+  value: Dict; onChange: (v: Dict) => void; detail: DomainDetail
+}) {
+  const isMissing = (value?.kind as string) === "missing"
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+        <input type="checkbox" checked={isMissing}
+               onChange={(e) => oc(e.target.checked ? { kind: "missing" } : { kind: "text", text: "" })} />
+        leave blank
+      </label>
+      {!isMissing && <SourceControl value={value} onChange={oc} detail={detail} />}
+    </span>
+  )
+}
+
+/** src + operator + value inputs for one condition — the rule itself or an AND extra. */
+function CondInputs({ cond, onPatch, detail }: {
+  cond: Dict; onPatch: (p: Dict) => void; detail: DomainDetail
+}) {
+  const op = (cond.op as string) ?? "eq"
+  return (
+    <>
+      <SourceControl value={(cond.src as Dict) ?? {}} detail={detail}
+                     onChange={(v) => onPatch({ src: v })} />
+      <Sel width="w-40" value={op} options={OPERATORS} onChange={(o) => onPatch({ op: o })} />
+      {!NO_VALUE.has(op) && (
+        <Input className="h-8 w-36 text-xs"
+               placeholder={op === "in" || op === "notin" ? "A, B, C" : "value"}
+               value={(cond.value as string) ?? ""}
+               onChange={(e) => onPatch({ value: e.target.value })} />)}
+      {op === "between" && (
+        <Input className="h-8 w-24 text-xs" placeholder="and"
+               value={(cond.value2 as string) ?? ""}
+               onChange={(e) => onPatch({ value2: e.target.value })} />)}
+    </>
+  )
+}
+
 export function CondControl({ args, onChange, detail }: {
   args: Dict; onChange: (a: Dict) => void; detail: DomainDetail
 }) {
   const rules = (args.rules as Dict[]) ?? []
   const els = (args["else"] as Dict) ?? { kind: "missing" }
   const set = (patch: Dict) => onChange({ ...args, ...patch })
-
-  const Result = ({ value, onChange: oc }: { value: Dict; onChange: (v: Dict) => void }) => {
-    const isMissing = (value?.kind as string) === "missing"
-    return (
-      <span className="inline-flex items-center gap-1.5">
-        <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <input type="checkbox" checked={isMissing}
-                 onChange={(e) => oc(e.target.checked ? { kind: "missing" } : { kind: "text", text: "" })} />
-          leave blank
-        </label>
-        {!isMissing && <SourceControl value={value} onChange={oc} detail={detail} />}
-      </span>
-    )
-  }
-
   const patchRule = (i: number, patch: Dict) =>
     set({ rules: rules.map((x, k) => k === i ? { ...x, ...patch } : x) })
-
-  // src + operator + value inputs for one condition — the rule itself or an AND extra
-  const CondInputs = ({ cond, onPatch }: { cond: Dict; onPatch: (p: Dict) => void }) => {
-    const op = (cond.op as string) ?? "eq"
-    return (
-      <>
-        <SourceControl value={(cond.src as Dict) ?? {}} detail={detail}
-                       onChange={(v) => onPatch({ src: v })} />
-        <Sel width="w-40" value={op} options={OPERATORS} onChange={(o) => onPatch({ op: o })} />
-        {!NO_VALUE.has(op) && (
-          <Input className="h-8 w-36 text-xs"
-                 placeholder={op === "in" || op === "notin" ? "A, B, C" : "value"}
-                 value={(cond.value as string) ?? ""}
-                 onChange={(e) => onPatch({ value: e.target.value })} />)}
-        {op === "between" && (
-          <Input className="h-8 w-24 text-xs" placeholder="and"
-                 value={(cond.value2 as string) ?? ""}
-                 onChange={(e) => onPatch({ value2: e.target.value })} />)}
-      </>
-    )
-  }
 
   return (
     <div className="space-y-2">
@@ -211,7 +217,7 @@ export function CondControl({ args, onChange, detail }: {
           <div key={i} className="space-y-1.5 rounded-md border p-2">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] font-medium">{i === 0 ? "IF" : "ELSE IF"}</span>
-              <CondInputs cond={r} onPatch={(p) => patchRule(i, p)} />
+              <CondInputs cond={r} detail={detail} onPatch={(p) => patchRule(i, p)} />
               <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
                       title="add another condition this rule must ALSO satisfy"
                       onClick={() => patchRule(i, { and: [...ands, { src: {}, op: "eq", value: "" }] })}>
@@ -222,7 +228,7 @@ export function CondControl({ args, onChange, detail }: {
             {ands.map((c, j) => (
               <div key={j} className="flex flex-wrap items-center gap-1.5 pl-6">
                 <span className="text-[11px] font-medium">AND</span>
-                <CondInputs cond={c}
+                <CondInputs cond={c} detail={detail}
                             onPatch={(p) => patchRule(i, { and: ands.map((x, k) => k === j ? { ...x, ...p } : x) })} />
                 <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
                         onClick={() => patchRule(i, { and: ands.filter((_, k) => k !== j) })}>
@@ -231,7 +237,7 @@ export function CondControl({ args, onChange, detail }: {
             ))}
             <div className="flex flex-wrap items-center gap-1.5 pl-6">
               <span className="text-[11px] font-medium">THEN {detail ? "" : ""}set it to</span>
-              <Result value={(r.then as Dict) ?? { kind: "text", text: "" }}
+              <CondResult detail={detail} value={(r.then as Dict) ?? { kind: "text", text: "" }}
                       onChange={(v) => patchRule(i, { then: v })} />
             </div>
           </div>
@@ -243,7 +249,7 @@ export function CondControl({ args, onChange, detail }: {
                                                         then: { kind: "text", text: "" } }] })}>
           Add a rule</Button>
         <span className="text-[11px] font-medium">OTHERWISE</span>
-        <Result value={els} onChange={(v) => set({ else: v })} />
+        <CondResult detail={detail} value={els} onChange={(v) => set({ else: v })} />
       </div>
       <p className="text-[10px] text-muted-foreground">Rules run in order — the first that matches wins,
         like a SAS IF/ELSE IF chain. “+ AND” adds extra conditions to a rule; all of them must hold
