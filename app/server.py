@@ -1230,6 +1230,15 @@ def domain_program(domain: str, lang: str):
     lang = lang.lower()
     if lang not in ("python", "sas"):
         raise HTTPException(400, "lang must be python or sas")
+    # the distinct raw values behind every codelisted variable, so the program inlines
+    # only the CT terms this study's data holds (5 entries, not the codelist's 100)
+    observed: dict[str, list[str]] = {}
+    for b in res.blocks:
+        if not (b.codelist or (b.args or {}).get("codelist")):
+            continue
+        vals = [d["value"].upper() for d in _ct_raw_values(b)]
+        if vals:
+            observed[b.variable] = vals
     kwargs = dict(
         domain=dom, blocks=res.blocks, base_dataset=res.base_dataset,
         prep_step=res.prep_step.as_dict() if res.prep_step else None,
@@ -1237,7 +1246,34 @@ def domain_program(domain: str, lang: str):
         sort_by=(SESSION.overrides.get(dom, {}) or {}).get("sort") or [],
         dedup=SESSION.dedups.get(dom, {}),
         codelists=SESSION.spec.codelists if SESSION.spec else {},
-        raw_path=SESSION.raw_path, studyid=SESSION.studyid, version=__version__)
+        raw_path=SESSION.raw_path, studyid=SESSION.studyid, version=__version__,
+        observed=observed)
+    if lang == "sas":
+        # dataset -> columns, so the SAS emitter can pick the subject key each
+        # cross-dataset input shares with the base and pre-merge it deterministically
+        source_columns: dict[str, list[str]] = {}
+        if SESSION.store is not None:
+            for name in list(SESSION.store.refs):
+                try:
+                    source_columns[name] = [upper(c) for c in SESSION.store.columns(name)]
+                except Exception:                                # noqa: BLE001
+                    continue
+            # a block may name a dataset by an alias the store resolves (e.g. 'inv' for
+            # 'inv_20260504') — register the alias too so the emitter's lookup matches
+            alias_names = {res.base_dataset}
+            for b in res.blocks:
+                if b.dataset:
+                    alias_names.add(b.dataset)
+                if (b.args or {}).get("dataset"):
+                    alias_names.add(b.args["dataset"])
+                for src_d in (b.args or {}).get("sources") or []:
+                    if isinstance(src_d, dict) and src_d.get("dataset"):
+                        alias_names.add(src_d["dataset"])
+            for alias in alias_names:
+                key = SESSION.store.resolve(alias)
+                if key and key in source_columns:
+                    source_columns.setdefault(norm_key(alias), source_columns[key])
+        kwargs["source_columns"] = source_columns
     text = programs.python_program(**kwargs) if lang == "python" else programs.sas_program(**kwargs)
     ext = "py" if lang == "python" else "sas"
     return {"domain": dom, "lang": lang, "program": text,
@@ -1351,6 +1387,128 @@ def variable_profile(domain: str, variable: str):
         out["ct"] = {"codelist": blk.codelist, "allowed": sorted({str(v) for v in terms.values()})[:40],
                      "violations": bad[:20], "violating_records": sum(t["count"] for t in bad)}
     return out
+
+
+def _ct_block_and_codelist(dom: str, var: str):
+    res = SESSION.results.get(dom)
+    if res is None:
+        raise HTTPException(409, "build the domain first")
+    blk = next((b for b in res.blocks if b.variable == var), None)
+    if blk is None:
+        raise HTTPException(404, f"{var} is not a variable of {dom}")
+    cl = upper(blk.codelist) or upper((blk.args or {}).get("codelist"))
+    if not cl:
+        raise HTTPException(404, f"{var} has no codelist")
+    return res, blk, cl
+
+
+def _ct_raw_values(blk) -> list[dict]:
+    """Distinct values of the raw column this block reads, with counts — the DATA side
+    of the CT inspector. Empty when the source is not a plain column."""
+    pairs = []
+    if blk.dataset and blk.column:
+        pairs.append((blk.dataset, blk.column))
+    for src in (blk.args or {}).get("sources") or []:
+        if isinstance(src, dict) and src.get("dataset") and src.get("column"):
+            pairs.append((src["dataset"], src["column"]))
+    out: dict[str, int] = {}
+    if SESSION.store is None:
+        return []
+    for ds, col in pairs:
+        key = SESSION.store.resolve(ds)
+        if not key:
+            continue
+        try:
+            fr = SESSION.store.get(key)
+        except Exception:                                        # noqa: BLE001
+            continue
+        c = upper(col)
+        if c not in fr.columns:
+            continue
+        vv = fr[c].astype("string").str.strip()
+        for val, n in vv[vv.notna() & (vv != "")].value_counts().head(200).items():
+            out[str(val)] = out.get(str(val), 0) + int(n)
+    return [{"value": v, "count": n}
+            for v, n in sorted(out.items(), key=lambda kv: -kv[1])]
+
+
+def _ct_overrides_for(dom: str, var: str, blk) -> dict:
+    edit = SESSION.edits.get(dom, {}).get(var) or {}
+    return dict((edit.get("args") or {}).get("ct_overrides")
+                or (blk.args or {}).get("ct_overrides") or {})
+
+
+@app.get("/api/domain/{domain}/variable/{variable}/ct")
+def variable_ct(domain: str, variable: str):
+    """The CT inspector: the codelist as the spec states it (terms, decodes, extensible),
+    and every value the DATA holds with what it normalises to — unmatched values named,
+    manual mappings shown. The Designer-style click-through on a codelist chip."""
+    dom, var = upper(domain), upper(variable)
+    _res, blk, cl = _ct_block_and_codelist(dom, var)
+    cmap = dict(SESSION.spec.codelists.get(cl, {})) if SESSION.spec else {}
+    meta = (SESSION.spec.codelist_meta.get(cl, {}) if SESSION.spec else {}) or {}
+    overrides = _ct_overrides_for(dom, var, blk)
+    eff = {**cmap, **{upper(k): v for k, v in overrides.items()}}
+    submissions = sorted({str(v) for v in cmap.values()})
+    data = []
+    for d in _ct_raw_values(blk):
+        mapped = eff.get(upper(d["value"]))
+        data.append({**d, "maps_to": mapped or "",
+                     "matched": mapped is not None,
+                     "manual": upper(d["value"]) in {upper(k) for k in overrides}})
+    return {"domain": dom, "variable": var, "codelist": cl,
+            "label": meta.get("label", ""),
+            "extensible": bool(meta.get("extensible")),
+            "terms": (meta.get("terms") or
+                      [{"value": v, "decode": ""} for v in submissions])[:500],
+            "n_terms": len(meta.get("terms") or submissions),
+            "submission_values": submissions[:500],
+            "data": data,
+            "overrides": overrides,
+            "unmatched_records": sum(d["count"] for d in data if not d["matched"])}
+
+
+class CtMapIn(BaseModel):
+    raw_value: str
+    ct_value: str = ""          # empty removes the manual mapping
+
+
+@app.post("/api/domain/{domain}/variable/{variable}/ct-map")
+def variable_ct_map(domain: str, variable: str, body: CtMapIn):
+    """Manually map one raw value to a CT value. On a NON-extensible codelist the target
+    must be one of its submission values (mapping a spelling is normalisation); an
+    extensible codelist also accepts a new value. Stored as a hand edit's ct_overrides,
+    so it survives reloads and is labelled as the reader's decision."""
+    dom, var = upper(domain), upper(variable)
+    _res, blk, cl = _ct_block_and_codelist(dom, var)
+    raw = s(body.raw_value)
+    if not raw:
+        raise HTTPException(400, "name the raw value to map")
+    target = s(body.ct_value)
+    meta = (SESSION.spec.codelist_meta.get(cl, {}) if SESSION.spec else {}) or {}
+    subs = {str(v) for v in (SESSION.spec.codelists.get(cl, {}) if SESSION.spec else {}).values()}
+    if target and target not in subs and not meta.get("extensible"):
+        raise HTTPException(400, f"codelist {cl} is not extensible — pick one of its "
+                                 f"submission values, or extend the spec's Codelist sheet")
+    overrides = _ct_overrides_for(dom, var, blk)
+    if target:
+        overrides[raw] = target
+    else:
+        overrides = {k: v for k, v in overrides.items() if upper(k) != upper(raw)}
+    edit = SESSION.edits.get(dom, {}).get(var)
+    if edit is None:                       # start from the block's CURRENT mapping
+        edit = {"mtype": blk.mtype, "dataset": blk.dataset, "column": blk.column,
+                "value": blk.value, "recipe": blk.recipe, "codelist": blk.codelist,
+                "args": dict(blk.args or {}),
+                "note": f"manual CT mapping on {cl}"}
+    edit.setdefault("args", {})
+    if overrides:
+        edit["args"]["ct_overrides"] = overrides
+    else:
+        edit["args"].pop("ct_overrides", None)
+    SESSION.edits.setdefault(dom, {})[var] = edit
+    _autosave()
+    return {"domain": dom, "variable": var, "codelist": cl, "overrides": overrides}
 
 
 @app.get("/api/domain/{domain}/variable/{variable}/suggest")

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react"
 import { ArrowLeft, Search } from "lucide-react"
 import { api } from "@/api"
-import type { DomainDetail, JobState, VariableRow } from "@/api"
+import type { CtInspect, DomainDetail, JobState, VariableRow } from "@/api"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -23,6 +24,122 @@ type Filter = (typeof FILTERS)[number]
 const ACTION_TONE: Record<string, ChipTone> = {
   ASSIGN: "green", CODE: "teal", DERIVED: "teal", DERIVE: "teal",
   DROP: "slate", SUPP: "violet", CONSTANT: "amber", HARDCODE: "amber",
+}
+
+/** Designer-style CT inspector: the codelist as the spec states it, next to what the
+ *  DATA holds and what each value normalises to. Unmatched values can be mapped by hand —
+ *  to one of the codelist's submission values, or to a new value when it is extensible. */
+function CtInspector({ domain, variable, onClose }: {
+  domain: string; variable: string; onClose: (changed: boolean) => void
+}) {
+  const [ct, setCt] = useState<CtInspect | null>(null)
+  const [err, setErr] = useState("")
+  const [dirty, setDirty] = useState(false)
+  const [showTerms, setShowTerms] = useState(false)
+  const [custom, setCustom] = useState<Record<string, string>>({})
+
+  const load = useCallback(() => {
+    api.variableCt(domain, variable).then(setCt).catch((e) => setErr((e as Error).message))
+  }, [domain, variable])
+  useEffect(() => { load() }, [load])
+
+  const setMap = async (raw: string, target: string) => {
+    setErr("")
+    try {
+      await api.saveCtMap(domain, variable, { raw_value: raw, ct_value: target })
+      setDirty(true); load()
+    } catch (e) { setErr((e as Error).message) }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(dirty) }}>
+      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2 text-[15px]">
+            {variable} · <Mono>{ct?.codelist ?? "…"}</Mono>
+            {ct?.label && <span className="text-[13px] font-normal text-muted-foreground">{ct.label}</span>}
+            {ct && <Chip tone={ct.extensible ? "green" : "slate"}>
+              {ct.extensible ? "extensible" : "not extensible"}</Chip>}
+            {ct && <span className="text-[12px] font-normal text-muted-foreground">
+              {ct.n_terms} term(s) in the spec</span>}
+          </DialogTitle>
+        </DialogHeader>
+        {err && <Callout tone="bad">{err}</Callout>}
+        {!ct && !err && <p className="text-sm text-muted-foreground">Loading…</p>}
+        {ct && (
+          <div className="space-y-4">
+            <div>
+              <h4 className="mb-1 text-[13px] font-medium">Your data → controlled terminology</h4>
+              <p className="mb-2 text-[12px] text-muted-foreground">
+                Every distinct value the source column holds, and the submission value it
+                normalises to. An unmatched value passes through and is flagged — map it here
+                {ct.extensible ? " to any value (this codelist is extensible)"
+                               : " to one of the codelist's submission values"}.
+              </p>
+              {ct.data.length === 0 && <p className="text-[12px] text-muted-foreground">
+                No raw column values to show — the input is not a plain column.</p>}
+              <div className="space-y-1">
+                {ct.data.map((d) => (
+                  <div key={d.value} className="flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs">
+                    <Mono>{d.value}</Mono>
+                    <span className="text-muted-foreground">× {d.count}</span>
+                    <span className="text-muted-foreground">→</span>
+                    {d.matched
+                      ? <Chip tone={d.manual ? "blue" : "green"}>{d.maps_to}{d.manual ? " · manual" : ""}</Chip>
+                      : <Chip tone="red">not in CT — passes through</Chip>}
+                    <span className="ml-auto flex items-center gap-1.5">
+                      <Select value={ct.overrides[d.value] ?? "__none"}
+                              onValueChange={(v) => { if (v !== "__custom") void setMap(d.value, v === "__none" ? "" : v) }}>
+                        <SelectTrigger className="h-7 w-44 text-xs">
+                          <SelectValue placeholder="map to…" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none" className="text-xs">— no manual mapping —</SelectItem>
+                          {ct.submission_values.map((sv) => (
+                            <SelectItem key={sv} value={sv} className="text-xs">{sv}</SelectItem>))}
+                          {ct.extensible && <SelectItem value="__custom" className="text-xs">new value…</SelectItem>}
+                        </SelectContent>
+                      </Select>
+                      {ct.extensible && (
+                        <span className="flex items-center gap-1">
+                          <Input className="h-7 w-28 text-xs" placeholder="new value"
+                                 value={custom[d.value] ?? ""}
+                                 onChange={(e) => setCustom((c) => ({ ...c, [d.value]: e.target.value }))} />
+                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+                                  disabled={!(custom[d.value] ?? "").trim()}
+                                  onClick={() => void setMap(d.value, custom[d.value].trim())}>Map</Button>
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {ct.unmatched_records > 0 && (
+                <p className="mt-2 text-[12px] text-amber-600 dark:text-amber-400">
+                  {ct.unmatched_records.toLocaleString()} record(s) hold values not in the codelist.</p>
+              )}
+            </div>
+            <div>
+              <Button variant="link" size="sm" className="h-auto p-0 text-xs"
+                      onClick={() => setShowTerms((v) => !v)}>
+                {showTerms ? "Hide" : "Show"} the codelist's {ct.n_terms} term(s)</Button>
+              {showTerms && (
+                <div className="mt-2 max-h-60 overflow-y-auto rounded-md border">
+                  {ct.terms.map((t, i) => (
+                    <div key={i} className="flex items-baseline gap-2 border-b px-2.5 py-1 text-xs last:border-0">
+                      <Mono>{t.value}</Mono>
+                      <span className="text-muted-foreground">{t.decode}</span>
+                    </div>))}
+                </div>
+              )}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Manual mappings save as a hand edit on {variable} and apply on rebuild —
+              closing this window rebuilds {domain} when anything changed.</p>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 /** The build written out as a standalone program — Python/pandas or house-style SAS,
@@ -96,6 +213,7 @@ export function DomainView({ domain, onBack, onChanged }: {
   const [search, setSearch] = useState("")
   const [group, setGroup] = useState("none")
   const [editing, setEditing] = useState<VariableRow | null>(null)
+  const [ctVar, setCtVar] = useState<string | null>(null)   // CT inspector target
   const [pane, setPane] = useState<"data" | "edit">("data")
   const [job, setJob] = useState<JobState | null>(null)
   const [error, setError] = useState("")
@@ -286,7 +404,12 @@ export function DomainView({ domain, onBack, onChanged }: {
                   cell: (v) => v.spec_action ? <Chip tone={ACTION_TONE[v.spec_action.toUpperCase()] ?? "blue"}>
                     {v.spec_action.toUpperCase()}</Chip> : null },
                 { id: "cl", head: "Codelist", kind: "tag",
-                  cell: (v) => v.codelist ? <Chip tone="teal">{v.codelist}</Chip> : null },
+                  cell: (v) => v.codelist ? (
+                    <button type="button" title="see the codelist and what your data maps to"
+                            onClick={(e) => { e.stopPropagation(); setCtVar(v.variable) }}>
+                      <Chip tone="teal" className="cursor-pointer underline decoration-dotted underline-offset-2">
+                        {v.codelist}</Chip>
+                    </button>) : null },
                 { id: "s", head: "Status", kind: "tag",
                   cell: (v) => <Chip tone={STATUS_TONE[v.status] ?? "slate"}>
                     {v.status.replace("_", " ")}</Chip> },
@@ -336,6 +459,16 @@ export function DomainView({ domain, onBack, onChanged }: {
           <TabsContent value="program" className="pt-4">
             <ProgramPane domain={d.domain} refreshKey={dataKey} />
           </TabsContent>
+
+          {ctVar && (
+            <CtInspector domain={d.domain} variable={ctVar}
+                         onClose={(changed) => {
+                           setCtVar(null)
+                           if (changed) void (async () => {
+                             await api.rebuild(d.domain); await afterRebuild()
+                           })()
+                         }} />
+          )}
 
           <TabsContent value="prepare" className="pt-4">
             <PipelineEditor detail={d} onDone={() => void afterRebuild()} />

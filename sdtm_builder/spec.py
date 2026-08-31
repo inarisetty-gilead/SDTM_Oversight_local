@@ -106,6 +106,9 @@ class Spec:
     path: str
     domains: dict[str, list[SpecRow]] = field(default_factory=dict)
     codelists: dict[str, dict[str, str]] = field(default_factory=dict)
+    # per-codelist detail for the CT inspector: {NAME: {"label", "extensible",
+    # "terms": [{"value", "decode"}]}} — same sheet, kept whole instead of flattened
+    codelist_meta: dict[str, dict] = field(default_factory=dict)
     skipped_sheets: list[tuple[str, str]] = field(default_factory=list)
     # the TOC sheet: {DOMAIN: {active, label, class, structure, order}}. The spec's own
     # statement of which domains are in this study — Active = Y.
@@ -192,7 +195,7 @@ def load_spec(path: str | Path) -> Spec:
         low = str(sheet).strip().lower()
         if low in SKIP_SHEETS or low.endswith("-data"):
             if low in ("codelist", "codelists"):
-                spec.codelists = _read_codelist_sheet(xl, sheet)
+                spec.codelists, spec.codelist_meta = _read_codelist_sheet(xl, sheet)
             if low == "toc":
                 spec.toc = _read_toc(xl, sheet)
                 spec.skipped_sheets.append(
@@ -285,15 +288,18 @@ def _read_toc(xl: pd.ExcelFile, sheet: str) -> dict[str, dict]:
     return out
 
 
-def _read_codelist_sheet(xl: pd.ExcelFile, sheet: str) -> dict[str, dict[str, str]]:
-    """Optional 'Codelist' sheet -> {CODELIST_NAME: {term_upper: submission_value}}.
+def _read_codelist_sheet(xl: pd.ExcelFile, sheet: str) -> tuple[dict[str, dict[str, str]], dict[str, dict]]:
+    """Optional 'Codelist' sheet -> ({CODELIST_NAME: {term_upper: submission_value}},
+    {CODELIST_NAME: {"label", "extensible", "terms": [{"value", "decode"}]}}).
 
     Every spelling on the row (submission value, decode, synonyms) maps TO the submission
-    value, so messy raw entries ('male', 'M', 'Male') normalise to the CT term."""
+    value, so messy raw entries ('male', 'M', 'Male') normalise to the CT term. The meta
+    dict keeps the sheet's own detail for the CT inspector — the terms in order, and
+    whether the sheet marks the codelist extensible."""
     try:
         df = xl.parse(sheet_name=sheet, dtype=object)
     except Exception:                                          # noqa: BLE001
-        return {}
+        return {}, {}
     hdr = {norm_key(c): c for c in df.columns}
 
     def pick(*names):
@@ -308,25 +314,33 @@ def _read_codelist_sheet(xl: pd.ExcelFile, sheet: str) -> dict[str, dict[str, st
     c_dec = pick("decode", "decoded_value", "preferred_term", "translated_value",
                  "codelist_value_decode")     # …and 'Codelist Value Decode'
     c_syn = pick("synonyms", "synonym", "aliases")
+    c_ext = pick("codelist_extensible", "extensible")
+    c_lbl = pick("codelist_label", "label")
     if not (c_name and c_sub):
-        return {}
+        return {}, {}
 
     out: dict[str, dict[str, str]] = {}
+    meta: dict[str, dict] = {}
     for _, r in df.iterrows():
         name = upper(r.get(c_name))
         sub = s(r.get(c_sub))
         if not name or not sub:
             continue
         bucket = out.setdefault(name, {})
-        spellings = [sub]
-        if c_dec:
-            spellings.append(s(r.get(c_dec)))
+        m = meta.setdefault(name, {"label": "", "extensible": False, "terms": []})
+        if c_lbl and not m["label"]:
+            m["label"] = s(r.get(c_lbl))
+        if c_ext and upper(r.get(c_ext)) in ("Y", "YES", "TRUE"):
+            m["extensible"] = True
+        decode = s(r.get(c_dec)) if c_dec else ""
+        m["terms"].append({"value": sub, "decode": decode})
+        spellings = [sub, decode]
         if c_syn:
             spellings += [t.strip() for t in re.split(r"[;,|]", s(r.get(c_syn))) if t.strip()]
         for sp in spellings:
             if sp:
                 bucket.setdefault(sp.strip().upper(), sub)
-    return out
+    return out, meta
 
 
 # ── how much of the spec is actually actionable ─────────────────────────────

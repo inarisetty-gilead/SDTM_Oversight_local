@@ -655,6 +655,40 @@ def test_a_rule_can_require_several_conditions_with_and():
         assert "HIT" in prev["samples"] and "MISS" in prev["samples"]       # the AND narrowed it
 
 
+def test_ct_inspector_shows_data_against_the_codelist_and_maps_by_hand():
+    """The Designer-style CT click-through: the codelist's terms, what the data holds and
+    what each value normalises to — plus a manual mapping, which must respect
+    extensibility (non-extensible lists only accept their own submission values)."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        _load_and_build(client, tmp)
+
+        ct = client.get("/api/domain/DM/variable/SEX/ct").json()
+        assert ct["codelist"] == "SEX"
+        assert ct["n_terms"] == 2 and {t["value"] for t in ct["terms"]} == {"M", "F"}
+        assert {t["decode"] for t in ct["terms"]} == {"Male", "Female"}
+        assert ct["data"], "the raw SEXCD values should be profiled"
+        assert all(d["matched"] for d in ct["data"])            # fixture data is clean
+
+        # the fixture sheet has no Extensible column -> not extensible: a NEW value is
+        # refused, one of the codelist's own submission values is accepted
+        bad = client.post("/api/domain/DM/variable/SEX/ct-map",
+                          json={"raw_value": "UNKNOWN", "ct_value": "OTHER"})
+        assert bad.status_code == 400 and "not extensible" in bad.json()["detail"]
+        ok = client.post("/api/domain/DM/variable/SEX/ct-map",
+                         json={"raw_value": "UNKNOWN", "ct_value": "M"})
+        assert ok.status_code == 200 and ok.json()["overrides"] == {"UNKNOWN": "M"}
+
+        # the mapping is a hand edit, survives in the inspector, and can be removed
+        ct = client.get("/api/domain/DM/variable/SEX/ct").json()
+        assert ct["overrides"] == {"UNKNOWN": "M"}
+        assert "SEX" in client.get("/api/domain/DM").json()["edits"]
+        client.post("/api/domain/DM/variable/SEX/ct-map",
+                    json={"raw_value": "UNKNOWN", "ct_value": ""})
+        assert client.get("/api/domain/DM/variable/SEX/ct").json()["overrides"] == {}
+
+
 def test_reopening_a_study_rebuilds_the_prepared_datasets():
     """The pipeline steps persist in study.json — but their OUTPUTS are in-memory frames.
     Reopening the study must re-run the pipelines so the prepared datasets are back in

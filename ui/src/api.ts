@@ -191,6 +191,14 @@ export interface CrfPair {
   standard_mapping: string; vendor_mapping: string; verdict: string; advice: string
 }
 export interface CrfOnly { question: string; form: string; mapping: string; advice: string }
+
+export interface CtDataRow { value: string; count: number; maps_to: string; matched: boolean; manual: boolean }
+export interface CtInspect {
+  domain: string; variable: string; codelist: string; label: string; extensible: boolean
+  terms: Array<{ value: string; decode: string }>; n_terms: number
+  submission_values: string[]; data: CtDataRow[]
+  overrides: Record<string, string>; unmatched_records: number
+}
 export interface CrfCmp {
   pairs: CrfPair[]; standard_only: CrfOnly[]; vendor_only: CrfOnly[]
   ann_vendor_only: string[]; ann_standard_only: string[]
@@ -270,6 +278,10 @@ export const api = {
   domainProgram: (d: string, lang: "python" | "sas") =>
     call<{ domain: string; lang: string; program: string; filename: string }>(
       `/api/domain/${d}/program/${lang}`),
+
+  variableCt: (d: string, v: string) => call<CtInspect>(`/api/domain/${d}/variable/${v}/ct`),
+  saveCtMap: (d: string, v: string, b: { raw_value: string; ct_value: string }) =>
+    post(`/api/domain/${d}/variable/${v}/ct-map`, b),
 
   variableProfile: (d: string, v: string) =>
     call<VariableProfile>(`/api/domain/${d}/variable/${v}/profile`),

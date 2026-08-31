@@ -104,6 +104,80 @@ def test_generated_python_reproduces_a_transposed_build():
         assert n >= 3, f"only {n} EG columns were comparable"
 
 
+def test_ct_in_programs_is_scoped_to_the_values_the_data_holds():
+    """A 100-term codelist with 2 observed values inlines 2 entries, not 100 — in the
+    Python CT dict and the SAS SELECT/WHEN alike. Without observed values, the full
+    map is kept (never guess what the data holds)."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        spec = load_spec(tmp / "mapping_spec.xlsx")
+        store = RawStore.discover(tmp / "raw")
+        res = build_domain(spec, store, "DM", studyid="S1")
+        kwargs = dict(domain="DM", blocks=res.blocks, base_dataset=res.base_dataset,
+                      prep_step=None, pipeline=[], sort_by=[], dedup={},
+                      codelists=spec.codelists, raw_path=str(tmp / "raw"), studyid="S1")
+
+        full = programs.python_program(**kwargs)
+        scoped = programs.python_program(**kwargs, observed={"SEX": ["MALE", "F"]})
+        # the map is inlined PER VARIABLE at the point of use — no global CT table
+        assert "\nCT = {" not in full and "\nCT = {" not in scoped
+        full_line = next(line for line in full.splitlines() if line.startswith('df["SEX"]'))
+        assert '"M": "M"' in full_line and '"MALE": "M"' in full_line   # unprofiled: full map
+        sex_line = next(line for line in scoped.splitlines() if line.startswith('df["SEX"]'))
+        assert '"MALE": "M"' in sex_line and '"F": "F"' in sex_line
+        assert '"M": "M"' not in sex_line and '"FEMALE"' not in sex_line
+        assert "2 of 4 term(s)" in sex_line and "observed" in sex_line
+        # a codelist on a CONSTANT never drags its map in — the build doesn't apply CT there
+        dom_line = next(line for line in scoped.splitlines() if line.startswith('df["DOMAIN"]'))
+        assert "apply_ct" not in dom_line
+
+        sas_scoped = programs.sas_program(**kwargs, observed={"SEX": ["MALE", "F"]})
+        assert re.search(r"when \('MALE'\) SEX = 'M';", sas_scoped)
+        assert "'FEMALE'" not in sas_scoped
+        assert "only the values observed in the data" in sas_scoped
+
+
+def test_sas_cross_dataset_inputs_are_premerged_not_todo():
+    """With the datasets' column lists available, SAS gets the same deterministic
+    alignment the build performs: a column from another dataset is pre-merged onto the
+    base by the shared subject key, and date_extreme becomes PROC SQL — not a TODO."""
+    from sdtm_builder.blocks import Block
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        spec = load_spec(tmp / "mapping_spec.xlsx")
+        store = RawStore.discover(tmp / "raw")
+        res = build_domain(spec, store, "DM", studyid="S1")
+        source_columns = {name: list(store.columns(name)) for name in store.refs}
+        extra = [
+            Block(variable="ZZDAT", domain="DM", mtype="assign",
+                  dataset="consent", column="DSSTDAT", label="cross-dataset check"),
+            Block(variable="ZZEND", domain="DM", mtype="derived", recipe="date_extreme",
+                  args={"func": "max", "sources": [
+                      {"dataset": "consent", "date_col": "DSSTDAT"},
+                      {"dataset": "studcomp", "date_col": "DSSTDAT"}]}),
+        ]
+        for b in extra:
+            b.status = "built"
+        blocks = list(res.blocks) + extra
+        text = programs.sas_program(
+            domain="DM", blocks=blocks, base_dataset=res.base_dataset,
+            prep_step=None, pipeline=[], sort_by=[], dedup={},
+            codelists=spec.codelists, raw_path=str(tmp / "raw"), studyid="S1",
+            source_columns=source_columns)
+        # the cross-dataset column arrives via a keyed pre-merge, then a plain statement
+        assert "merged onto the base" in text
+        assert re.search(r"proc sort data=consent\(keep=\w+ DSSTDAT rename=\(DSSTDAT=__\w+\)",
+                         text), text
+        assert re.search(r"ZZDAT = strip\(__\w+\);", text)
+        # date_extreme is real PROC SQL per source + a min/max over the merged columns
+        assert "proc sql;" in text and "group by" in text
+        assert re.search(r"__DN_ZZEND_\d", text)
+        assert "max(of __DN_ZZEND_:" in text
+        # neither is a TODO (the fixture DM now translates completely)
+        assert "TODO (hand-code): ZZDAT" not in text
+        assert "TODO (hand-code): ZZEND" not in text
+
+
 def test_sas_program_is_structured_and_honest():
     with tempfile.TemporaryDirectory() as td:
         tmp = _fixture(Path(td))
@@ -120,8 +194,19 @@ def test_sas_program_is_structured_and_honest():
         # controlled terminology is a real SELECT/WHEN block, from the spec's codelist
         assert "select (upcase(strip(SEX)));" in text
         assert re.search(r"when \('M', 'MALE'\) SEX = 'M';", text)
-        # what it cannot translate is an explicit TODO, never a silent gap
-        assert "TODO (hand-code)" in text
+        # the fixture DM translates COMPLETELY — parity with the Python program
+        assert "TODO (hand-code)" not in text
+        # …and what genuinely cannot be translated is an explicit TODO, never a silent gap
+        from sdtm_builder.blocks import Block
+        odd = Block(variable="ZZODD", domain="DM", mtype="derived", recipe="lobxfl",
+                    args={}, mapping_rule="a rule only the tool runs")
+        odd.status = "built"
+        text_odd = programs.sas_program(
+            domain="DM", blocks=list(res.blocks) + [odd], base_dataset=res.base_dataset,
+            prep_step=None, pipeline=[], sort_by=[], dedup={},
+            codelists=spec.codelists, raw_path=str(tmp / "raw"), studyid="S1")
+        assert "TODO (hand-code): ZZODD" in text_odd
+        assert "a rule only the tool runs" in text_odd
         # --SEQ numbered on the final sorted records (DS repeats; DM has no --SEQ)
         res_ds = build_domain(spec, store, "DS", studyid="S1")
         text_ds = programs.sas_program(

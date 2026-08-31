@@ -403,7 +403,10 @@ def _apply_edits(blocks: list[Block], edits: dict[str, dict] | None,
         if "args" in edit:
             b.args = edit.get("args") or {}
         if b.mtype != "derived":
-            b.recipe, b.args = "", {}
+            # keep manual CT mappings — they apply to plain assigns too (op_assign
+            # reads args.ct_overrides when normalising to the codelist)
+            b.recipe, b.args = "", {k: v for k, v in (b.args or {}).items()
+                                    if k == "ct_overrides"}
         b.edited = True
         b.method_source = "edit"
         b.confidence = 100
