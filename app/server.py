@@ -246,6 +246,26 @@ def _restore_session() -> str:
         cache = run / SESSION_FILE
         if not cache.exists():
             continue
+        # A run that belongs to a study: reopen the WHOLE study, not just the run's
+        # frames. The preparation pipelines, hand edits and prepared datasets live in
+        # study.json — and a session without the study open cannot even autosave the
+        # reader's next decision. Resuming only the run made them all vanish on restart.
+        sid = (run.parent.parent.name
+               if run.parent.name == "runs" and run.parent.parent.parent == STUDIES.root
+               else "")
+        if sid:
+            study = STUDIES.load(sid)
+            if study is not None:
+                try:
+                    _apply_study(study)
+                    n_prep = sum(len(v) for v in SESSION.pipelines.values()) \
+                        + sum(len(v) for v in SESSION.draft_pipelines.values())
+                    return (f"reopened study '{study.name}': {len(SESSION.results)} "
+                            f"domain(s) built"
+                            + (f", {n_prep} preparation step(s) restored" if n_prep else ""))
+                except Exception as exc:                       # noqa: BLE001
+                    print(f"  could not reopen study {sid}: {exc}")
+                    continue
         try:
             import pickle
             with open(cache, "rb") as fh:

@@ -712,6 +712,34 @@ def test_ct_inspector_shows_data_against_the_codelist_and_maps_by_hand():
         assert client.get("/api/domain/DM/variable/SEX/ct").json()["overrides"] == {}
 
 
+def test_an_app_restart_reopens_the_study_with_its_preparation():
+    """Restarting the application must land back IN the study — pipelines, prepared
+    datasets and hand edits included — not in a half-session that shows the builds but
+    has lost the preparation and silently stops autosaving."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, srv = _client(Path(td) / "runs")
+        srv.STUDIES = srv.StudyStore(Path(td) / "studies")
+        client.post("/api/studies", json={"name": "Restart Prep"})
+        sid = client.get("/api/studies").json()["studies"][0]["id"]
+        _load_and_build(client, tmp)
+        step = {"op": "merge", "name": "ae_plus_dm", "params": {
+                "how": "left", "on": ["USUBJID"],
+                "inputs": [{"dataset": "ae"}, {"dataset": "dm", "columns": ["SEXCD"]}]}}
+        assert client.post("/api/domain/AE/pipeline",
+                           json={"steps": [step]}).status_code == 200
+
+        # the app process dies and comes back — nobody clicks "open study"
+        srv.SESSION = srv.Session()
+        note = srv._restore_session()
+        assert "Restart Prep" in note, note                   # the STUDY reopened, not just a run
+        assert srv.SESSION.study_id == sid
+        assert srv.SESSION.pipelines.get("AE") == [step]      # the preparation is back
+        detail = client.get("/api/domain/AE").json()
+        assert "ae_plus_dm" in detail["prepared_datasets"]
+        assert "ae_plus_dm" in detail["datasets"]             # and materialised in the store
+
+
 def test_records_can_be_pinned_to_one_prep_output():
     """By default the domain's records follow the LAST pipeline step — so adding prep2
     used to silently move every variable off prep1. Pinning 'records from' to a named
