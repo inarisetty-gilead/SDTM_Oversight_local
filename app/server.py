@@ -900,6 +900,23 @@ def domain_data(domain: str, offset: int = 0, limit: int = 50, part: str = "pare
             "has_supp": res.supp is not None and len(res.supp) > 0}
 
 
+@app.get("/api/raw-datasets")
+def raw_datasets():
+    """Every dataset the raw folder scan found (prepared outputs included) — the raw
+    browser's list. Names and files only: nothing is loaded until a dataset is opened."""
+    if SESSION.store is None:
+        raise HTTPException(400, "scan the raw data folder first")
+    out = []
+    for name in sorted(SESSION.store.refs):
+        ref = SESSION.store.refs[name]
+        path = getattr(ref, "path", None)
+        out.append({"name": name,
+                    "file": path.name if path is not None else "",
+                    "kind": getattr(ref, "kind", "") or ("prepared" if path is None else ""),
+                    "label": getattr(ref, "label", "") or ""})
+    return {"datasets": out}
+
+
 @app.get("/api/raw/{dataset}/data")
 def raw_data(dataset: str, offset: int = 0, limit: int = 50,
              sort: str = "", dir: str = "asc", filters: str = ""):

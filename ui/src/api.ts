@@ -279,6 +279,8 @@ export const api = {
     call<{ domain: string; lang: string; program: string; filename: string }>(
       `/api/domain/${d}/program/${lang}`),
 
+  rawDatasets: () => call<{ datasets: Array<{ name: string; file: string; kind: string; label: string }> }>(
+    "/api/raw-datasets"),
   variableCt: (d: string, v: string) => call<CtInspect>(`/api/domain/${d}/variable/${v}/ct`),
   saveCtMap: (d: string, v: string, b: { raw_value: string; ct_value: string }) =>
     post(`/api/domain/${d}/variable/${v}/ct-map`, b),
