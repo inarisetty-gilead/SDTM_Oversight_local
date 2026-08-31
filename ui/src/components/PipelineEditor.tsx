@@ -484,17 +484,33 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
 
   useEffect(() => { void api.prepOps().then((r) => setOps(r.ops)) }, [])
 
+  // The saved steps arrive with the detail; if this instance somehow mounted before they
+  // did, adopt them rather than sit on an empty list the reader cannot edit.
+  const touched = useRef(false)
+  useEffect(() => {
+    const saved = (detail.pipeline_draft ?? detail.pipeline ?? []) as Step[]
+    if (!touched.current && !steps.length && saved.length) {
+      setSteps(JSON.parse(JSON.stringify(saved)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail])
+
   // Live preview: the pipeline runs as it is edited. Asking for a button press means working
   // blind between presses, which is where a wrong step survives long enough to be trusted.
   const firstRun = useRef(true)
+  const hadSteps = useRef(false)
   useEffect(() => {
+    if (!firstRun.current) touched.current = true   // any change after mount pins this editor
     if (!steps.length) {
       setReports([]); setOuts({})
-      // removing every step must also forget the saved draft, or it comes back on refresh
-      if (!firstRun.current) void api.previewPipeline(detail.domain, [])
+      // removing every step must forget the saved draft — but ONLY when the reader
+      // actually removed them in this editor; an instance that merely mounted empty
+      // must never clear a draft it never showed
+      if (!firstRun.current && hadSteps.current) void api.previewPipeline(detail.domain, [])
       firstRun.current = false
       return
     }
+    hadSteps.current = true
     const t = window.setTimeout(() => { void run(steps, true) }, firstRun.current ? 0 : 450)
     firstRun.current = false
     return () => window.clearTimeout(t)

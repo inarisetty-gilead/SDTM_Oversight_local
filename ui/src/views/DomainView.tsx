@@ -495,7 +495,10 @@ export function DomainView({ domain, onBack, onChanged }: {
           )}
 
           <TabsContent value="prepare" className="pt-4">
-            <PipelineEditor detail={d} onDone={() => void afterRebuild()} />
+            {/* keyed by domain: the step list initialises from the detail ON MOUNT, and a
+                stale instance from another domain would show no steps (and could even
+                clear the saved draft) while the pipeline is right there in the detail */}
+            <PipelineEditor key={d.domain} detail={d} onDone={() => void afterRebuild()} />
           </TabsContent>
 
           <TabsContent value="settings" className="pt-4">

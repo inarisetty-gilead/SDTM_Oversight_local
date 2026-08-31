@@ -332,7 +332,7 @@ function MainApp() {
                            onBrowse={() => setPicker({ mode: "dir", target: "vendor" })} />
             )}
             {current && (
-              <DomainView domain={current} onBack={() => setView("build")}
+              <DomainView key={current} domain={current} onBack={() => setView("build")}
                           onChanged={() => { void loadBuild(); setCompare(null) }} />
             )}
           </div>
