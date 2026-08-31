@@ -3,7 +3,7 @@
 // every variable they fill. No JSON anywhere: the same dropdown builders as the
 // variable editor.
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ChevronDown, ChevronRight, FunctionSquare, Plus, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronRight, FunctionSquare, Library, Plus, Trash2 } from "lucide-react"
 import { api } from "@/api"
 import type { CustomFn, DomainDetail, TemplateFn, TemplateResolved } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -20,6 +20,7 @@ const BLANK: CustomFn = { name: "", description: "", variable: "", domains: [],
 export function FunctionsView({ specDomains, ready }: { specDomains: string[]; ready: boolean }) {
   const [templates, setTemplates] = useState<TemplateFn[]>([])
   const [custom, setCustom] = useState<CustomFn[]>([])
+  const [shared, setShared] = useState<CustomFn[]>([])
   const [editing, setEditing] = useState<CustomFn | null>(null)
   const [origName, setOrigName] = useState("")
   const [ctx, setCtx] = useState<DomainDetail | null>(null)
@@ -28,7 +29,7 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
 
   const refresh = useCallback(() => {
     void api.listFunctions()
-      .then((r) => { setTemplates(r.templates); setCustom(r.custom); setErr("") })
+      .then((r) => { setTemplates(r.templates); setCustom(r.custom); setShared(r.shared ?? []); setErr("") })
       .catch((e) => setErr((e as Error).message))
   }, [])
   useEffect(refresh, [refresh])
@@ -125,6 +126,11 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
                   apply
                 </label>
                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => startEdit(fn)}>Edit</Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs"
+                        title="copy this function to the shared library, so any study can use it"
+                        onClick={() => void api.shareFunction(fn.name).then(refresh).catch((e) => setErr((e as Error).message))}>
+                  {shared.some((s) => s.name === fn.name) ? "Update shared copy" : "Share"}
+                </Button>
                 <Button size="icon" variant="ghost" className="h-7 w-7"
                         onClick={() => void api.deleteFunction(fn.name).then(() => {
                           if (origName === fn.name) setEditing(null)
@@ -136,6 +142,41 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
           ))}
         </div>
       </Panel>
+
+      {shared.length > 0 && (
+        <Panel title="Shared across studies"
+               description="Functions any study can pull in. Adding one makes a COPY in this study — edit the copy freely, the shared original stays as it is. To publish a change back, edit your copy and press its Share button again.">
+          <div className="space-y-2">
+            {shared.map((fn) => {
+              const inStudy = custom.some((c) => c.name === fn.name)
+              return (
+                <div key={fn.name} className="flex flex-wrap items-center gap-3 rounded-md border p-2.5">
+                  <Library className="h-4 w-4 text-sky-600" />
+                  <span className="text-sm font-medium">{fn.name}</span>
+                  <Chip tone="blue">shared</Chip>
+                  <span className="text-xs text-muted-foreground">
+                    fills <Mono>{fn.variable}</Mono> in {fn.domains.length ? fn.domains.join(", ") : "every domain"}
+                  </span>
+                  {fn.description && <span className="flex-1 truncate text-xs">{fn.description}</span>}
+                  <div className="ml-auto flex items-center gap-1">
+                    {inStudy
+                      ? <span className="pr-1 text-[11px] text-muted-foreground">already in this study</span>
+                      : <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!ready}
+                                onClick={() => void api.importSharedFunction(fn.name).then(refresh)
+                                  .catch((e) => setErr((e as Error).message))}>
+                          Add to this study
+                        </Button>}
+                    <Button size="icon" variant="ghost" className="h-7 w-7"
+                            title="remove from the shared library (studies that copied it keep their copies)"
+                            onClick={() => void api.deleteSharedFunction(fn.name).then(refresh)}>
+                      <Trash2 className="h-3.5 w-3.5" /></Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Panel>
+      )}
 
       {editing && (
         <Panel title={origName ? `Edit — ${origName}` : "New function"}

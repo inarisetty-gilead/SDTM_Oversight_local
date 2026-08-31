@@ -1111,6 +1111,15 @@ def rebuild_domain(domain: str):
 # The recipe catalogue the editor renders its forms from. Keeping it here means the
 # interface can never offer an operation the engine does not implement.
 RECIPES = [
+    {"id": "custom_fn",
+     "label": "A function from your library",
+     "desc": "Apply a function you created in the Functions section to THIS variable. The "
+             "variable follows the function — change the function later and every variable "
+             "using it picks up the change on the next build.",
+     "fields": [
+         {"k": "name", "t": "choice", "options": [], "label": "Function",
+          "help": "create functions in the Functions section; they appear here by name"},
+     ]},
     {"id": "iso_date",
      "label": "ISO 8601 date/time",
      "desc": "Build a --DTC from the date the form collected. Name the date column and that is "
@@ -1327,7 +1336,16 @@ def domain_program(domain: str, lang: str):
 
 @app.get("/api/recipes")
 def recipes():
-    return {"mtypes": ["assign", "constant", "sequence", "derived", "drop"], "recipes": RECIPES}
+    # the function library grows at runtime, so its names are filled in per request
+    out = []
+    for r in RECIPES:
+        if r["id"] == "custom_fn":
+            names = sorted(SESSION.custom_fns)
+            r = {**r, "hidden": not names,
+                 "fields": [{**f, "options": names} if f.get("k") == "name" else f
+                            for f in r["fields"]]}
+        out.append(r)
+    return {"mtypes": ["assign", "constant", "sequence", "derived", "drop"], "recipes": out}
 
 
 def _rebuild_one(dom: str, progress=None) -> "object":
@@ -1829,7 +1847,63 @@ def list_functions():
             "resolved": resolved, "edit": ov.get("edit") or None,
         })
     return {"templates": templates,
-            "custom": sorted(SESSION.custom_fns.values(), key=lambda f: f.get("name", ""))}
+            "custom": sorted(SESSION.custom_fns.values(), key=lambda f: f.get("name", "")),
+            "shared": sorted(_shared_fns().values(), key=lambda f: f.get("name", ""))}
+
+
+# ── The shared function library ──────────────────────────────────────────────
+# A study's functions live in its study.json. The shared library lives BESIDE the
+# studies, so a function written once can be pulled into any study — as a copy, so
+# each study can modify its own without touching the original.
+
+def _shared_fns_file() -> Path:
+    return STUDIES.root / "shared_functions.json"
+
+
+def _shared_fns() -> dict:
+    try:
+        d = json.loads(_shared_fns_file().read_text())
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_shared_fns(fns: dict) -> None:
+    _shared_fns_file().write_text(json.dumps(fns, indent=2))
+
+
+@app.post("/api/functions/{name}/share")
+def share_function(name: str):
+    """Copy one of this study's functions into the shared library."""
+    fn = SESSION.custom_fns.get(name)
+    if fn is None:
+        raise HTTPException(404, f"'{name}' is not a function in this study")
+    shared = _shared_fns()
+    shared[name] = dict(fn)
+    _write_shared_fns(shared)
+    return {"ok": True, "shared": sorted(shared)}
+
+
+@app.post("/api/functions/shared/{name}/import")
+def import_shared_function(name: str):
+    """Copy a shared function into THIS study, where it can be edited freely."""
+    fn = _shared_fns().get(name)
+    if fn is None:
+        raise HTTPException(404, f"'{name}' is not in the shared library")
+    if name in SESSION.custom_fns:
+        raise HTTPException(409, f"this study already has a function named '{name}' — "
+                                 "rename or delete it first")
+    SESSION.custom_fns[name] = dict(fn)
+    _autosave()
+    return {"ok": True, "count": len(SESSION.custom_fns)}
+
+
+@app.delete("/api/functions/shared/{name}")
+def delete_shared_function(name: str):
+    shared = _shared_fns()
+    shared.pop(name, None)
+    _write_shared_fns(shared)
+    return {"ok": True, "shared": sorted(shared)}
 
 
 @app.post("/api/functions")

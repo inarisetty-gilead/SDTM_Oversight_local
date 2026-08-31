@@ -303,6 +303,22 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
     # deliberate --DTC mapping would be silently overwritten by the ISO pass.
     _apply_edits(blocks, edits, dom, result)
 
+    # A hand edit may point a variable at the user's function library by name (recipe
+    # 'custom_fn'). Resolve the name to the function's CURRENT steps here, so editing the
+    # function later changes every variable that uses it on the next build.
+    for b in blocks:
+        if b.recipe == "custom_fn":
+            name = s((b.args or {}).get("name"))
+            fn = (custom_fns or {}).get(name)
+            if fn is None:
+                result.warnings.append(
+                    f"{b.variable}: '{name or '?'}' is not in your function library")
+                continue
+            b.args = {**(b.args or {}), "steps": [dict(st) for st in (fn.get("steps") or [])]}
+            b.method_source = "custom"
+            b.reason = (f"your function '{name}'"
+                        + (f": {fn['description']}" if fn.get("description") else ""))
+
     ctx = BuildContext(domain=dom, store=store, base=base,
                        frame=pd.DataFrame(index=base.index),
                        built=dict(built or {}), codelists=spec.codelists, studyid=studyid)

@@ -264,10 +264,16 @@ export const api = {
   runAcrf: (b: { acrf: string; standards: string; ta: string; ecrf?: string }) =>
     post<{ ok: boolean; report: AcrfReport }>("/api/acrf", b),
 
-  listFunctions: () => call<{ templates: TemplateFn[]; custom: CustomFn[] }>("/api/functions"),
+  listFunctions: () => call<{ templates: TemplateFn[]; custom: CustomFn[]; shared: CustomFn[] }>("/api/functions"),
   saveFunction: (fn: CustomFn) => post("/api/functions", fn),
   deleteFunction: (name: string) =>
     call(`/api/functions/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  shareFunction: (name: string) =>
+    post(`/api/functions/${encodeURIComponent(name)}/share`, {}),
+  importSharedFunction: (name: string) =>
+    post(`/api/functions/shared/${encodeURIComponent(name)}/import`, {}),
+  deleteSharedFunction: (name: string) =>
+    call(`/api/functions/shared/${encodeURIComponent(name)}`, { method: "DELETE" }),
   saveTemplate: (variable: string, body: { enabled?: boolean; edit?: Record<string, unknown>; clear_edit?: boolean }) =>
     post(`/api/functions/template/${variable}`, body),
   fnContext: (d: string) => call<FnContext>(`/api/functions/context/${d}`),

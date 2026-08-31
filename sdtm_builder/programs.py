@@ -347,6 +347,8 @@ def _py_block_lines(g: _Py, b: Block, var: str | None = None) -> list[str]:
         return [f'df["{v}"] = ({expr}).str.strip()']
 
     rc = b.recipe
+    if rc == "custom_fn":                # the user's library function — its steps were
+        rc = "pipeline"                  # resolved into args at build time
     if rc == "ct":
         src = (a.get("sources") or [a])[0]
         cl = upper(a.get("codelist")) or upper(b.codelist)
@@ -881,6 +883,8 @@ def _sas_stmts(g: _Sas, b: Block, observed_vals: set | None,
                        (b.args or {}).get("ct_overrides"))
 
     rc = b.recipe
+    if rc == "custom_fn":                # the user's library function — its steps were
+        rc = "pipeline"                  # resolved into args at build time
     if rc == "ct":
         tok = g.src((a.get("sources") or [a])[0], v)
         cl = upper(a.get("codelist")) or upper(b.codelist)

@@ -810,6 +810,96 @@ def test_reopening_a_study_rebuilds_the_prepared_datasets():
         assert "dm_slim" in detail["unapplied_datasets"]
 
 
+def test_a_library_function_can_be_chosen_for_any_variable():
+    """The Functions section creates a function; the variable editor must be able to apply
+    it BY NAME (recipe 'custom_fn'), and the variable must follow later edits to the
+    function — the name resolves to the function's current steps at every build."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        _load_and_build(client, tmp)
+
+        # the recipe hides itself while the library is empty
+        rec = next(r for r in client.get("/api/recipes").json()["recipes"]
+                   if r["id"] == "custom_fn")
+        assert rec.get("hidden") is True
+
+        fn = {"name": "shout_the_term", "description": "uppercase the reported term",
+              "variable": "AETERM", "domains": ["AE"],
+              "steps": [{"op": "assign", "dataset": "ae", "column": "AETERM"},
+                        {"op": "fn", "args": {"fn": "upcase", "sources": [{"kind": "self"}]}}]}
+        assert client.post("/api/functions", json=fn).status_code == 200
+
+        # ...and offers the function by name once one exists
+        rec = next(r for r in client.get("/api/recipes").json()["recipes"]
+                   if r["id"] == "custom_fn")
+        assert not rec.get("hidden")
+        assert rec["fields"][0]["options"] == ["shout_the_term"]
+
+        # preview it, adopt it, rebuild — the variable is built from the function's steps
+        edit = {"mtype": "derived", "recipe": "custom_fn", "args": {"name": "shout_the_term"}}
+        pv = client.post("/api/domain/AE/variable/AETERM/preview", json=edit).json()
+        assert pv["ok"], pv
+        assert "shout_the_term" in (pv.get("reason") or pv.get("how") or "")
+        client.post("/api/domain/AE/variable/AETERM", json=edit)
+        assert client.post("/api/domain/AE/build").status_code == 200
+        assert _wait(client)["status"] == "done"
+        data = client.get("/api/domain/AE/data?limit=500").json()
+        ix = [c["name"] for c in data["columns"]].index("AETERM")
+        terms = [r[ix] for r in data["rows"] if r[ix]]
+        assert terms and all(t == t.upper() for t in terms), terms[:5]
+
+        # a name that is no longer in the library fails loudly, not silently
+        client.delete("/api/functions/shout_the_term")
+        pv = client.post("/api/domain/AE/variable/AETERM/preview", json=edit).json()
+        assert not pv["ok"]
+        assert "not in your function library" in (pv.get("error") or pv.get("reason") or "")
+
+
+def test_a_shared_function_travels_between_studies_as_an_editable_copy():
+    """A study's functions live in its study.json. Sharing one puts a copy in the library
+    beside the studies folder; another study imports its OWN copy and can modify it
+    without touching the shared original."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, srv = _client(Path(td) / "runs")
+        srv.STUDIES = srv.StudyStore(Path(td) / "studies")
+
+        # study A writes a function and shares it
+        client.post("/api/studies", json={"name": "Study A"})
+        _load_and_build(client, tmp)
+        fn = {"name": "shout_the_term", "description": "uppercase the reported term",
+              "variable": "AETERM", "domains": ["AE"],
+              "steps": [{"op": "assign", "dataset": "ae", "column": "AETERM"},
+                        {"op": "fn", "args": {"fn": "upcase", "sources": [{"kind": "self"}]}}]}
+        assert client.post("/api/functions", json=fn).status_code == 200
+        assert client.post("/api/functions/shout_the_term/share").status_code == 200
+        assert (Path(td) / "studies" / "shared_functions.json").is_file()
+
+        # study B starts empty, sees the shared function, imports a copy
+        client.post("/api/studies", json={"name": "Study B"})
+        _load_and_build(client, tmp)
+        lib = client.get("/api/functions").json()
+        assert [f["name"] for f in lib["custom"]] == []
+        assert [f["name"] for f in lib["shared"]] == ["shout_the_term"]
+        assert client.post("/api/functions/shared/shout_the_term/import").status_code == 200
+        # importing over an existing name is refused, not silently overwritten
+        assert client.post("/api/functions/shared/shout_the_term/import").status_code == 409
+
+        # study B modifies ITS copy — the shared original is untouched
+        mine = client.get("/api/functions").json()["custom"][0]
+        mine["description"] = "study B's tweak"
+        assert client.post("/api/functions", json=mine).status_code == 200
+        lib = client.get("/api/functions").json()
+        assert lib["custom"][0]["description"] == "study B's tweak"
+        assert lib["shared"][0]["description"] == "uppercase the reported term"
+
+        # and the imported copy is usable: apply it by name to a variable and build
+        edit = {"mtype": "derived", "recipe": "custom_fn", "args": {"name": "shout_the_term"}}
+        pv = client.post("/api/domain/AE/variable/AETERM/preview", json=edit).json()
+        assert pv["ok"], pv
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

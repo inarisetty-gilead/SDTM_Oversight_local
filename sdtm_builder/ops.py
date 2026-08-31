@@ -733,6 +733,17 @@ def op_ct(ctx, b: Block) -> pd.Series:
     return apply_codelist(ctx, ser, codelist, a.get("ct_overrides"))
 
 
+def op_custom_fn(ctx, b: Block) -> pd.Series:
+    """A function from the user's own library, chosen by name in the variable editor.
+    The build resolves the name to the function's current steps before running, so an
+    empty steps list here means the name no longer matches anything in the library."""
+    if not (b.args or {}).get("steps"):
+        name = s((b.args or {}).get("name")) or "?"
+        raise OpError(f"'{name}' is not in your function library — pick another, or recreate it "
+                      "in the Functions section")
+    return op_pipeline(ctx, b)
+
+
 RECIPE_OPS = {
     "iso_date": op_iso_date,
     "ct": op_ct,
@@ -749,6 +760,7 @@ RECIPE_OPS = {
     "fn": op_fn,
     "cond": op_cond,
     "pipeline": op_pipeline,
+    "custom_fn": op_custom_fn,
 }
 
 
