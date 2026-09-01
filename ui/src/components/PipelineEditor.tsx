@@ -33,7 +33,7 @@ function FullDataDialog({ dataset, onClose }: { dataset: string; onClose: () => 
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent className="flex h-[85vh] w-full max-w-6xl flex-col">
+      <DialogContent className="flex h-[88vh] w-full max-w-[95vw] flex-col sm:max-w-[95vw]">
         <DialogHeader>
           <DialogTitle className="text-[14px]">
             <Mono>{dataset}</Mono>
