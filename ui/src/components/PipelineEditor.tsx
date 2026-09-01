@@ -230,9 +230,9 @@ const COND_OPS: [string, string][] = [
   ["between", "between (low, high)"],
   ["missing", "is missing"], ["notmissing", "is not missing"],
 ]
-const COND_NO_VALUE = new Set(["missing", "notmissing"])
+export const COND_NO_VALUE = new Set(["missing", "notmissing"])
 
-type Cond = { column?: string; operator?: string; value?: string }
+export type Cond = { column?: string; operator?: string; value?: string }
 
 /** Columns of a dataset (raw or a previous prep step), loaded once per name. */
 function useColumns(domain: string, dataset?: string) {
@@ -269,7 +269,7 @@ function ColSelect({ value, columns, onChange, placeholder = "column", width = "
  *  typo can't silently match nothing), with a plain text box as the fallback for a
  *  high-cardinality column or one a value list expects that today's sample never held.
  *  "in" / "notin" get a checklist instead of one pick, since they compare against several. */
-function ValuePicker({ domain, dataset, column, operator, value, onChange }: {
+export function ValuePicker({ domain, dataset, column, operator, value, onChange }: {
   domain?: string; dataset?: string; column?: string; operator: string
   value: string; onChange: (v: string) => void
 }) {
@@ -318,7 +318,7 @@ function ValuePicker({ domain, dataset, column, operator, value, onChange }: {
 }
 
 /** ANDed conditions: column · comparison · value rows, offered from the dataset itself. */
-function CondsEditor({ conds, columns, onChange, firstWord = "where", domain, dataset }: {
+export function CondsEditor({ conds, columns, onChange, firstWord = "where", domain, dataset }: {
   conds: Cond[]; columns: string[]; onChange: (c: Cond[]) => void; firstWord?: string
   domain?: string; dataset?: string
 }) {

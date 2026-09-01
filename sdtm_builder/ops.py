@@ -330,7 +330,11 @@ def op_date_extreme(ctx, b: Block) -> pd.Series:
 
     Every dataset must be joined to this domain on a key they BOTH carry. Picking a key per
     dataset independently is what silently produces an empty column: the base keyed on
-    USUBJID and a source keyed on SUBJID look fine on their own and match nothing."""
+    USUBJID and a source keyed on SUBJID look fine on their own and match nothing.
+
+    A source may carry its own subset conditions (same shape as the prep pipeline's filter
+    step): applied to that dataset before pooling, so "the latest date" means the latest one
+    that qualifies — e.g. only a COMPLETED visit — not the latest of every record."""
     a = b.args or {}
     func = str(a.get("func", "min")).lower()
     if func not in ("min", "max"):
@@ -365,6 +369,20 @@ def op_date_extreme(ctx, b: Block) -> pd.Series:
         if not col:
             skipped.append(f"{name}.{src['date_col']} (column not there)")
             continue
+        conds = src.get("conds") or []
+        if conds:
+            # a per-source subset — e.g. only COMPLETED visits — applied before pooling,
+            # so "the latest date" means the latest one that actually qualifies, not the
+            # latest of every record regardless
+            from .prep import PrepError, cond_mask
+            try:
+                frame = frame[cond_mask(frame, conds)]
+            except PrepError as exc:
+                skipped.append(f"{name} (subset: {exc})")
+                continue
+            if frame.empty:
+                skipped.append(f"{name} (subset matched no records)")
+                continue
         key = next((k for k in base_keys if k in frame.columns), None)
         if key is None:
             key = next((k for k in SUBJECT_KEYS

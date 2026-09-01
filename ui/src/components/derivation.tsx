@@ -9,6 +9,7 @@ import type { DomainDetail } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { CondsEditor, type Cond } from "./PipelineEditor"
 
 type Dict = Record<string, unknown>
 
@@ -562,19 +563,26 @@ function DateExtremeSourceRow({ src, detail, onChange, onRemove }: {
     api.columns(detail.domain, ds).then((r) => live && setCols(r.columns)).catch(() => setCols([]))
     return () => { live = false }
   }, [ds, detail.domain])
+  const conds = (src.conds as Cond[]) ?? []
   return (
-    <div className="flex items-center gap-1.5">
-      <Sel width="w-40" placeholder="dataset" value={ds}
-           options={[...detail.prepared_datasets.map((d): [string, string] => [d, `${d} (prepared)`]),
-                     ...detail.datasets.filter((d) => !detail.prepared_datasets.includes(d))
-                       .map((d): [string, string] => [d, d])]}
-           onChange={(d) => onChange({ dataset: d, date_col: "" })} />
-      <span className="text-[11px] text-muted-foreground">date in</span>
-      <Sel width="w-40" placeholder="date column" value={(src.date_col as string) ?? ""}
-           options={cols.map((c): [string, string] => [c, c])}
-           onChange={(c) => onChange({ ...src, date_col: c })} />
-      <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
-              onClick={onRemove}>Remove</Button>
+    <div className="space-y-1.5 rounded-md border p-2">
+      <div className="flex items-center gap-1.5">
+        <Sel width="w-40" placeholder="dataset" value={ds}
+             options={[...detail.prepared_datasets.map((d): [string, string] => [d, `${d} (prepared)`]),
+                       ...detail.datasets.filter((d) => !detail.prepared_datasets.includes(d))
+                         .map((d): [string, string] => [d, d])]}
+             onChange={(d) => onChange({ dataset: d, date_col: "" })} />
+        <span className="text-[11px] text-muted-foreground">date in</span>
+        <Sel width="w-40" placeholder="date column" value={(src.date_col as string) ?? ""}
+             options={cols.map((c): [string, string] => [c, c])}
+             onChange={(c) => onChange({ ...src, date_col: c })} />
+        <Button type="button" size="sm" variant="ghost" className="ml-auto h-7 px-2 text-xs"
+                onClick={onRemove}>Remove</Button>
+      </div>
+      {/* subset THIS source before it is pooled — e.g. only a COMPLETED visit counts
+          toward "the latest date", not every record this dataset happens to carry */}
+      <CondsEditor conds={conds} columns={cols} firstWord="only where" domain={detail.domain}
+                   dataset={ds} onChange={(c) => onChange({ ...src, conds: c })} />
     </div>
   )
 }

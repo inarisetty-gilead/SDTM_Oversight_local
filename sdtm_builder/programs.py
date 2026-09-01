@@ -1048,14 +1048,14 @@ def _sas_stmts(g: _Sas, b: Block, observed_vals: set | None,
             key = g.key_between(ds)
             if key is None:
                 continue
-            srcs.append((norm_key(ds), dc, key))
+            srcs.append((norm_key(ds), dc, key, x.get("conds") or []))
         if not srcs:
             return g.todo(b, "none of the date sources share a subject key with the base")
         g.dx[v] = {"func": func, "sources": srcs}
         parts = f"of {_sas_name('__DN_', v)}_:"
         return [
             f"  /* {v}: the {'latest' if func == 'max' else 'earliest'} date per subject "
-            f"across {', '.join(d for d, _c, _k in srcs)} (pre-merged above) */",
+            f"across {', '.join(d for d, _c, _k, _w in srcs)} (pre-merged above) */",
             f"  if n({parts}) then {v} = put({func}({parts}), yymmdd10.);",
             f"  else {v} = '';",
         ]
@@ -1281,13 +1281,14 @@ def sas_program(domain: str, blocks: list[Block], base_dataset: str,
                      "if __b; run;")
         for var, plan in sorted(g.dx.items()):
             func = plan["func"]
-            for i, (ds, dcol, key) in enumerate(plan["sources"], start=1):
+            for i, (ds, dcol, key, conds) in enumerate(plan["sources"], start=1):
                 t = f"{_sas_name('__DN_', var)}_{i}"
+                where = _sas_where(conds)
                 L.append("proc sql;")
                 L.append(f"  create table __dxt_{i} as")
                 L.append(f"  select {key}, {func}(input(substr(strip({dcol}), 1, 10), "
                          f"?? yymmdd10.)) as {t}")
-                L.append(f"  from {ds} group by {key};")
+                L.append(f"  from {ds}" + (f" where {where}" if where else "") + f" group by {key};")
                 L.append("quit;")
                 L.append(f"proc sort data=__base; by {key}; run;")
                 L.append(f"data __base; merge __base(in=__b) __dxt_{i}; by {key}; "
