@@ -974,10 +974,17 @@ def _sas_stmts(g: _Sas, b: Block, observed_vals: set | None,
                          "or hand-code the constant")
     if rc == "age":
         birth = upper(a.get("birth_var")) or "BRTHDTC"
-        ref = upper(a.get("ref_var")) or "RFSTDTC"
+        raw_ref = a.get("ref_var")
+        refs = ([upper(r) for r in raw_ref if s(r)] if isinstance(raw_ref, list)
+                else [upper(raw_ref)] if s(raw_ref) else ["RFSTDTC"])
         g.uses_dates = True
         lines = [f"  /* {v}: the reported age where collected, otherwise whole years from "
-                 f"{birth} to {ref} on the anniversary rule (never a fraction). The tool "
+                 f"{birth} to {refs[0]} on the anniversary rule (never a fraction), falling "
+                 f"back to {', '.join(refs[1:])} in order when an earlier one is missing. "
+                 "The tool additionally imputes partial birth dates — full dates match "
+                 "exactly. */" if len(refs) > 1 else
+                 f"  /* {v}: the reported age where collected, otherwise whole years from "
+                 f"{birth} to {refs[0]} on the anniversary rule (never a fraction). The tool "
                  "additionally imputes partial birth dates — full dates match exactly. */"]
         age_col = upper(a.get("age_col"))
         tok = None
@@ -986,13 +993,14 @@ def _sas_stmts(g: _Sas, b: Block, observed_vals: set | None,
                    else g.xref(g.base, age_col))
         lines.append(f"  {v} = input(strip(vvalue({tok})), ?? best32.);" if tok
                      else f"  {v} = .;")
-        lines += [
-            f"  __ev = input(substr(strip({birth}), 1, 10), ?? yymmdd10.);",
-            f"  __rf = input(substr(strip({ref}), 1, 10), ?? yymmdd10.);",
-            f"  if missing({v}) and n(__ev, __rf) = 2 then",
-            f"    {v} = year(__rf) - year(__ev) - (month(__rf) < month(__ev) or",
-            f"          (month(__rf) = month(__ev) and day(__rf) < day(__ev)));",
-        ]
+        lines.append(f"  __ev = input(substr(strip({birth}), 1, 10), ?? yymmdd10.);")
+        for ref in refs:            # each candidate only fills what an earlier one left missing
+            lines += [
+                f"  __rf = input(substr(strip({ref}), 1, 10), ?? yymmdd10.);",
+                f"  if missing({v}) and n(__ev, __rf) = 2 then",
+                f"    {v} = year(__rf) - year(__ev) - (month(__rf) < month(__ev) or",
+                f"          (month(__rf) = month(__ev) and day(__rf) < day(__ev)));",
+            ]
         return lines
     if rc == "copy_var":
         srcv = upper(a.get("source_var") or a.get("var"))

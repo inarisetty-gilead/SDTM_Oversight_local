@@ -501,7 +501,11 @@ def op_age(ctx, b: Block) -> pd.Series:
     collected one, and whole years from birth to the reference date for the records where it
     did not — anniversary rule (SAS YRDIF 'AGE'), never a fraction. A plain copy of the
     reported column would leave every uncollected age blank; deriving everything would ignore
-    what was actually reported. The template does both, so this does both."""
+    what was actually reported. The template does both, so this does both.
+
+    The reference date can be more than one candidate, tried in priority order — e.g. the
+    randomization date first, the consent date only when randomization is missing — matching
+    the fallback (age1/age2) some DM templates derive by hand."""
     a = b.args or {}
 
     reported = None
@@ -515,16 +519,25 @@ def op_age(ctx, b: Block) -> pd.Series:
         except (OpError, KeyError):
             reported = None
 
-    derived = None
     birth_var = upper(a.get("birth_var")) or "BRTHDTC"
-    ref_var = upper(a.get("ref_var")) or "RFSTDTC"
-    if birth_var in ctx.frame.columns and ref_var in ctx.frame.columns:
+    raw_ref = a.get("ref_var")
+    ref_vars = ([upper(r) for r in raw_ref if s(r)] if isinstance(raw_ref, list)
+                else [upper(raw_ref)] if s(raw_ref) else ["RFSTDTC"])
+
+    derived = None
+    if birth_var in ctx.frame.columns:
         birth = _impute_partial_date(ctx.frame[birth_var])
-        ref = _impute_partial_date(ctx.frame[ref_var])
-        years = ref.dt.year - birth.dt.year
-        before = ((ref.dt.month < birth.dt.month)
-                  | ((ref.dt.month == birth.dt.month) & (ref.dt.day < birth.dt.day)))
-        derived = (years - before.astype("int")).astype("Int64")
+        for ref_var in ref_vars:
+            if ref_var not in ctx.frame.columns:
+                continue
+            ref = _impute_partial_date(ctx.frame[ref_var])
+            years = ref.dt.year - birth.dt.year
+            before = ((ref.dt.month < birth.dt.month)
+                      | ((ref.dt.month == birth.dt.month) & (ref.dt.day < birth.dt.day)))
+            candidate = (years - before.astype("int")).astype("Int64")
+            # earlier candidates in the priority order win; a later one only fills what
+            # the earlier one left missing — exactly the age1/age2 fallback being matched
+            derived = candidate if derived is None else derived.combine_first(candidate)
 
     if reported is not None and derived is not None:
         return reported.astype("Int64").combine_first(derived)
@@ -533,7 +546,8 @@ def op_age(ctx, b: Block) -> pd.Series:
     if derived is not None:
         return derived
     raise OpError(
-        f"AGE needs a reported age column, or {birth_var} and {ref_var} built in this domain")
+        f"AGE needs a reported age column, or {birth_var} and one of {', '.join(ref_vars)} "
+        "built in this domain")
 
 
 # ── SAS-style functions (recipe='fn') ───────────────────────────────────────

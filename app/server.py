@@ -1268,7 +1268,10 @@ RECIPES = [
          {"k": "age_col", "t": "column", "label": "Reported age column",
           "help": "used as-is when present, e.g. AGE_REP; leave empty to always derive"},
          {"k": "birth_var", "t": "sdtmvar", "label": "Birth date variable", "help": "BRTHDTC"},
-         {"k": "ref_var", "t": "sdtmvar", "label": "Reference date variable", "help": "RFSTDTC"},
+         {"k": "ref_var", "t": "list", "label": "Reference date variable(s)",
+          "help": "RFSTDTC by default. List more than one, in priority order, for a "
+                  "fallback — e.g. RGMNDTN, CONSDAT tries randomization first, consent only "
+                  "when randomization is missing"},
      ]},
     {"id": "studyid", "label": "Study identifier", "hidden": True,
      "desc": "Taken from the STUDYID override, or whichever spelling of a study key the raw "
