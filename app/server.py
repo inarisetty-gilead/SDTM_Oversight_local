@@ -233,39 +233,37 @@ def _load_run_cache(run_dir: Path) -> bool:
 
 
 def _restore_session() -> str:
-    """Reload the most recent run, so a restart resumes where the user left off."""
-    candidates = []
-    if RUNS.is_dir():
-        candidates += [d for d in RUNS.iterdir() if d.is_dir()]
-    if STUDIES.root.is_dir():
-        for study_dir in STUDIES.root.iterdir():
-            runs = study_dir / "runs"
-            if runs.is_dir():
-                candidates += [d for d in runs.iterdir() if d.is_dir()]
+    """Reload the most recent work, so a restart resumes where the user left off.
+
+    A study's own `updated` timestamp — bumped on every autosave — is the true record of
+    what was last worked on. The previous approach guessed instead from run-FOLDER names,
+    which conflates a study's own runs with unrelated bare runs sitting in the top-level
+    runs/ folder (e.g. a CLI build made outside the study workflow). A bare run named
+    later than the study's own last run would win that guess and skip reopening the study
+    entirely — silently losing its preparation pipelines and hand edits on every restart,
+    even though nothing about the study itself had changed.
+    """
+    for card in STUDIES.list():
+        study = STUDIES.load(card["id"])
+        if study is None:
+            continue
+        try:
+            _apply_study(study)
+            n_prep = sum(len(v) for v in SESSION.pipelines.values()) \
+                + sum(len(v) for v in SESSION.draft_pipelines.values())
+            return (f"reopened study '{study.name}': {len(SESSION.results)} "
+                    f"domain(s) built"
+                    + (f", {n_prep} preparation step(s) restored" if n_prep else ""))
+        except Exception as exc:                               # noqa: BLE001
+            print(f"  could not reopen study {study.id}: {exc}")
+            continue
+
+    # no study to reopen — fall back to the most recent bare run (the non-study workflow)
+    candidates = [d for d in RUNS.iterdir() if d.is_dir()] if RUNS.is_dir() else []
     for run in sorted(candidates, key=lambda d: d.name, reverse=True):
         cache = run / SESSION_FILE
         if not cache.exists():
             continue
-        # A run that belongs to a study: reopen the WHOLE study, not just the run's
-        # frames. The preparation pipelines, hand edits and prepared datasets live in
-        # study.json — and a session without the study open cannot even autosave the
-        # reader's next decision. Resuming only the run made them all vanish on restart.
-        sid = (run.parent.parent.name
-               if run.parent.name == "runs" and run.parent.parent.parent == STUDIES.root
-               else "")
-        if sid:
-            study = STUDIES.load(sid)
-            if study is not None:
-                try:
-                    _apply_study(study)
-                    n_prep = sum(len(v) for v in SESSION.pipelines.values()) \
-                        + sum(len(v) for v in SESSION.draft_pipelines.values())
-                    return (f"reopened study '{study.name}': {len(SESSION.results)} "
-                            f"domain(s) built"
-                            + (f", {n_prep} preparation step(s) restored" if n_prep else ""))
-                except Exception as exc:                       # noqa: BLE001
-                    print(f"  could not reopen study {sid}: {exc}")
-                    continue
         try:
             import pickle
             with open(cache, "rb") as fh:
