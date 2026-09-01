@@ -267,6 +267,7 @@ const STEP_KINDS: [string, string][] = [
   ["iso_date", "Collected date \u2192 ISO 8601 — assign_datetime"],
   ["study_day", "Study day — derive_study_day"],
   ["date_extreme", "Earliest / latest date per subject"],
+  ["age", "Age at a reference date, with fallback"],
   ["fn", "Apply a SAS function"],
   ["cond", "If / then rules — condition_add"],
 ]
@@ -278,6 +279,7 @@ const STEP_INIT: Record<string, Dict> = {
   iso_date: { op: "iso_date", args: { dataset: "", date_col: "" } },
   study_day: { op: "study_day", args: { dtc_var: "", ref_var: "RFSTDTC" } },
   date_extreme: { op: "date_extreme", args: { func: "min", sources: [] } },
+  age: { op: "age", args: { age_col: "", age_dataset: "", birth_var: "BRTHDTC", ref_var: ["RFSTDTC"] } },
   fn: { op: "fn", args: { fn: "", sources: [{ kind: "self" }] } },
   cond: { op: "cond", args: { rules: [], else: { kind: "missing" } } },
 }
@@ -359,6 +361,11 @@ export function PipelineControl({ steps, onChange, detail }: {
               <div className="mt-2 pl-6">
                 <DateExtremeControl args={(st.args as Dict) ?? {}} detail={detail}
                                     onChange={(a) => upd(i, { args: a })} />
+              </div>)}
+            {op === "age" && (
+              <div className="mt-2 pl-6">
+                <AgeControl args={(st.args as Dict) ?? {}} detail={detail}
+                           onChange={(a) => upd(i, { args: a })} />
               </div>)}
           </div>
         )
@@ -507,3 +514,65 @@ function DateExtremeSourceRow({ src, detail, onChange, onRemove }: {
     </div>
   )
 }
+
+/** AGE: reported age column first, then birth\u2192reference whole years underneath \u2014 with a
+ *  priority-ordered fallback list of reference dates (e.g. randomization, then consent, as
+ *  a company template's age1/age2 SAS macro chain would). */
+export function AgeControl({ args, onChange, detail }: {
+  args: Dict; onChange: (a: Dict) => void; detail: DomainDetail
+}) {
+  const ds = (args.age_dataset as string) ?? ""
+  const [cols, setCols] = useState<string[]>([])
+  useEffect(() => {
+    if (!ds) { setCols([]); return }
+    let live = true
+    api.columns(detail.domain, ds).then((r) => live && setCols(r.columns)).catch(() => setCols([]))
+    return () => { live = false }
+  }, [ds, detail.domain])
+  const vars = detail.variables.map((x): [string, string] => [x.variable, x.variable])
+  const refs = Array.isArray(args.ref_var) ? (args.ref_var as string[])
+    : args.ref_var ? [args.ref_var as string] : []
+  const setRefs = (r: string[]) => onChange({ ...args, ref_var: r })
+
+  return (
+    <div className="space-y-1.5 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted-foreground">reported age from</span>
+        <Sel width="w-40" placeholder="dataset" value={ds}
+             options={[...detail.prepared_datasets.map((d): [string, string] => [d, `${d} (prepared)`]),
+                       ...detail.datasets.filter((d) => !detail.prepared_datasets.includes(d))
+                         .map((d): [string, string] => [d, d])]}
+             onChange={(d) => onChange({ ...args, age_dataset: d, age_col: "" })} />
+        <Sel width="w-40" placeholder="age column (optional)" value={(args.age_col as string) ?? ""}
+             options={cols.map((c): [string, string] => [c, c])}
+             onChange={(c) => onChange({ ...args, age_col: c })} />
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted-foreground">records with none collected get whole years from</span>
+        <Sel width="w-40" placeholder="birth date variable" value={(args.birth_var as string) ?? "BRTHDTC"}
+             options={vars} onChange={(v) => onChange({ ...args, birth_var: v })} />
+        <span className="text-muted-foreground">to:</span>
+      </div>
+      <div className="space-y-1">
+        {refs.map((r, i) => (
+          <div key={i} className="flex items-center gap-1.5 pl-4">
+            <span className="w-16 text-[11px] text-muted-foreground">{i === 0 ? "first try" : "then try"}</span>
+            <Sel width="w-40" placeholder="reference date variable" value={r}
+                 options={vars} onChange={(v) => setRefs(refs.map((x, k) => (k === i ? v : x)))} />
+            <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                    onClick={() => setRefs(refs.filter((_, k) => k !== i))}>Remove</Button>
+          </div>
+        ))}
+        <Button type="button" size="sm" variant="outline" className="ml-4 h-7 text-xs"
+                onClick={() => setRefs([...refs, ""])}>
+          {refs.length ? "Add a fallback reference date" : "Add a reference date"}</Button>
+      </div>
+      <p className="pl-4 text-[10px] text-muted-foreground">
+        Anniversary rule, never a fraction; partial birth dates complete with 01. With more
+        than one reference date listed, the first one present for a record wins \u2014 a later one
+        only fills what an earlier one left missing (e.g. randomization date, then consent
+        date for screen failures).</p>
+    </div>
+  )
+}
+
