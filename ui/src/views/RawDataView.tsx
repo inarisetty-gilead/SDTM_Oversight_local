@@ -13,6 +13,7 @@ const FULL = 100_000
  *  included), browsable without entering a domain. The input side of every mapping. */
 export function RawDataView() {
   const [list, setList] = useState<Array<{ name: string; file: string; kind: string; label: string }> | null>(null)
+  const [schema, setSchema] = useState<Record<string, string[]> | null>(null)
   const [q, setQ] = useState("")
   const [sel, setSel] = useState<string>("")
   const [page, setPage] = useState<DataPage | null>(null)
@@ -23,6 +24,8 @@ export function RawDataView() {
     api.rawDatasets()
       .then((r) => { setList(r.datasets); if (r.datasets.length && !sel) setSel(r.datasets[0].name) })
       .catch((e) => setError((e as Error).message))
+    // the column map loads in the background — the filter box searches columns too
+    api.rawColumns().then((r) => setSchema(r.columns)).catch(() => setSchema({}))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -35,12 +38,21 @@ export function RawDataView() {
   }, [])
   useEffect(() => { void load(sel) }, [sel, load])
 
+  // one box, two searches: dataset names AND their columns. A matched column is shown
+  // on the row, because "which of the 86 datasets has RGMDTN?" is the actual question.
   const shown = useMemo(() => {
     if (!list) return []
-    if (!q.trim()) return list
+    if (!q.trim()) return list.map((d) => ({ ...d, hit: "" }))
     const needle = q.toLowerCase()
-    return list.filter((d) => `${d.name} ${d.file} ${d.label}`.toLowerCase().includes(needle))
-  }, [list, q])
+    return list
+      .map((d) => {
+        const byName = `${d.name} ${d.file} ${d.label}`.toLowerCase().includes(needle)
+        const hit = byName ? ""
+          : (schema?.[d.name] ?? []).find((c) => c.toLowerCase().includes(needle)) ?? ""
+        return { ...d, hit, keep: byName || !!hit }
+      })
+      .filter((d) => d.keep)
+  }, [list, q, schema])
 
   return (
     <>
@@ -50,7 +62,8 @@ export function RawDataView() {
         <div className="flex w-64 shrink-0 flex-col gap-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input className="h-8 pl-8 text-xs" placeholder="Filter datasets…"
+            <Input className="h-8 pl-8 text-xs"
+                   placeholder={schema ? "Dataset or column…" : "Filter datasets…"}
                    value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto rounded-md border p-1">
@@ -61,6 +74,7 @@ export function RawDataView() {
                                  + (sel === d.name ? "bg-muted font-medium" : "hover:bg-muted/50")}>
                 <span className="font-mono">{d.name}</span>
                 {d.kind === "prepared" && <Chip tone="violet" className="ml-1.5">prepared</Chip>}
+                {d.hit && <Chip tone="amber" className="ml-1.5">has {d.hit}</Chip>}
                 {d.file && <span className="block truncate text-[10px] text-muted-foreground">{d.file}</span>}
               </button>
             ))}

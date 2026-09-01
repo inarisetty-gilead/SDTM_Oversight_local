@@ -936,6 +936,15 @@ def raw_datasets():
     return {"datasets": out}
 
 
+@app.get("/api/raw-columns")
+def raw_columns():
+    """{dataset: [columns]} across the whole raw folder — so a COLUMN can be found.
+    Knowing a column exists somewhere in 86 datasets is not the same as knowing where."""
+    if SESSION.store is None:
+        raise HTTPException(400, "scan the raw data folder first")
+    return {"columns": {k: sorted(v) for k, v in SESSION.store.schema().items()}}
+
+
 @app.get("/api/raw/{dataset}/data")
 def raw_data(dataset: str, offset: int = 0, limit: int = 50,
              sort: str = "", dir: str = "asc", filters: str = ""):

@@ -285,6 +285,7 @@ export const api = {
     call<{ domain: string; lang: string; program: string; filename: string }>(
       `/api/domain/${d}/program/${lang}`),
 
+  rawColumns: () => call<{ columns: Record<string, string[]> }>("/api/raw-columns"),
   rawDatasets: () => call<{ datasets: Array<{ name: string; file: string; kind: string; label: string }> }>(
     "/api/raw-datasets"),
   variableCt: (d: string, v: string) => call<CtInspect>(`/api/domain/${d}/variable/${v}/ct`),

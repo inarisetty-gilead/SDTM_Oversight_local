@@ -23,7 +23,7 @@ type Filter = (typeof FILTERS)[number]
 
 // spec Mapping Action -> chip tone, matching SDTM Designer's color language:
 // direct copies green, derivations teal, drops muted, supplemental violet
-const ACTION_TONE: Record<string, ChipTone> = {
+export const ACTION_TONE: Record<string, ChipTone> = {
   ASSIGN: "green", CODE: "teal", DERIVED: "teal", DERIVE: "teal",
   DROP: "slate", SUPP: "violet", CONSTANT: "amber", HARDCODE: "amber",
 }
@@ -390,6 +390,11 @@ export function DomainView({ domain, onBack, onChanged }: {
                 <Input className="h-8 pl-8 text-xs" placeholder="Filter by variable, label or source"
                        value={search} onChange={(e) => setSearch(e.target.value)} />
               </div>
+              <Button size="icon" variant="outline" className="h-8 w-8"
+                      title="open this variables table in its own window — it follows every rebuild"
+                      onClick={() => window.open(`#vars/${d.domain}`, "_blank",
+                        "width=1400,height=900,noopener")}>
+                <ExternalLink className="h-3.5 w-3.5" /></Button>
             </div>
 
             {editing && (
