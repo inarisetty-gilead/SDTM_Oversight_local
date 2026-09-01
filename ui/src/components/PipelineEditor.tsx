@@ -33,7 +33,7 @@ function FullDataDialog({ dataset, onClose }: { dataset: string; onClose: () => 
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent className="flex h-[88vh] w-full max-w-[95vw] flex-col sm:max-w-[95vw]">
+      <DialogContent className="flex h-[88vh] w-full max-w-[95vw] flex-col overflow-hidden sm:max-w-[95vw]">
         <DialogHeader>
           <DialogTitle className="text-[14px]">
             <Mono>{dataset}</Mono>
@@ -42,8 +42,11 @@ function FullDataDialog({ dataset, onClose }: { dataset: string; onClose: () => 
           </DialogTitle>
         </DialogHeader>
         {error && <Callout tone="bad">{error}</Callout>}
-        <div className="min-h-0 flex-1">
-          <RecordTable page={page} busy={busy} height="100%" />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {/* RecordTable's own wrapper is a plain block div, so "100%" has nothing definite
+              to resolve against and the table spills past the dialog instead of scrolling —
+              a fixed viewport-relative height, same trick RawDataView already uses, fixes it */}
+          <RecordTable page={page} busy={busy} height="calc(88vh - 10rem)" />
         </div>
       </DialogContent>
     </Dialog>
