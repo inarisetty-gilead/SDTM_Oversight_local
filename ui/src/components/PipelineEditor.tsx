@@ -1,14 +1,54 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, Plus, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, Maximize2, Plus, Trash2 } from "lucide-react"
 import { api } from "@/api"
-import type { DomainDetail } from "@/api"
+import type { DataPage, DomainDetail } from "@/api"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { FN_LABELS } from "./derivation"
+import { RecordTable } from "./DataView"
 import { DataGrid, Mono } from "./grid"
 import { Callout } from "./shell"
+
+const FULL_ROWS = 100_000
+
+/** A step's complete output, on demand \u2014 the inline preview under each step is capped to 8
+ *  rows for readability, but the step itself always ran on the whole dataset. This is that
+ *  whole dataset, browsable the same way the Raw Data view shows any other dataset. */
+function FullDataDialog({ dataset, onClose }: { dataset: string; onClose: () => void }) {
+  const [page, setPage] = useState<DataPage | null>(null)
+  const [busy, setBusy] = useState(true)
+  const [error, setError] = useState("")
+  useEffect(() => {
+    let live = true
+    setBusy(true); setError("")
+    api.rawData(dataset, { offset: 0, limit: FULL_ROWS })
+      .then((p) => { if (live) setPage(p) })
+      .catch((e) => { if (live) setError((e as Error).message) })
+      .finally(() => { if (live) setBusy(false) })
+    return () => { live = false }
+  }, [dataset])
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent className="flex h-[85vh] w-full max-w-6xl flex-col">
+        <DialogHeader>
+          <DialogTitle className="text-[14px]">
+            <Mono>{dataset}</Mono>
+            {page && <span className="ml-2 text-[12px] font-normal text-muted-foreground">
+              {(page.total ?? page.nrows).toLocaleString()} record(s), {page.columns.length} column(s)</span>}
+          </DialogTitle>
+        </DialogHeader>
+        {error && <Callout tone="bad">{error}</Callout>}
+        <div className="min-h-0 flex-1">
+          <RecordTable page={page} busy={busy} height="100%" />
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 type Step = { op: string; name: string; params: Record<string, unknown> }
 type Report = { step: number; name: string; op: string; ok: boolean; rows?: number; columns?: string[]; error?: string; extra_outputs?: string[] }
@@ -528,6 +568,8 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
   // per-step minimize/maximize + the remembered previews toggle — as in SDTM Designer's
   // prep studio (👁 previews on/off, steps collapse to their one-line summary)
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
+  // the dataset name of the step whose FULL output is open in a dialog — "" when closed
+  const [fullView, setFullView] = useState<string>("")
   // which output the domain's records follow. "" = the last step (the default). Pinning
   // it means adding prep2 later never silently moves the variables off prep1.
   const [recordsFrom, setRecordsFrom] = useState<string>(
@@ -879,9 +921,15 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
             </div>}
 
             {rep && (rep.ok
-              ? <p className="text-xs text-muted-foreground">→ <Mono>{rep.name}</Mono>{" "}
-                  {rep.rows?.toLocaleString()} records, {rep.columns?.length} columns
-                  {rep.extra_outputs?.length ? ` · also produced ${rep.extra_outputs.join(", ")}` : ""}</p>
+              ? <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span>→ <Mono>{rep.name}</Mono>{" "}
+                    {rep.rows?.toLocaleString()} records, {rep.columns?.length} columns
+                    {rep.extra_outputs?.length ? ` · also produced ${rep.extra_outputs.join(", ")}` : ""}</span>
+                  <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px]"
+                          onClick={() => setFullView(rep.name)}>
+                    <Maximize2 className="mr-1 h-3 w-3" />View full data
+                  </Button>
+                </p>
               : <p className="text-xs text-destructive">✗ {rep.error}</p>)}
             {/* every step keeps its OWN preview — adding a later step never hides it */}
             {showPrev && !isMin && rep?.ok && outs[rep.name] && (
@@ -894,6 +942,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
       })}
 
       {error && <div className="px-3 pb-3"><Callout tone="bad">{error}</Callout></div>}
+      {fullView && <FullDataDialog dataset={fullView} onClose={() => setFullView("")} />}
     </div>
   )
 }
