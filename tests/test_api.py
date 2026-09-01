@@ -770,6 +770,66 @@ def test_records_can_be_pinned_to_one_prep_output():
         assert after["base"] == "ae_plus_dm"
         assert after["override"].get("base") == "ae_plus_dm"    # persists with the study
 
+        # the Variables tab re-points the records WITHOUT resending the pipeline
+        assert client.post("/api/domain/AE/records-from",
+                           json={"base": "dm_small"}).status_code == 200
+        assert client.post("/api/domain/AE/build", json={}).status_code == 200
+        assert _wait(client)["status"] == "done"
+        assert client.get("/api/domain/AE").json()["base"] == "dm_small"
+        # back to the default (follow the last step)
+        assert client.post("/api/domain/AE/records-from", json={"base": ""}).status_code == 200
+        # a name that is not a step output is refused, not silently accepted
+        assert client.post("/api/domain/AE/records-from",
+                           json={"base": "no_such_output"}).status_code == 400
+
+
+def test_a_variable_can_be_moved_to_run_after_its_dependency():
+    """Variables run in spec order, so a derivation cannot read a variable the spec lists
+    after it. Move up / move down changes the BUILD order (and the table), while the
+    finished dataset keeps its columns in spec order — the submission shape is not the
+    user's to scramble by accident."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        _load_and_build(client, tmp)
+
+        det = client.get("/api/domain/DM").json()
+        built = [v["variable"] for v in det["variables"] if v["status"] == "built"]
+        order0 = [v["variable"] for v in det["variables"]]
+        cols0 = det["columns"]
+
+        # pick two adjacent built variables and make the EARLIER copy the LATER —
+        # impossible in spec order, possible after one move down
+        pairs = [(a, b) for a, b in zip(order0, order0[1:]) if a in built and b in built]
+        early, late = pairs[-1]
+        client.post(f"/api/domain/DM/variable/{early}",
+                    json={"mtype": "derived", "recipe": "copy_var",
+                          "args": {"source_var": late}})
+        assert client.post("/api/domain/DM/build", json={}).status_code == 200
+        assert _wait(client)["status"] == "done"
+        det = client.get("/api/domain/DM").json()
+        blk = next(v for v in det["variables"] if v["variable"] == early)
+        assert blk["status"] != "built"                       # it reads what does not exist yet
+
+        assert client.post(f"/api/domain/DM/variable/{early}/move",
+                           json={"dir": "down"}).status_code == 200
+        assert client.post("/api/domain/DM/build", json={}).status_code == 200
+        assert _wait(client)["status"] == "done"
+        det = client.get("/api/domain/DM").json()
+        order1 = [v["variable"] for v in det["variables"]]
+        assert order1.index(early) == order0.index(early) + 1  # the table shows the move
+        blk = next(v for v in det["variables"] if v["variable"] == early)
+        assert blk["status"] == "built", blk                   # and the dependency resolves
+        assert det["columns"] == cols0                         # the dataset stays spec-shaped
+
+        # the order survives with the study (it lives in the overrides)
+        assert client.get("/api/domain/DM").json()["override"]["var_order"][:3]
+
+        # moving past the ends is refused
+        first = order1[0]
+        assert client.post(f"/api/domain/DM/variable/{first}/move",
+                           json={"dir": "up"}).status_code == 400
+
 
 def test_reopening_a_study_rebuilds_the_prepared_datasets():
     """The pipeline steps persist in study.json — but their OUTPUTS are in-memory frames.
@@ -835,6 +895,22 @@ def test_a_library_function_can_be_chosen_for_any_variable():
                    if r["id"] == "custom_fn")
         assert not rec.get("hidden")
         assert rec["fields"][0]["options"] == ["shout_the_term"]
+
+        # a function with NO auto-fill variable saves too — it exists only to be applied
+        # by hand (requiring the variable used to silently block saving these)
+        loose = {"name": "a_loose_one", "variable": "", "domains": ["AE"],
+                 "steps": [{"op": "assign", "dataset": "ae", "column": "AETERM"}]}
+        assert client.post("/api/functions", json=loose).status_code == 200
+        rec = next(r for r in client.get("/api/recipes").json()["recipes"]
+                   if r["id"] == "custom_fn")
+        assert rec["fields"][0]["options"] == ["a_loose_one", "shout_the_term"]
+        # ...and never auto-applies: a fresh build leaves the spec's mappings alone
+        assert client.post("/api/domain/AE/build").status_code == 200
+        assert _wait(client)["status"] == "done"
+        det = client.get("/api/domain/AE").json()
+        blk = next(v for v in det["variables"] if v["variable"] == "AETERM")
+        assert blk.get("method_source") != "custom"
+        client.delete("/api/functions/a_loose_one")
 
         # preview it, adopt it, rebuild — the variable is built from the function's steps
         edit = {"mtype": "derived", "recipe": "custom_fn", "args": {"name": "shout_the_term"}}

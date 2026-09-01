@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ArrowLeft, BookOpen, ExternalLink, Search } from "lucide-react"
+import { ArrowDown, ArrowLeft, ArrowUp, BookOpen, ExternalLink, Search } from "lucide-react"
 import { api } from "@/api"
 import type { CtInspect, DomainDetail, JobState, VariableRow } from "@/api"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -363,6 +363,28 @@ export function DomainView({ domain, onBack, onChanged }: {
                   <SelectItem value="source" className="text-xs">Group by source dataset</SelectItem>
                 </SelectContent>
               </Select>
+              {d.pipeline.length > 0 && (
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-muted-foreground"
+                        title="the prepared output the domain's records are built from — variables whose columns it carries follow it; hand-edited variables keep their own source">
+                    records from</span>
+                  <Select value={((d.override as { base?: string })?.base || "__last")}
+                          onValueChange={(v) => void (async () => {
+                            await api.setRecordsFrom(d.domain, v === "__last" ? "" : v)
+                            await api.rebuild(d.domain)
+                            await afterRebuild()
+                          })()}>
+                    <SelectTrigger className="h-7 w-44 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__last" className="text-xs">the last step (default)</SelectItem>
+                      {d.pipeline.map((s, k) => {
+                        const n = (s as { name?: string }).name || `prep${k + 1}`
+                        return <SelectItem key={n} value={n} className="text-xs">{n} (pinned)</SelectItem>
+                      })}
+                    </SelectContent>
+                  </Select>
+                </span>
+              )}
               <div className="relative ml-auto min-w-56 flex-1">
                 <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input className="h-8 pl-8 text-xs" placeholder="Filter by variable, label or source"
@@ -409,6 +431,26 @@ export function DomainView({ domain, onBack, onChanged }: {
               cols={[
                 { id: "v", head: "Variable", kind: "key", sticky: true, width: 130,
                   cell: (v) => v.variable },
+                // reorder the BUILD, right on the row — a derivation can only read
+                // variables built before it; the dataset's columns stay in spec order
+                { id: "mv", head: "", kind: "tag", width: 52,
+                  cell: (v) => (
+                    <span className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" title="build this variable earlier"
+                              className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                              onClick={() => void (async () => {
+                                await api.moveVariable(d.domain, v.variable, "up")
+                                await api.rebuild(d.domain); await afterRebuild()
+                              })().catch(() => undefined)}>
+                        <ArrowUp className="h-3 w-3" /></button>
+                      <button type="button" title="build this variable later"
+                              className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                              onClick={() => void (async () => {
+                                await api.moveVariable(d.domain, v.variable, "down")
+                                await api.rebuild(d.domain); await afterRebuild()
+                              })().catch(() => undefined)}>
+                        <ArrowDown className="h-3 w-3" /></button>
+                    </span>) },
                 { id: "l", head: "Label", kind: "text", width: 210,
                   cell: (v) => <span className="text-muted-foreground">{v.label}</span> },
                 // the spec's verdict for the row — ASSIGN / CODE / DERIVED / DROP / SUPP,

@@ -146,6 +146,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
                  dedup: dict | None = None,
                  custom_fns: dict | None = None,
                  template_overrides: dict | None = None,
+                 var_order: list[str] | None = None,
                  name_match_threshold: int = automap.DEFAULT_THRESHOLD) -> DomainResult:
     dom = upper(domain)
     rows = spec.rows(dom)
@@ -155,6 +156,17 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
         return result
 
     blocks = translate_domain(rows, studyid=studyid)
+    # Variables run in spec order — but a derivation may depend on a variable the spec
+    # lists AFTER it. var_order is the user's reordering (move up / move down): listed
+    # variables RUN in that order, anything unlisted keeps its spec position at the end.
+    # The finished dataset still carries its columns in SPEC order — reordering fixes a
+    # dependency, it must not reshape the submission structure.
+    spec_positions = {b.variable: i for i, b in enumerate(blocks)}
+    if var_order:
+        pos = {upper(v): i for i, v in enumerate(var_order)}
+        default = len(pos)
+        blocks = [b for _, b in sorted(enumerate(blocks),
+                                       key=lambda t: (pos.get(t[1].variable, default + t[0]), t[0]))]
     result.blocks = blocks
 
     # ── data preparation: reshape the raw forms into this domain's record grain ──
@@ -345,6 +357,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
     keep = [b.variable for b in blocks
             if not b.supp and (b.status in ("built", "empty")
                                or (include_unbuilt and b.status in ("not_built", "error")))]
+    keep.sort(key=lambda v: spec_positions.get(v, len(spec_positions)))
     for v in keep:                                              # unbuilt -> explicit empty column
         if v not in full.columns:
             full[v] = pd.Series(pd.NA, index=full.index, dtype="string")
@@ -504,6 +517,7 @@ def build_study(spec: Spec, store: RawStore, domains: list[str] | None = None,
                 dedups: dict[str, dict] | None = None,
                 custom_fns: dict | None = None,
                 template_overrides: dict | None = None,
+                var_orders: dict[str, list[str]] | None = None,
                 name_match_threshold: int = automap.DEFAULT_THRESHOLD,
                 progress=None) -> dict[str, DomainResult]:
     """Build every requested domain, in dependency order. A domain that fails is recorded
@@ -523,6 +537,7 @@ def build_study(spec: Spec, store: RawStore, domains: list[str] | None = None,
     prep_pipelines = {upper(k): v for k, v in (prep_pipelines or {}).items()}
     edits = {upper(k): v for k, v in (edits or {}).items()}
     dedups = {upper(k): v for k, v in (dedups or {}).items()}
+    var_orders = {upper(k): v for k, v in (var_orders or {}).items()}
 
     built: dict[str, pd.DataFrame] = {}
     results: dict[str, DomainResult] = {}
@@ -538,6 +553,7 @@ def build_study(spec: Spec, store: RawStore, domains: list[str] | None = None,
                            prep_steps=prep_pipelines.get(dom),
                            edits=edits.get(dom), dedup=dedups.get(dom),
                            custom_fns=custom_fns, template_overrides=template_overrides,
+                           var_order=var_orders.get(dom),
                            name_match_threshold=name_match_threshold)
         results[dom] = res
         if res.ok:

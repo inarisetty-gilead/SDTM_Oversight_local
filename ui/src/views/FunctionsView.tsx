@@ -43,11 +43,13 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
       .catch(() => setCtx(null))
   }, [ctxDomain])
 
-  // the library auto-saves like everything else — once a function is nameable, it is kept
+  // the library auto-saves like everything else — once a function is nameable, it is
+  // kept. Only the NAME gates saving: requiring 'fills the variable' too silently
+  // discarded the work of anyone building a function to apply by hand.
   const firstRun = useRef(true)
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return }
-    if (!editing || !editing.name.trim() || !editing.variable) return
+    if (!editing || !editing.name.trim()) return
     const t = window.setTimeout(() => {
       void (async () => {
         try {
@@ -95,7 +97,7 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
       </Panel>
 
       <Panel title="Your custom functions"
-             description="Reusable derivations of your own. A function fills its variable in the chosen domains on the next build — deliberately, so it outranks the built-in templates and any name-match guess, and (only if you say so) the spec itself. Hand edits always win."
+             description="Reusable derivations of your own, saved as you type. Give one an auto-fill variable and it fills it in the chosen domains on every build; give it none and apply it yourself — on any variable, pick mapping type 'derived' and the derivation 'A function from your library'."
              actions={
                <Button size="sm" disabled={!ready}
                        onClick={() => { setEditing({ ...BLANK }); setOrigName(""); setSaved(false) }}>
@@ -115,7 +117,9 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
               <span className="text-sm font-medium">{fn.name}</span>
               <Chip tone="fuchsia">custom</Chip>
               <span className="text-xs text-muted-foreground">
-                fills <Mono>{fn.variable}</Mono> in {fn.domains.length ? fn.domains.join(", ") : "every domain"}
+                {fn.variable
+                  ? <>fills <Mono>{fn.variable}</Mono> in {fn.domains.length ? fn.domains.join(", ") : "every domain"}</>
+                  : "applied by hand from the variable editor"}
                 {fn.override ? " · replaces the spec mapping" : ""}
               </span>
               {fn.description && <span className="flex-1 truncate text-xs">{fn.description}</span>}
@@ -155,7 +159,9 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
                   <span className="text-sm font-medium">{fn.name}</span>
                   <Chip tone="blue">shared</Chip>
                   <span className="text-xs text-muted-foreground">
-                    fills <Mono>{fn.variable}</Mono> in {fn.domains.length ? fn.domains.join(", ") : "every domain"}
+                    {fn.variable
+                      ? <>fills <Mono>{fn.variable}</Mono> in {fn.domains.length ? fn.domains.join(", ") : "every domain"}</>
+                      : "applied by hand from the variable editor"}
                   </span>
                   {fn.description && <span className="flex-1 truncate text-xs">{fn.description}</span>}
                   <div className="ml-auto flex items-center gap-1">
@@ -183,7 +189,10 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
                description="Write it once with the same building blocks as a variable derivation; the steps run top to bottom and the last value fills the variable."
                actions={
                  <div className="flex items-center gap-2">
-                   {saved && <span className="text-[11px] text-emerald-600">saved ✓</span>}
+                   {saved
+                     ? <span className="text-[11px] text-emerald-600">saved ✓</span>
+                     : !editing.name.trim() &&
+                       <span className="text-[11px] text-amber-600">not saved yet — give it a name</span>}
                    <Button size="sm" variant="outline" onClick={() => setEditing(null)}>Close</Button>
                  </div>}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -219,7 +228,12 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
 
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Fills the variable</Label>
+              <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Auto-fills the variable (optional)</Label>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Pick one to have it filled on every build. Leave — to apply the function
+                yourself: on any variable, choose mapping type <Mono>derived</Mono> and the
+                derivation "A function from your library".
+              </p>
               {ctx ? (
                 <Select value={editing.variable || "__none"}
                         onValueChange={(v) => upd({ variable: v === "__none" ? "" : v })}>

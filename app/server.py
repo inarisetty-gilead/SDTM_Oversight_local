@@ -721,6 +721,7 @@ def start_build(body: BuildIn):
                             if o.get("prep_mode") == "custom" and o.get("prep")},
             prep_pipelines=SESSION.pipelines, edits=SESSION.edits, dedups=SESSION.dedups,
             custom_fns=SESSION.custom_fns, template_overrides=SESSION.template_overrides,
+            var_orders={d: o["var_order"] for d, o in ovr.items() if o.get("var_order")},
             name_match_threshold=body.name_match,
             include_unbuilt=body.include_unbuilt, progress=tick)
         # Building a chosen subset ACCUMULATES: DM now, AE next, one by one — each build adds
@@ -1084,6 +1085,7 @@ def rebuild_domain(domain: str):
                            prep_steps=SESSION.pipelines.get(dom),
                            edits=SESSION.edits.get(dom), dedup=SESSION.dedups.get(dom),
                            custom_fns=SESSION.custom_fns, template_overrides=SESSION.template_overrides,
+                           var_order=ov.get("var_order"),
                            name_match_threshold=SESSION.name_match)
         SESSION.results[dom] = res
 
@@ -1361,6 +1363,7 @@ def _rebuild_one(dom: str, progress=None) -> "object":
         prep_steps=SESSION.pipelines.get(dom),
         edits=SESSION.edits.get(dom), dedup=SESSION.dedups.get(dom),
         custom_fns=SESSION.custom_fns, template_overrides=SESSION.template_overrides,
+        var_order=ov.get("var_order"),
         name_match_threshold=SESSION.name_match)
 
 
@@ -1911,8 +1914,10 @@ def save_function(body: FnIn):
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "name the function")
-    if not body.variable.strip():
-        raise HTTPException(400, "name the variable the function fills")
+    # 'variable' is optional: with one, the function AUTO-fills that variable on every
+    # build; without one, it sits in the library to be applied by hand from any
+    # variable's editor (recipe 'custom_fn'). Requiring it here silently blocked
+    # saving for anyone who only wanted the manual kind.
     SESSION.custom_fns[name] = {
         "name": name, "description": body.description.strip(),
         "variable": upper(body.variable), "domains": [upper(d) for d in body.domains],
@@ -2034,6 +2039,54 @@ def set_pipeline(domain: str, body: PipelineIn):
             SESSION.overrides[dom]["prep_mode"] = "auto"
     _autosave()
     return {"domain": dom, "steps": SESSION.pipelines.get(dom, [])}
+
+
+class MoveIn(BaseModel):
+    dir: str            # "up" | "down"
+
+
+@app.post("/api/domain/{domain}/variable/{variable}/move")
+def move_variable(domain: str, variable: str, body: MoveIn):
+    """Move a variable up or down in the domain's BUILD order, so a derivation can read
+    a variable the spec happens to list after it. The whole current order is stored, so
+    one move never scrambles the rest."""
+    dom, var = upper(domain), upper(variable)
+    res = SESSION.results.get(dom)
+    if res is None or not res.ok:
+        raise HTTPException(404, f"{dom} has not been built")
+    order = [b.variable for b in res.blocks]
+    if var not in order:
+        raise HTTPException(404, f"{var} is not a variable of {dom}")
+    i = order.index(var)
+    j = i - 1 if body.dir == "up" else i + 1
+    if j < 0 or j >= len(order):
+        raise HTTPException(400, f"{var} is already at the {'top' if j < 0 else 'bottom'}")
+    order[i], order[j] = order[j], order[i]
+    SESSION.overrides.setdefault(dom, {})["var_order"] = order
+    _autosave()
+    return {"domain": dom, "variable": var, "order": order}
+
+
+class RecordsFromIn(BaseModel):
+    base: str = ""          # "" = follow the last step (default), a name = pin to that output
+
+
+@app.post("/api/domain/{domain}/records-from")
+def set_records_from(domain: str, body: RecordsFromIn):
+    """Re-point which prepared output the domain's records follow — WITHOUT touching the
+    pipeline itself, so the choice can be made from the Variables tab too."""
+    dom = upper(domain)
+    if SESSION.spec is None or dom not in SESSION.spec.domains:
+        raise HTTPException(404, f"{dom} is not in the mapping spec")
+    steps = SESSION.pipelines.get(dom) or []
+    names = {norm_key(st.get("name", "")) for st in steps if st.get("name")}
+    base = norm_key(body.base) if body.base else ""
+    if base and base not in names:
+        raise HTTPException(400, f"'{body.base}' is not an output of {dom}'s applied "
+                                 f"preparation steps ({', '.join(sorted(names)) or 'none'})")
+    SESSION.overrides.setdefault(dom, {})["base"] = base
+    _autosave()
+    return {"domain": dom, "base": base}
 
 
 @app.post("/api/domain/{domain}/pipeline/from-auto")
@@ -2229,6 +2282,20 @@ if DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
 
+@app.on_event("startup")
+def _startup_restore() -> None:
+    """However the server is launched — `python -m app.server`, `uvicorn app.server:app`,
+    a service manager — the last study must come back without anyone clicking. main()
+    may have restored already (or been told --fresh); don't do the work twice."""
+    if os.environ.get("SDTM_OVERSIGHT_FRESH"):
+        return
+    if SESSION.study_id or SESSION.results:
+        return
+    note = _restore_session()
+    if note:
+        print(f"  {note}")
+
+
 def main():
     import argparse
     import uvicorn
@@ -2243,6 +2310,8 @@ def main():
     RUNS.mkdir(exist_ok=True)
     url = f"http://{args.host}:{args.port}"
     print(f"\n  SDTM Oversight {__version__}")
+    if args.fresh:
+        os.environ["SDTM_OVERSIGHT_FRESH"] = "1"     # the startup hook must not restore either
     resumed = "" if args.fresh else _restore_session()
     if resumed:
         print(f"  {resumed}")

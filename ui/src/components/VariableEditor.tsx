@@ -32,6 +32,24 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
   const [error, setError] = useState("")
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [suggested, setSuggested] = useState("")
+  const [copyTo, setCopyTo] = useState("")
+  // per-rule replacement values for "also apply to": same conditions, the target's own
+  // fixed values — if x=y then do; z=a; zx=b; end
+  const [copyVals, setCopyVals] = useState<Record<string, string>>({})
+
+  const copyPayload = () => {
+    const p = payload()
+    if (recipe !== "cond") return p
+    const a = JSON.parse(JSON.stringify(p.args ?? {})) as Record<string, unknown>
+    const rules = (a.rules as Array<Record<string, unknown>>) ?? []
+    rules.forEach((r, i) => {
+      const nv = copyVals[String(i)]
+      if (nv !== undefined && nv !== "") r.then = { kind: "text", text: nv }
+    })
+    if (copyVals["else"] !== undefined && copyVals["else"] !== "")
+      a["else"] = { kind: "text", text: copyVals["else"] }
+    return { ...p, args: a }
+  }
   // dirty = edited since the last Apply — nothing here autosaves (an untested mapping
   // change must never take effect on its own), so the reader needs a visible cue instead.
   const [dirty, setDirty] = useState(false)
@@ -309,9 +327,72 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
                 onClick={() => { if (!dirty || window.confirm("Discard the unsaved changes to this variable?")) onClose() }}>
           Cancel</Button>
         {dirty && <span className="text-[11px] text-amber-600">unsaved changes — Apply to keep them</span>}
+        {mtype === "derived" && (
+          <span className="ml-auto flex items-center gap-1.5"
+                title="one rule, two variables — as in: if x=y then do; z=a; zx=b; end. The conditions are copied word for word; below, each rule takes the value the OTHER variable should assign">
+            <span className="text-[11px] text-muted-foreground">also apply to</span>
+            <span className="w-36">
+              <Picker value={copyTo}
+                      options={detail.variables.map((x) => x.variable)
+                        .filter((x) => x !== variable.variable)}
+                      onChange={(v) => { setCopyTo(v); setCopyVals({}) }} />
+            </span>
+            <Button variant="outline" size="sm" disabled={busy || !copyTo}
+                    onClick={() => void run(async () => {
+                      await api.setEdit(detail.domain, copyTo, copyPayload())
+                      await api.rebuild(detail.domain)
+                      onDone()
+                    })}>Copy</Button>
+          </span>
+        )}
       </div>
+
+      {mtype === "derived" && recipe === "cond" && copyTo && (
+        <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+          <p className="text-[11px] text-muted-foreground">
+            Same conditions, {copyTo}'s own values — type what <Mono>{copyTo}</Mono> should
+            be for each rule (leave one empty to keep {variable.variable}'s value).
+          </p>
+          {((args.rules as Array<Record<string, unknown>>) ?? []).map((r, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <Mono>{condSummary(r)}</Mono>
+              <span className="text-[11px] text-muted-foreground">→ {copyTo} =</span>
+              <Input className="h-7 w-44 text-xs"
+                     placeholder={thenText(r.then) || "same as source"}
+                     value={copyVals[String(i)] ?? ""}
+                     onChange={(e) => setCopyVals((m) => ({ ...m, [String(i)]: e.target.value }))} />
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <Mono>otherwise</Mono>
+            <span className="text-[11px] text-muted-foreground">→ {copyTo} =</span>
+            <Input className="h-7 w-44 text-xs"
+                   placeholder={thenText(args["else"]) || "same as source"}
+                   value={copyVals["else"] ?? ""}
+                   onChange={(e) => setCopyVals((m) => ({ ...m, else: e.target.value }))} />
+          </div>
+        </div>
+      )}
     </div>
   )
+}
+
+// how a condition reads, one line — enough to recognise the rule being copied
+function condSummary(r: Record<string, unknown>): string {
+  const src = (r.src ?? {}) as { dataset?: string; column?: string; var?: string }
+  const base = src.column ? `${src.dataset ? src.dataset + "." : ""}${src.column}`
+    : src.var ? src.var : "?"
+  const ands = ((r.and as unknown[]) ?? []).length
+  const val = r.value === undefined || r.value === "" ? "" : ` ${String(r.value)}`
+  return `if ${base} ${String(r.op ?? "eq")}${val}${ands ? ` +${ands} AND` : ""}`
+}
+
+function thenText(t: unknown): string {
+  const v = (t ?? {}) as { kind?: string; text?: string; column?: string; var?: string }
+  if (v.kind === "text") return v.text ?? ""
+  if (v.column) return `column ${v.column}`
+  if (v.var) return `variable ${v.var}`
+  return ""
 }
 
 type SourceRow = { dataset?: string; date_col?: string }

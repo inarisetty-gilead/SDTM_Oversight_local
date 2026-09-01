@@ -316,6 +316,10 @@ export const api = {
   }>(`/api/domain/${d}/pipeline/preview`, { steps }),
   setPipeline: (d: string, steps: unknown, base?: string) =>
     post(`/api/domain/${d}/pipeline`, base === undefined ? { steps } : { steps, base }),
+  moveVariable: (d: string, v: string, dir: "up" | "down") =>
+    post<{ order: string[] }>(`/api/domain/${d}/variable/${v}/move`, { dir }),
+  setRecordsFrom: (d: string, base: string) =>
+    post(`/api/domain/${d}/records-from`, { base }),
   pipelineFromAuto: (d: string) => post<{ steps: Array<Record<string, unknown>> }>(
     `/api/domain/${d}/pipeline/from-auto`),
 
