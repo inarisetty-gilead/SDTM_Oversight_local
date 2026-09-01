@@ -973,19 +973,30 @@ def _sas_stmts(g: _Sas, b: Block, observed_vals: set | None,
         return g.todo(b, "STUDYID resolves from the raw data at run time — pass --studyid "
                          "or hand-code the constant")
     if rc == "age":
-        birth = upper(a.get("birth_var")) or "BRTHDTC"
+        def _age_tok(spec):
+            if isinstance(spec, dict):
+                ds, col = s(spec.get("dataset")), upper(spec.get("column"))
+                return g.xref(ds, col) if (ds and col) else None
+            name = upper(spec) if spec else ""
+            return name or None
+
+        def _age_desc(spec):
+            if isinstance(spec, dict):
+                return f"{s(spec.get('dataset')) or '?'}.{upper(spec.get('column')) or '?'}"
+            return upper(spec) or "?"
+
+        birth_spec = a.get("birth_var") or "BRTHDTC"
         raw_ref = a.get("ref_var")
-        refs = ([upper(r) for r in raw_ref if s(r)] if isinstance(raw_ref, list)
-                else [upper(raw_ref)] if s(raw_ref) else ["RFSTDTC"])
+        ref_specs = (raw_ref if isinstance(raw_ref, list) and raw_ref
+                     else [raw_ref] if raw_ref else ["RFSTDTC"])
         g.uses_dates = True
+        ref_desc = ", ".join(_age_desc(r) for r in ref_specs)
         lines = [f"  /* {v}: the reported age where collected, otherwise whole years from "
-                 f"{birth} to {refs[0]} on the anniversary rule (never a fraction), falling "
-                 f"back to {', '.join(refs[1:])} in order when an earlier one is missing. "
-                 "The tool additionally imputes partial birth dates — full dates match "
-                 "exactly. */" if len(refs) > 1 else
-                 f"  /* {v}: the reported age where collected, otherwise whole years from "
-                 f"{birth} to {refs[0]} on the anniversary rule (never a fraction). The tool "
-                 "additionally imputes partial birth dates — full dates match exactly. */"]
+                 f"{_age_desc(birth_spec)} to {ref_desc} on the anniversary rule (never a "
+                 "fraction)" + (", trying each reference date in order until one is present"
+                                if len(ref_specs) > 1 else "")
+                 + ". The tool additionally imputes partial birth dates — full dates match "
+                 "exactly. */"]
         age_col = upper(a.get("age_col"))
         tok = None
         if age_col:
@@ -993,14 +1004,27 @@ def _sas_stmts(g: _Sas, b: Block, observed_vals: set | None,
                    else g.xref(g.base, age_col))
         lines.append(f"  {v} = input(strip(vvalue({tok})), ?? best32.);" if tok
                      else f"  {v} = .;")
-        lines.append(f"  __ev = input(substr(strip({birth}), 1, 10), ?? yymmdd10.);")
-        for ref in refs:            # each candidate only fills what an earlier one left missing
+        birth_tok = _age_tok(birth_spec)
+        if birth_tok is None:
+            lines.append(f"  /* {_age_desc(birth_spec)} could not be resolved — the derived "
+                         "branch is skipped */")
+            return lines
+        lines.append(f"  __ev = input(substr(strip({birth_tok}), 1, 10), ?? yymmdd10.);")
+        any_ref = False
+        for ref_spec in ref_specs:            # each candidate only fills what an earlier one left missing
+            ref_tok = _age_tok(ref_spec)
+            if ref_tok is None:
+                continue
+            any_ref = True
             lines += [
-                f"  __rf = input(substr(strip({ref}), 1, 10), ?? yymmdd10.);",
+                f"  __rf = input(substr(strip({ref_tok}), 1, 10), ?? yymmdd10.);",
                 f"  if missing({v}) and n(__ev, __rf) = 2 then",
                 f"    {v} = year(__rf) - year(__ev) - (month(__rf) < month(__ev) or",
                 f"          (month(__rf) = month(__ev) and day(__rf) < day(__ev)));",
             ]
+        if not any_ref:
+            lines.append(f"  /* none of {ref_desc} could be resolved — the derived branch is "
+                         "skipped */")
         return lines
     if rc == "copy_var":
         srcv = upper(a.get("source_var") or a.get("var"))

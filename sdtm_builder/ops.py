@@ -496,6 +496,34 @@ def _impute_partial_date(series) -> pd.Series:
     return pd.to_datetime(completed, errors="coerce", format="%Y-%m-%d")
 
 
+def _age_date(ctx, spec) -> pd.Series | None:
+    """One AGE date candidate, resolved and partial-imputed — spec is either a bare SDTM
+    variable name already built in this domain, or a {"dataset", "column"} mapping read
+    directly from a raw or prepared source. The raw form matters: a birth or reference date
+    the spec never turned into its own SDTM variable (e.g. a prepared merge's BRTHIMDT, or a
+    randomization date living only in an IxRS extract) can still feed AGE without first being
+    given a variable of its own."""
+    if isinstance(spec, dict):
+        ds, col = s(spec.get("dataset")), upper(spec.get("column"))
+        if not (ds and col):
+            return None
+        try:
+            raw = source_series(ctx, ds, col)
+        except (OpError, KeyError):
+            return None
+        return _impute_partial_date(raw)
+    name = upper(spec) if spec else ""
+    if not name or name not in ctx.frame.columns:
+        return None
+    return _impute_partial_date(ctx.frame[name])
+
+
+def _describe_age_spec(spec) -> str:
+    if isinstance(spec, dict):
+        return f"{s(spec.get('dataset')) or '?'}.{upper(spec.get('column')) or '?'}"
+    return upper(spec) or "?"
+
+
 def op_age(ctx, b: Block) -> pd.Series:
     """AGE as the company DM template derives it: the reported age wherever the study
     collected one, and whole years from birth to the reference date for the records where it
@@ -503,9 +531,12 @@ def op_age(ctx, b: Block) -> pd.Series:
     reported column would leave every uncollected age blank; deriving everything would ignore
     what was actually reported. The template does both, so this does both.
 
-    The reference date can be more than one candidate, tried in priority order — e.g. the
-    randomization date first, the consent date only when randomization is missing — matching
-    the fallback (age1/age2) some DM templates derive by hand."""
+    The birth date and the reference date can each be a built SDTM variable OR a raw/prepared
+    dataset column read directly. The reference date can also be more than one candidate,
+    tried in priority order — e.g. the randomization date first, the consent date only when
+    randomization is missing — matching the fallback (age1/age2) some DM templates derive by
+    hand. A bare year or year-month birth date is completed to its 1st (1980 -> 1980-01-01)
+    so the anniversary comparison always has a full date to work with."""
     a = b.args or {}
 
     reported = None
@@ -519,18 +550,18 @@ def op_age(ctx, b: Block) -> pd.Series:
         except (OpError, KeyError):
             reported = None
 
-    birth_var = upper(a.get("birth_var")) or "BRTHDTC"
+    birth_spec = a.get("birth_var") or "BRTHDTC"
     raw_ref = a.get("ref_var")
-    ref_vars = ([upper(r) for r in raw_ref if s(r)] if isinstance(raw_ref, list)
-                else [upper(raw_ref)] if s(raw_ref) else ["RFSTDTC"])
+    ref_specs = (raw_ref if isinstance(raw_ref, list) and raw_ref
+                 else [raw_ref] if raw_ref else ["RFSTDTC"])
 
+    birth = _age_date(ctx, birth_spec)
     derived = None
-    if birth_var in ctx.frame.columns:
-        birth = _impute_partial_date(ctx.frame[birth_var])
-        for ref_var in ref_vars:
-            if ref_var not in ctx.frame.columns:
+    if birth is not None:
+        for ref_spec in ref_specs:
+            ref = _age_date(ctx, ref_spec)
+            if ref is None:
                 continue
-            ref = _impute_partial_date(ctx.frame[ref_var])
             years = ref.dt.year - birth.dt.year
             before = ((ref.dt.month < birth.dt.month)
                       | ((ref.dt.month == birth.dt.month) & (ref.dt.day < birth.dt.day)))
@@ -546,8 +577,8 @@ def op_age(ctx, b: Block) -> pd.Series:
     if derived is not None:
         return derived
     raise OpError(
-        f"AGE needs a reported age column, or {birth_var} and one of {', '.join(ref_vars)} "
-        "built in this domain")
+        f"AGE needs a reported age column, or {_describe_age_spec(birth_spec)} and one of "
+        + ", ".join(_describe_age_spec(r) for r in ref_specs) + " resolvable in this domain")
 
 
 # ── SAS-style functions (recipe='fn') ───────────────────────────────────────

@@ -161,8 +161,8 @@ export function FnControl({ args, onChange, detail, allowSelf }: {
 /* Both helpers live at MODULE level on purpose: defined inside CondControl they would
    be a new component type on every keystroke, React would remount the <Input>, and the
    reader could never type more than one letter before losing focus. */
-function CondResult({ value, onChange: oc, detail }: {
-  value: Dict; onChange: (v: Dict) => void; detail: DomainDetail
+function CondResult({ value, onChange: oc, detail, allowSelf }: {
+  value: Dict; onChange: (v: Dict) => void; detail: DomainDetail; allowSelf?: boolean
 }) {
   const isMissing = (value?.kind as string) === "missing"
   return (
@@ -172,19 +172,19 @@ function CondResult({ value, onChange: oc, detail }: {
                onChange={(e) => oc(e.target.checked ? { kind: "missing" } : { kind: "text", text: "" })} />
         leave blank
       </label>
-      {!isMissing && <SourceControl value={value} onChange={oc} detail={detail} />}
+      {!isMissing && <SourceControl value={value} onChange={oc} detail={detail} allowSelf={allowSelf} />}
     </span>
   )
 }
 
 /** src + operator + value inputs for one condition — the rule itself or an AND extra. */
-function CondInputs({ cond, onPatch, detail }: {
-  cond: Dict; onPatch: (p: Dict) => void; detail: DomainDetail
+function CondInputs({ cond, onPatch, detail, allowSelf }: {
+  cond: Dict; onPatch: (p: Dict) => void; detail: DomainDetail; allowSelf?: boolean
 }) {
   const op = (cond.op as string) ?? "eq"
   return (
     <>
-      <SourceControl value={(cond.src as Dict) ?? {}} detail={detail}
+      <SourceControl value={(cond.src as Dict) ?? {}} detail={detail} allowSelf={allowSelf}
                      onChange={(v) => onPatch({ src: v })} />
       <Sel width="w-40" value={op} options={OPERATORS} onChange={(o) => onPatch({ op: o })} />
       {!NO_VALUE.has(op) && (
@@ -200,8 +200,8 @@ function CondInputs({ cond, onPatch, detail }: {
   )
 }
 
-export function CondControl({ args, onChange, detail }: {
-  args: Dict; onChange: (a: Dict) => void; detail: DomainDetail
+export function CondControl({ args, onChange, detail, allowSelf }: {
+  args: Dict; onChange: (a: Dict) => void; detail: DomainDetail; allowSelf?: boolean
 }) {
   const rules = (args.rules as Dict[]) ?? []
   const els = (args["else"] as Dict) ?? { kind: "missing" }
@@ -217,7 +217,7 @@ export function CondControl({ args, onChange, detail }: {
           <div key={i} className="space-y-1.5 rounded-md border p-2">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] font-medium">{i === 0 ? "IF" : "ELSE IF"}</span>
-              <CondInputs cond={r} detail={detail} onPatch={(p) => patchRule(i, p)} />
+              <CondInputs cond={r} detail={detail} allowSelf={allowSelf} onPatch={(p) => patchRule(i, p)} />
               <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
                       title="add another condition this rule must ALSO satisfy"
                       onClick={() => patchRule(i, { and: [...ands, { src: {}, op: "eq", value: "" }] })}>
@@ -228,7 +228,7 @@ export function CondControl({ args, onChange, detail }: {
             {ands.map((c, j) => (
               <div key={j} className="flex flex-wrap items-center gap-1.5 pl-6">
                 <span className="text-[11px] font-medium">AND</span>
-                <CondInputs cond={c} detail={detail}
+                <CondInputs cond={c} detail={detail} allowSelf={allowSelf}
                             onPatch={(p) => patchRule(i, { and: ands.map((x, k) => k === j ? { ...x, ...p } : x) })} />
                 <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
                         onClick={() => patchRule(i, { and: ands.filter((_, k) => k !== j) })}>
@@ -237,7 +237,7 @@ export function CondControl({ args, onChange, detail }: {
             ))}
             <div className="flex flex-wrap items-center gap-1.5 pl-6">
               <span className="text-[11px] font-medium">THEN {detail ? "" : ""}set it to</span>
-              <CondResult detail={detail} value={(r.then as Dict) ?? { kind: "text", text: "" }}
+              <CondResult detail={detail} allowSelf={allowSelf} value={(r.then as Dict) ?? { kind: "text", text: "" }}
                       onChange={(v) => patchRule(i, { then: v })} />
             </div>
           </div>
@@ -249,11 +249,14 @@ export function CondControl({ args, onChange, detail }: {
                                                         then: { kind: "text", text: "" } }] })}>
           Add a rule</Button>
         <span className="text-[11px] font-medium">OTHERWISE</span>
-        <CondResult detail={detail} value={els} onChange={(v) => set({ else: v })} />
+        <CondResult detail={detail} allowSelf={allowSelf} value={els} onChange={(v) => set({ else: v })} />
       </div>
       <p className="text-[10px] text-muted-foreground">Rules run in order — the first that matches wins,
         like a SAS IF/ELSE IF chain. “+ AND” adds extra conditions to a rule; all of them must hold
-        (e.g. IF RGMDTN is not missing AND RGSCAT = …).</p>
+        (e.g. IF RGMDTN is not missing AND RGSCAT = …).
+        {allowSelf && <> A condition or result can also be “the value so far” — the previous
+          step's output — so this step can act on what a max-date, function or another rule
+          just produced.</>}</p>
     </div>
   )
 }
@@ -339,7 +342,7 @@ export function PipelineControl({ steps, onChange, detail }: {
               </div>)}
             {op === "cond" && (
               <div className="mt-2 pl-6">
-                <CondControl args={(st.args as Dict) ?? {}} detail={detail}
+                <CondControl args={(st.args as Dict) ?? {}} detail={detail} allowSelf={i > 0}
                              onChange={(a) => upd(i, { args: a })} />
               </div>)}
             {op === "ct" && (
@@ -515,7 +518,49 @@ function DateExtremeSourceRow({ src, detail, onChange, onRemove }: {
   )
 }
 
-/** AGE: reported age column first, then birth\u2192reference whole years underneath \u2014 with a
+/** One AGE date input: a built SDTM variable, or a raw/prepared dataset column read
+ *  directly — e.g. a birth or randomization date the spec never turned into its own
+ *  variable (BRTHIMDT in a prepared merge, RGMNDTN in an IxRS extract). */
+function AgeDateSpec({ value, detail, onChange, placeholder }: {
+  value: string | Dict; detail: DomainDetail; onChange: (v: string | Dict) => void
+  placeholder: string
+}) {
+  const isRaw = typeof value === "object" && value !== null
+  const ds = isRaw ? ((value as Dict).dataset as string) ?? "" : ""
+  const [cols, setCols] = useState<string[]>([])
+  useEffect(() => {
+    if (!isRaw || !ds) { setCols([]); return }
+    let live = true
+    api.columns(detail.domain, ds).then((r) => live && setCols(r.columns)).catch(() => setCols([]))
+    return () => { live = false }
+  }, [isRaw, ds, detail.domain])
+  const vars = detail.variables.map((x): [string, string] => [x.variable, x.variable])
+
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <Sel width="w-36" value={isRaw ? "raw" : "var"}
+           options={[["var", "a built variable"], ["raw", "a raw/prepared column"]]}
+           onChange={(k) => onChange(k === "raw" ? { dataset: "", column: "" } : "")} />
+      {isRaw ? (
+        <>
+          <Sel width="w-40" placeholder="dataset" value={ds}
+               options={[...detail.prepared_datasets.map((d): [string, string] => [d, `${d} (prepared)`]),
+                         ...detail.datasets.filter((d) => !detail.prepared_datasets.includes(d))
+                           .map((d): [string, string] => [d, d])]}
+               onChange={(d) => onChange({ dataset: d, column: "" })} />
+          <Sel width="w-40" placeholder="column" value={((value as Dict).column as string) ?? ""}
+               options={cols.map((c): [string, string] => [c, c])}
+               onChange={(c) => onChange({ dataset: ds, column: c })} />
+        </>
+      ) : (
+        <Sel width="w-40" placeholder={placeholder} value={(value as string) ?? ""}
+             options={vars} onChange={(v) => onChange(v)} />
+      )}
+    </span>
+  )
+}
+
+/** AGE: reported age column first, then birth→reference whole years underneath — with a
  *  priority-ordered fallback list of reference dates (e.g. randomization, then consent, as
  *  a company template's age1/age2 SAS macro chain would). */
 export function AgeControl({ args, onChange, detail }: {
@@ -529,10 +574,9 @@ export function AgeControl({ args, onChange, detail }: {
     api.columns(detail.domain, ds).then((r) => live && setCols(r.columns)).catch(() => setCols([]))
     return () => { live = false }
   }, [ds, detail.domain])
-  const vars = detail.variables.map((x): [string, string] => [x.variable, x.variable])
-  const refs = Array.isArray(args.ref_var) ? (args.ref_var as string[])
-    : args.ref_var ? [args.ref_var as string] : []
-  const setRefs = (r: string[]) => onChange({ ...args, ref_var: r })
+  const refs = Array.isArray(args.ref_var) ? (args.ref_var as (string | Dict)[])
+    : args.ref_var ? [args.ref_var as string | Dict] : []
+  const setRefs = (r: (string | Dict)[]) => onChange({ ...args, ref_var: r })
 
   return (
     <div className="space-y-1.5 text-xs">
@@ -549,16 +593,17 @@ export function AgeControl({ args, onChange, detail }: {
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-muted-foreground">records with none collected get whole years from</span>
-        <Sel width="w-40" placeholder="birth date variable" value={(args.birth_var as string) ?? "BRTHDTC"}
-             options={vars} onChange={(v) => onChange({ ...args, birth_var: v })} />
+        <AgeDateSpec value={(args.birth_var as string | Dict) ?? "BRTHDTC"} detail={detail}
+                     placeholder="birth date variable"
+                     onChange={(v) => onChange({ ...args, birth_var: v })} />
         <span className="text-muted-foreground">to:</span>
       </div>
       <div className="space-y-1">
         {refs.map((r, i) => (
           <div key={i} className="flex items-center gap-1.5 pl-4">
-            <span className="w-16 text-[11px] text-muted-foreground">{i === 0 ? "first try" : "then try"}</span>
-            <Sel width="w-40" placeholder="reference date variable" value={r}
-                 options={vars} onChange={(v) => setRefs(refs.map((x, k) => (k === i ? v : x)))} />
+            <span className="w-16 shrink-0 text-[11px] text-muted-foreground">{i === 0 ? "first try" : "then try"}</span>
+            <AgeDateSpec value={r} detail={detail} placeholder="reference date variable"
+                        onChange={(v) => setRefs(refs.map((x, k) => (k === i ? v : x)))} />
             <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
                     onClick={() => setRefs(refs.filter((_, k) => k !== i))}>Remove</Button>
           </div>
@@ -568,10 +613,11 @@ export function AgeControl({ args, onChange, detail }: {
           {refs.length ? "Add a fallback reference date" : "Add a reference date"}</Button>
       </div>
       <p className="pl-4 text-[10px] text-muted-foreground">
-        Anniversary rule, never a fraction; partial birth dates complete with 01. With more
-        than one reference date listed, the first one present for a record wins \u2014 a later one
-        only fills what an earlier one left missing (e.g. randomization date, then consent
-        date for screen failures).</p>
+        Anniversary rule, never a fraction. A partial birth date is completed to its 1st for
+        the comparison — a bare year 1980 becomes 1980-01-01, a year-month 1980-06 becomes
+        1980-06-01. With more than one reference date listed, the first one present for a
+        record wins — a later one only fills what an earlier one left missing (e.g.
+        randomization date, then consent date for screen failures).</p>
     </div>
   )
 }
