@@ -129,7 +129,7 @@ export function BuildView({
                       tone={guessed ? "warn" : undefined} />
               <Metric value={notBuilt.toLocaleString()} label="not built"
                       tone={notBuilt ? "warn" : "good"} />
-              <Metric value={failed.length} label="no raw data" tone={failed.length ? "warn" : undefined} />
+              <Metric value={failed.length} label="build error" tone={failed.length ? "bad" : undefined} />
             </Metrics>
 
             <SegmentBar segments={[
@@ -141,8 +141,8 @@ export function BuildView({
 
             <Panel title="Domains" description="Click a domain to inspect its variables and edit its mapping.">
               <DataGrid rows={build.domains} height="30rem" rowKey={(d) => d.domain}
-                groupBy={(d) => d.ok ? "Built" : "No raw data in this study"}
-                onRowClick={(d) => d.ok && onOpenDomain(d.domain)}
+                groupBy={(d) => d.ok ? "Built" : "Failed to build"}
+                onRowClick={(d) => onOpenDomain(d.domain)}
                 cols={domainCols()} />
             </Panel>
 
@@ -216,9 +216,9 @@ export function domainCols() {
     { id: "p", head: "Prepared", kind: "tag" as const,
       cell: (d: DomainRow) => d.prep
         ? <Chip tone="violet">{d.prep.op === "stack" ? "stacked" : "transposed"}</Chip> : "" },
-    { id: "base", head: "Record source", kind: "code" as const,
+    { id: "base", head: "Record source / error", kind: "code" as const,
       cell: (d: DomainRow) => d.ok ? <Mono>{d.base}</Mono>
-        : <span className="text-[12px] text-muted-foreground">{d.error}</span> },
+        : <span className="text-[12px] text-destructive">{d.error}</span> },
   ]
 }
 

@@ -27,8 +27,8 @@ const FIELDS: Record<string, Field[]> = {
   merge: [{ k: "inputs", t: "mergeinputs", label: "Datasets to join" }, { k: "on", t: "joinkeys", label: "Join on" },
           { k: "how", t: "choice:left,inner,outer,right", label: "Keep records from" }],
   filter: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "conds", t: "conds", label: "Keep records where" }],
-  select: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "list", label: "Columns" }],
-  drop: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "list", label: "Columns" }],
+  select: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "collist", label: "Columns" }],
+  drop: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "collist", label: "Columns" }],
   rename: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "renames", t: "renames", label: "Rename" }],
   derive: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "target", t: "text", ph: "new column", label: "Column to set" },
            { k: "else_value", t: "text", ph: "value when no rule matches", label: "Otherwise" }, { k: "rules", t: "rules", label: "Rules" }],
@@ -45,16 +45,16 @@ const FIELDS: Record<string, Field[]> = {
             { k: "chars", t: "text", ph: "blanks if empty", label: "Characters to remove", funcs: ["compress"] },
             { k: "sep", t: "text", ph: "e.g. - (blanks are skipped)", label: "Joined with", funcs: ["catx", "concat"] },
             { k: "width", t: "text", ph: "3", label: "Width", funcs: ["zeropad"] }],
-  aggregate: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "group_by", t: "list", label: "Group by" }, { k: "column", t: "text", label: "Column to summarise" },
+  aggregate: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "group_by", t: "collist", label: "Group by" }, { k: "column", t: "text", label: "Column to summarise" },
               { k: "func", t: "choice:min,max,first,last,count,sum,mean", label: "Summarise with" }, { k: "out_col", t: "text", label: "Result column" }],
   date_extreme: [{ k: "sources", t: "datesources", label: "Datasets and date columns" }, { k: "group_by", t: "list", ph: "USUBJID", label: "Per" },
                  { k: "func", t: "choice:min,max", label: "Take the" }, { k: "out_col", t: "text", label: "Result column" }],
-  sort: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "list", label: "Columns" }, { k: "directions", t: "list", ph: "asc, desc", label: "Direction" }],
-  dedup: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "keys", t: "list", label: "Group by" }, { k: "keep", t: "choice:first,last", label: "Keep" }],
+  sort: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "collist", label: "Columns" }, { k: "directions", t: "list", ph: "asc, desc", label: "Direction" }],
+  dedup: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "keys", t: "collist", label: "Group by" }, { k: "keep", t: "choice:first,last", label: "Keep" }],
   split: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "branches", t: "branches", label: "Branches" }, { k: "other_name", t: "text", label: "Name for the rest" }],
-  transpose_long: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "id_vars", t: "list", label: "Carry through" }, { k: "value_vars", t: "list", label: "Columns to melt" },
+  transpose_long: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "id_vars", t: "collist", label: "Carry through" }, { k: "value_vars", t: "collist", label: "Columns to melt" },
                    { k: "var_name", t: "text", ph: "TESTCD", label: "Name column" }, { k: "value_name", t: "text", ph: "ORRES", label: "Value column" }],
-  transpose_findings: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "id_vars", t: "list", label: "Carry through" }, { k: "measures", t: "measures", label: "Measurements" },
+  transpose_findings: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "id_vars", t: "collist", label: "Carry through" }, { k: "measures", t: "measures", label: "Measurements" },
                        { k: "testcd_col", t: "text", label: "Test code column" }, { k: "test_col", t: "text", label: "Test name column" },
                        { k: "orres_col", t: "text", label: "Result column" }, { k: "orresu_col", t: "text", label: "Unit column" }],
 }
@@ -785,6 +785,28 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                   control = <Input className="h-8 text-xs" placeholder={f.ph ?? "comma separated"}
                                    value={Array.isArray(v) ? v.join(", ") : ((v as string) ?? "")}
                                    onChange={(e) => setParam(i, f.k, e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} />
+                } else if (f.t === "collist") {
+                  // a typed column name that doesn't exist in the dataset fails silently at
+                  // build time (e.g. "needs at least one grouping column" for a key that just
+                  // never matched) — offering only the columns that are actually there rules
+                  // that mistake out entirely
+                  control = (
+                    <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
+                      {(columns) => {
+                        const chosen = (v as string[]) ?? []
+                        return (
+                          <div className="max-h-28 space-y-1 overflow-auto rounded-md border p-2">
+                            {columns.map((c) => (
+                              <label key={c} className="flex items-center gap-2 text-xs">
+                                <input type="checkbox" checked={chosen.includes(c)}
+                                       onChange={(e) => setParam(i, f.k, e.target.checked
+                                         ? [...chosen, c] : chosen.filter((x) => x !== c))} />{c}
+                              </label>))}
+                            {!columns.length && <p className="text-[11px] text-muted-foreground">no columns</p>}
+                          </div>
+                        )
+                      }}
+                    </StepColumns>)
                 } else {
                   control = <Input className="h-8 text-xs" placeholder={f.ph ?? ""} value={(v as string) ?? ""}
                                    onChange={(e) => setParam(i, f.k, e.target.value)} />
