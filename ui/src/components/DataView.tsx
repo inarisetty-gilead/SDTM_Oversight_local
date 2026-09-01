@@ -20,6 +20,9 @@ import { cn } from "@/lib/utils"
 const ROW_H = 30
 const FULL = 100_000
 const DROPDOWN_MAX = 40
+// frozen while scrolling left/right — the two columns a reader needs on screen no matter
+// how far right they've scrolled to compare a value against its subject
+const STICKY_KEYS = new Set(["STUDYID", "USUBJID"])
 
 type Row = string[]
 
@@ -59,6 +62,18 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
   })
 
   const rows = table.getRowModel().rows
+  // left offset (px) for each sticky column, in the order they actually appear — the #
+  // row-number column is 44px (w-11), then each sticky column stacks after the ones before it
+  const stickyLeft = (() => {
+    const map: Record<string, number> = {}
+    let left = 44
+    for (const col of table.getAllLeafColumns()) {
+      if (!STICKY_KEYS.has(col.id)) continue
+      map[col.id] = left
+      left += col.getSize()
+    }
+    return map
+  })()
   const scrollRef = useRef<HTMLDivElement>(null)
   const virt = useVirtualizer({
     count: rows.length, getScrollElement: () => scrollRef.current,
@@ -112,14 +127,15 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
             <tr>
               <th className="sticky left-0 z-30 w-11 border-b bg-muted px-2 py-1.5 text-left
                              text-[10px] font-medium text-muted-foreground">#</th>
-              {table.getHeaderGroups()[0].headers.map((h: Header<Row, unknown>, hi: number) => {
+              {table.getHeaderGroups()[0].headers.map((h: Header<Row, unknown>) => {
                 const meta = h.column.columnDef.meta as DataColumn
                 const sorted = h.column.getIsSorted()
                 const Icon = iconFor(meta)
+                const stuck = stickyLeft[h.column.id]
                 return (
-                  <th key={h.id} style={{ width: h.getSize() }} data-col={h.column.id}
+                  <th key={h.id} style={{ width: h.getSize(), left: stuck }} data-col={h.column.id}
                       className={cn("group relative border-b bg-muted px-2 py-1.5 text-left",
-                                    hi === 0 && "sticky left-11 z-30",
+                                    stuck !== undefined && "sticky z-30",
                                     highlight === h.column.id && "bg-primary/20")}>
                     <button onClick={h.column.getToggleSortingHandler()}
                             title={meta?.label || h.column.id}
@@ -140,13 +156,14 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
             </tr>
             <tr>
               <th className="sticky left-0 z-30 border-b bg-muted/70" />
-              {table.getHeaderGroups()[0].headers.map((h: Header<Row, unknown>, hi: number) => {
+              {table.getHeaderGroups()[0].headers.map((h: Header<Row, unknown>) => {
                 const meta = h.column.columnDef.meta as DataColumn
                 const value = (h.column.getFilterValue() as string) ?? ""
                 const opts = meta?.distinct
+                const stuck = stickyLeft[h.column.id]
                 return (
-                  <th key={h.id} className={cn("border-b bg-muted/70 px-1 pb-1",
-                                               hi === 0 && "sticky left-11 z-30")}>
+                  <th key={h.id} style={{ left: stuck }}
+                      className={cn("border-b bg-muted/70 px-1 pb-1", stuck !== undefined && "sticky z-30")}>
                     {opts && opts.length && opts.length <= DROPDOWN_MAX ? (
                       <select value={value}
                               onChange={(e) => h.column.setFilterValue(e.target.value || undefined)}
@@ -173,15 +190,16 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
                 <tr key={row.id} className="grid-row" style={{ height: ROW_H }}>
                   <td className="num-cell sticky left-0 z-10 border-b bg-surface px-2
                                  text-[10px] text-muted-foreground">{vi.index + 1}</td>
-                  {row.getVisibleCells().map((cell, ci) => {
+                  {row.getVisibleCells().map((cell) => {
                     const meta = cell.column.columnDef.meta as DataColumn
                     const v = cell.getValue() as string
+                    const stuck = stickyLeft[cell.column.id]
                     return (
-                      <td key={cell.id} style={{ width: cell.column.getSize() }}
+                      <td key={cell.id} style={{ width: cell.column.getSize(), left: stuck }}
                           data-col={cell.column.id}
                           className={cn("truncate border-b px-2",
                             meta?.numeric && "num-cell text-right",
-                            ci === 0 && "sticky left-11 z-10 bg-surface font-medium",
+                            stuck !== undefined && "sticky z-10 bg-surface font-medium",
                             highlight === cell.column.id && "bg-primary/10")}>
                         {v === "" ? <span className="text-muted-foreground/40">—</span> : v}
                       </td>
