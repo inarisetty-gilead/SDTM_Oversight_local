@@ -280,6 +280,9 @@ export const api = {
 
   columns: (d: string, ds: string) => call<{ dataset: string; columns: string[] }>(
     `/api/domain/${d}/columns/${encodeURIComponent(ds)}`),
+  columnValues: (d: string, ds: string, col: string) => call<{
+    dataset: string; column: string; values: string[] | null; many: boolean
+  }>(`/api/domain/${d}/values/${encodeURIComponent(ds)}/${encodeURIComponent(col)}`),
 
   domainProgram: (d: string, lang: "python" | "sas") =>
     call<{ domain: string; lang: string; program: string; filename: string }>(

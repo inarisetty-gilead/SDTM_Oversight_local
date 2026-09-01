@@ -158,6 +158,59 @@ export function FnControl({ args, onChange, detail, allowSelf }: {
 }
 
 /* ── if / then rules ────────────────────────────────────────────────────── */
+/** A condition's comparison value — offered from the column's own distinct values (so a
+ *  typo can't silently match nothing), with a plain text box as the fallback for a
+ *  high-cardinality column, a non-raw source (a variable, text or the running value), or a
+ *  value list expects that today's sample never held. "in"/"notin" get a checklist. */
+function ValuePicker({ domain, dataset, column, operator, value, onChange }: {
+  domain?: string; dataset?: string; column?: string; operator: string
+  value: string; onChange: (v: string) => void
+}) {
+  const [values, setValues] = useState<string[] | null>(null)
+  useEffect(() => {
+    setValues(null)
+    if (!domain || !dataset || !column) return
+    let live = true
+    api.columnValues(domain, dataset, column).then((r) => { if (live) setValues(r.values) })
+      .catch(() => { if (live) setValues(null) })
+    return () => { live = false }
+  }, [domain, dataset, column])
+
+  if (!values || !values.length) {
+    return <Input className="h-8 w-36 text-xs"
+                  placeholder={operator === "in" || operator === "notin" ? "A, B, C" : "value"}
+                  value={value} onChange={(e) => onChange(e.target.value)} />
+  }
+  if (operator === "in" || operator === "notin") {
+    const chosen = value ? value.split(",").map((x) => x.trim()).filter(Boolean) : []
+    return (
+      <div className="flex max-h-28 max-w-64 flex-wrap gap-x-2 gap-y-1 overflow-auto rounded-md border px-2 py-1.5">
+        {values.map((v) => (
+          <label key={v} className="flex items-center gap-1 text-[11px]">
+            <input type="checkbox" checked={chosen.includes(v)}
+                   onChange={(e) => onChange((e.target.checked ? [...chosen, v]
+                     : chosen.filter((x) => x !== v)).join(", "))} />{v}
+          </label>))}
+      </div>
+    )
+  }
+  const known = values.includes(value)
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Select value={known ? value : "__custom"}
+              onValueChange={(v) => { if (v !== "__custom") onChange(v) }}>
+        <SelectTrigger className="h-8 w-36 text-xs"><SelectValue placeholder="value" /></SelectTrigger>
+        <SelectContent className="max-h-64">
+          {values.map((v) => <SelectItem key={v} value={v} className="text-xs">{v}</SelectItem>)}
+          <SelectItem value="__custom" className="text-xs">custom value…</SelectItem>
+        </SelectContent>
+      </Select>
+      {!known && <Input className="h-8 w-28 text-xs" placeholder="type it" value={value}
+                       onChange={(e) => onChange(e.target.value)} />}
+    </span>
+  )
+}
+
 /* Both helpers live at MODULE level on purpose: defined inside CondControl they would
    be a new component type on every keystroke, React would remount the <Input>, and the
    reader could never type more than one letter before losing focus. */
@@ -182,16 +235,24 @@ function CondInputs({ cond, onPatch, detail, allowSelf }: {
   cond: Dict; onPatch: (p: Dict) => void; detail: DomainDetail; allowSelf?: boolean
 }) {
   const op = (cond.op as string) ?? "eq"
+  const src = (cond.src as Dict) ?? {}
+  const isRawCol = !src.kind && (src.dataset as string) && (src.column as string)
   return (
     <>
-      <SourceControl value={(cond.src as Dict) ?? {}} detail={detail} allowSelf={allowSelf}
+      <SourceControl value={src} detail={detail} allowSelf={allowSelf}
                      onChange={(v) => onPatch({ src: v })} />
       <Sel width="w-40" value={op} options={OPERATORS} onChange={(o) => onPatch({ op: o })} />
       {!NO_VALUE.has(op) && (
-        <Input className="h-8 w-36 text-xs"
-               placeholder={op === "in" || op === "notin" ? "A, B, C" : "value"}
-               value={(cond.value as string) ?? ""}
-               onChange={(e) => onPatch({ value: e.target.value })} />)}
+        isRawCol ? (
+          <ValuePicker domain={detail.domain} dataset={src.dataset as string} column={src.column as string}
+                      operator={op} value={(cond.value as string) ?? ""}
+                      onChange={(v) => onPatch({ value: v })} />
+        ) : (
+          <Input className="h-8 w-36 text-xs"
+                 placeholder={op === "in" || op === "notin" ? "A, B, C" : "value"}
+                 value={(cond.value as string) ?? ""}
+                 onChange={(e) => onPatch({ value: e.target.value })} />
+        ))}
       {op === "between" && (
         <Input className="h-8 w-24 text-xs" placeholder="and"
                value={(cond.value2 as string) ?? ""}

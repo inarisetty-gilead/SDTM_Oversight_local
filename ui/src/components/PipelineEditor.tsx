@@ -222,9 +222,62 @@ function ColSelect({ value, columns, onChange, placeholder = "column", width = "
   )
 }
 
+/** A condition's comparison value — offered from the column's own distinct values (so a
+ *  typo can't silently match nothing), with a plain text box as the fallback for a
+ *  high-cardinality column or one a value list expects that today's sample never held.
+ *  "in" / "notin" get a checklist instead of one pick, since they compare against several. */
+function ValuePicker({ domain, dataset, column, operator, value, onChange }: {
+  domain?: string; dataset?: string; column?: string; operator: string
+  value: string; onChange: (v: string) => void
+}) {
+  const [values, setValues] = useState<string[] | null>(null)
+  useEffect(() => {
+    setValues(null)
+    if (!domain || !dataset || !column) return
+    let live = true
+    api.columnValues(domain, dataset, column).then((r) => { if (live) setValues(r.values) })
+      .catch(() => { if (live) setValues(null) })
+    return () => { live = false }
+  }, [domain, dataset, column])
+
+  if (!values || !values.length) {
+    return <Input className="h-8 w-44 text-xs" placeholder="value" value={value}
+                  onChange={(e) => onChange(e.target.value)} />
+  }
+  if (operator === "in" || operator === "notin") {
+    const chosen = value ? value.split(",").map((x) => x.trim()).filter(Boolean) : []
+    return (
+      <div className="flex max-h-28 max-w-64 flex-wrap gap-x-2 gap-y-1 overflow-auto rounded-md border px-2 py-1.5">
+        {values.map((v) => (
+          <label key={v} className="flex items-center gap-1 text-[11px]">
+            <input type="checkbox" checked={chosen.includes(v)}
+                   onChange={(e) => onChange((e.target.checked ? [...chosen, v]
+                     : chosen.filter((x) => x !== v)).join(", "))} />{v}
+          </label>))}
+      </div>
+    )
+  }
+  const known = values.includes(value)
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Select value={known ? value : "__custom"}
+              onValueChange={(v) => { if (v !== "__custom") onChange(v) }}>
+        <SelectTrigger className="h-8 w-40 text-xs"><SelectValue placeholder="value" /></SelectTrigger>
+        <SelectContent className="max-h-64">
+          {values.map((v) => <SelectItem key={v} value={v} className="text-xs">{v}</SelectItem>)}
+          <SelectItem value="__custom" className="text-xs">custom value…</SelectItem>
+        </SelectContent>
+      </Select>
+      {!known && <Input className="h-8 w-32 text-xs" placeholder="type it" value={value}
+                        onChange={(e) => onChange(e.target.value)} />}
+    </span>
+  )
+}
+
 /** ANDed conditions: column · comparison · value rows, offered from the dataset itself. */
-function CondsEditor({ conds, columns, onChange, firstWord = "where" }: {
+function CondsEditor({ conds, columns, onChange, firstWord = "where", domain, dataset }: {
   conds: Cond[]; columns: string[]; onChange: (c: Cond[]) => void; firstWord?: string
+  domain?: string; dataset?: string
 }) {
   const set = (i: number, patch: Cond) =>
     onChange(conds.map((c, k) => (k === i ? { ...c, ...patch } : c)))
@@ -242,8 +295,8 @@ function CondsEditor({ conds, columns, onChange, firstWord = "where" }: {
               <SelectItem key={v} value={v} className="text-xs">{l}</SelectItem>)}</SelectContent>
           </Select>
           {!COND_NO_VALUE.has(c.operator || "==") && (
-            <Input className="h-8 w-44 text-xs" placeholder="value" value={c.value ?? ""}
-                   onChange={(e) => set(i, { value: e.target.value })} />)}
+            <ValuePicker domain={domain} dataset={dataset} column={c.column} operator={c.operator || "=="}
+                        value={c.value ?? ""} onChange={(v) => set(i, { value: v })} />)}
           <Button type="button" size="icon" variant="ghost" className="h-7 w-7"
                   onClick={() => onChange(conds.filter((_, k) => k !== i))}>
             <Trash2 className="h-3 w-3" /></Button>
@@ -260,8 +313,9 @@ function CondsEditor({ conds, columns, onChange, firstWord = "where" }: {
 type Rule = { conds?: Cond[]; value?: string }
 
 /** Derive rules: IF conditions THEN set the column to a value; rules run in order. */
-function RulesEditor({ rules, columns, onChange }: {
+function RulesEditor({ rules, columns, onChange, domain, dataset }: {
   rules: Rule[]; columns: string[]; onChange: (r: Rule[]) => void
+  domain?: string; dataset?: string
 }) {
   const set = (i: number, patch: Rule) =>
     onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)))
@@ -275,7 +329,7 @@ function RulesEditor({ rules, columns, onChange }: {
             <Button type="button" size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs"
                     onClick={() => onChange(rules.filter((_, k) => k !== i))}>Remove</Button>
           </div>
-          <CondsEditor conds={r.conds ?? []} columns={columns} firstWord="when"
+          <CondsEditor conds={r.conds ?? []} columns={columns} firstWord="when" domain={domain} dataset={dataset}
                        onChange={(c) => set(i, { conds: c })} />
           <div className="flex items-center gap-1.5">
             <span className="w-10 text-right text-[11px] text-muted-foreground">then</span>
@@ -295,8 +349,9 @@ function RulesEditor({ rules, columns, onChange }: {
 
 type Branch = { name?: string; conds?: Cond[] }
 
-function BranchesEditor({ branches, columns, onChange }: {
+function BranchesEditor({ branches, columns, onChange, domain, dataset }: {
   branches: Branch[]; columns: string[]; onChange: (b: Branch[]) => void
+  domain?: string; dataset?: string
 }) {
   const set = (i: number, patch: Branch) =>
     onChange(branches.map((b, k) => (k === i ? { ...b, ...patch } : b)))
@@ -312,7 +367,7 @@ function BranchesEditor({ branches, columns, onChange }: {
             <Button type="button" size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs"
                     onClick={() => onChange(branches.filter((_, k) => k !== i))}>Remove</Button>
           </div>
-          <CondsEditor conds={b.conds ?? []} columns={columns}
+          <CondsEditor conds={b.conds ?? []} columns={columns} domain={domain} dataset={dataset}
                        onChange={(c) => set(i, { conds: c })} />
         </div>
       ))}
@@ -744,18 +799,21 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                   control = (
                     <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
                       {(columns) => <CondsEditor conds={(v as Cond[]) ?? []} columns={columns}
+                                                 domain={detail.domain} dataset={st.params.dataset as string}
                                                  onChange={(c) => setParam(i, f.k, c)} />}
                     </StepColumns>)
                 } else if (f.t === "rules") {
                   control = (
                     <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
                       {(columns) => <RulesEditor rules={(v as Rule[]) ?? []} columns={columns}
+                                                 domain={detail.domain} dataset={st.params.dataset as string}
                                                  onChange={(r) => setParam(i, f.k, r)} />}
                     </StepColumns>)
                 } else if (f.t === "branches") {
                   control = (
                     <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
                       {(columns) => <BranchesEditor branches={(v as Branch[]) ?? []} columns={columns}
+                                                    domain={detail.domain} dataset={st.params.dataset as string}
                                                     onChange={(b) => setParam(i, f.k, b)} />}
                     </StepColumns>)
                 } else if (f.t === "renames") {

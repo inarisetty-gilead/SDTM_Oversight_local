@@ -1689,6 +1689,31 @@ def dataset_columns(domain: str, dataset: str):
     return {"dataset": key, "columns": sorted(SESSION.store.columns(key))}
 
 
+@app.get("/api/domain/{domain}/values/{dataset}/{column}")
+def dataset_values(domain: str, dataset: str, column: str):
+    """Distinct values of a raw column, for a dropdown instead of a typed guess — the same
+    trap the dedup 'Group by' free-text box had, just one level down: a condition value that
+    matches no record fails silently, not loudly."""
+    if SESSION.store is None:
+        raise HTTPException(400, "scan the raw data folder first")
+    key = SESSION.store.resolve(dataset)
+    if not key:
+        raise HTTPException(404, f"no raw dataset '{dataset}'")
+    try:
+        frame = SESSION.store.get(key)
+    except Exception as exc:                                     # noqa: BLE001
+        raise HTTPException(400, str(exc))
+    col = upper(column)
+    if col not in frame.columns:
+        ci = next((c for c in frame.columns if upper(c) == col), None)
+        if ci is None:
+            raise HTTPException(404, f"column {col} is not in raw dataset '{dataset}'")
+        col = ci
+    values = _distinct_for(frame, col)
+    return {"dataset": key, "column": col, "values": values, "many": values is None}
+
+
+
 # ── the data-preparation pipeline ───────────────────────────────────────────
 # ── the annotated-CRF check ─────────────────────────────────────────────────
 class AcrfIn(BaseModel):
