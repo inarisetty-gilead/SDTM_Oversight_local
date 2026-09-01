@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import {
-  Database, FileSpreadsheet, GitCompare, Layers, Settings2, ShieldCheck, Sparkles,
+  Database, FileSpreadsheet, GitCompare, Layers, PackageCheck, Settings2, ShieldCheck, Sparkles,
   FileSearch, FunctionSquare, Table2,
 } from "lucide-react"
 import { api } from "@/api"
@@ -19,9 +19,10 @@ import { CrfView } from "@/views/CrfView"
 import { DomainView } from "@/views/DomainView"
 import { SpecWindow } from "@/components/SpecPeek"
 import { RawDataView } from "@/views/RawDataView"
+import { VendorDataView } from "@/views/VendorDataView"
 import { VarsWindow } from "@/views/VarsWindow"
 
-type View = "studies" | "setup" | "spec" | "rawdata" | "build" | "functions" | "compare" | "acrf" | { domain: string }
+type View = "studies" | "setup" | "spec" | "rawdata" | "vendordata" | "build" | "functions" | "compare" | "acrf" | { domain: string }
 
 export default function App() {
   // #spec/DM opens a standalone read-only spec window — a reference the reader can put
@@ -266,6 +267,9 @@ function MainApp() {
             <RailItem icon={<Table2 className="h-4 w-4" />} label="Raw data"
                       active={view === "rawdata"} disabled={!raw}
                       onClick={() => setView("rawdata")} tone="violet" />
+            <RailItem icon={<PackageCheck className="h-4 w-4" />} label="Vendor delivery"
+                      active={view === "vendordata"} disabled={!vendorPath}
+                      onClick={() => setView("vendordata")} tone="violet" />
             <RailItem icon={<FunctionSquare className="h-4 w-4" />} label="Functions"
                       active={view === "functions"}
                       onClick={() => setView("functions")} tone="violet" />
@@ -311,6 +315,7 @@ function MainApp() {
             )}
             {view === "spec" && <SpecView />}
             {view === "rawdata" && <RawDataView />}
+            {view === "vendordata" && <VendorDataView vendorPath={vendorPath} />}
             {view === "build" && (
               <BuildView build={build} job={job?.kind === "build" ? job : null}
                          err={err.build ?? ""} busy={busy === "build"} ready={!!raw}

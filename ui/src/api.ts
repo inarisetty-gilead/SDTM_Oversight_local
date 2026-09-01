@@ -291,6 +291,13 @@ export const api = {
   rawColumns: () => call<{ columns: Record<string, string[]> }>("/api/raw-columns"),
   rawDatasets: () => call<{ datasets: Array<{ name: string; file: string; kind: string; label: string }> }>(
     "/api/raw-datasets"),
+
+  vendorDatasets: () => call<{ datasets: Array<{ name: string; file: string; label: string }>; vendor_path: string }>(
+    "/api/vendor-datasets"),
+  vendorColumns: () => call<{ columns: Record<string, string[]> }>("/api/vendor-columns"),
+  vendorData: (dataset: string, q: DataQuery) =>
+    call<DataPage>(`/api/vendor/${encodeURIComponent(dataset)}/data?${qs(q)}`),
+
   variableCt: (d: string, v: string) => call<CtInspect>(`/api/domain/${d}/variable/${v}/ct`),
   saveCtMap: (d: string, v: string, b: { raw_value: string; ct_value: string }) =>
     post(`/api/domain/${d}/variable/${v}/ct-map`, b),

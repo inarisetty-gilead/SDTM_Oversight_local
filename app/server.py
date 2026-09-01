@@ -50,6 +50,7 @@ class Session:
     studyid: str = ""
     spec: object = None
     store: object = None
+    vendor_store: object = None                      # lazily indexed vendor delivery folder
     results: dict = field(default_factory=dict)
     comps: dict = field(default_factory=dict)
     build_meta: dict = field(default_factory=dict)
@@ -943,6 +944,61 @@ def raw_columns():
     if SESSION.store is None:
         raise HTTPException(400, "scan the raw data folder first")
     return {"columns": {k: sorted(v) for k, v in SESSION.store.schema().items()}}
+
+
+def _vendor_store() -> RawStore:
+    """Lazily index the vendor delivery folder — same machinery as the raw-data browser,
+    just pointed at what was submitted instead of what came in. Re-indexed whenever the
+    vendor path changes, so switching deliveries in Compare is never stuck on the old one."""
+    if not SESSION.vendor_path:
+        raise HTTPException(400, "set a vendor delivery folder in Compare first")
+    if SESSION.vendor_store is None or SESSION.vendor_store.root != Path(SESSION.vendor_path):
+        try:
+            SESSION.vendor_store = RawStore.discover(SESSION.vendor_path)
+        except (OSError, NotADirectoryError) as exc:
+            raise HTTPException(400, str(exc))
+    return SESSION.vendor_store
+
+
+@app.get("/api/vendor-datasets")
+def vendor_datasets():
+    """Every dataset the vendor delivery folder holds — the delivered SDTM datasets, for
+    the vendor browser's list. Names and files only: nothing is loaded until opened."""
+    store = _vendor_store()
+    out = [{"name": name, "file": store.refs[name].path.name, "label": store.refs[name].label or ""}
+           for name in sorted(store.refs)]
+    return {"datasets": out, "vendor_path": SESSION.vendor_path}
+
+
+@app.get("/api/vendor-columns")
+def vendor_columns():
+    """{dataset: [columns]} across the whole vendor delivery — so a variable can be found
+    without already knowing which delivered dataset carries it."""
+    store = _vendor_store()
+    return {"columns": {k: sorted(v) for k, v in store.schema().items()}}
+
+
+@app.get("/api/vendor/{dataset}/data")
+def vendor_data(dataset: str, offset: int = 0, limit: int = 50,
+                sort: str = "", dir: str = "asc", filters: str = ""):
+    """A page of a vendor-delivered dataset — the delivery side, browsable the same way
+    the raw data is, so a value can be checked against exactly what was submitted."""
+    store = _vendor_store()
+    key = store.resolve(dataset)
+    if not key:
+        raise HTTPException(404, f"no vendor dataset '{dataset}'")
+    frame = store.get(key)
+    shaped, notes = _shape(frame, sort, dir, filters)
+    return {"dataset": key, "nrows": int(len(shaped)), "total": int(len(frame)),
+            "offset": max(0, offset), "limit": max(1, min(limit, MAX_ROWS)),
+            "sort": sort, "dir": dir, "notes": notes,
+            "columns": [{"name": str(c), "label": "", "status": "built",
+                         "method_source": "spec", "confidence": 100,
+                         "populated": int(frame[c].astype("string").str.strip().ne("").fillna(False).sum()),
+                         "numeric": bool(pd.api.types.is_numeric_dtype(frame[c])),
+                         "distinct": _distinct_for(frame, c)}
+                        for c in frame.columns],
+            "rows": _page(shaped, offset, limit)}
 
 
 @app.get("/api/raw/{dataset}/data")
