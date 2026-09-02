@@ -227,15 +227,15 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
 }
 
 /** The built dataset for a domain, reloaded whenever the build changes. */
-export function useDomainRecords(domain: string, refreshKey: number) {
+export function useDomainRecords(domain: string, refreshKey: number, part: "parent" | "supp" = "parent") {
   const [page, setPage] = useState<DataPage | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const load = useCallback(async () => {
     setBusy(true); setError("")
-    try { setPage(await api.domainData(domain, { offset: 0, limit: FULL })) }
+    try { setPage(await api.domainData(domain, { offset: 0, limit: FULL }, part)) }
     catch (e) { setError((e as Error).message); setPage(null) } finally { setBusy(false) }
-  }, [domain])
+  }, [domain, part])
   useEffect(() => { void load() }, [load, refreshKey])
   return { page, busy, error, reload: load }
 }
@@ -263,8 +263,12 @@ export function VariableRecords({ domain, variable, keys, refreshKey }: {
   return <RecordTable page={page} busy={busy} height="22rem" onRefresh={() => void load()} />
 }
 
-export function DataView({ domain, datasets, refreshKey }: {
+export function DataView({ domain, datasets, refreshKey, hasSuppVars }: {
   domain: string; datasets: string[]; refreshKey: number
+  /** the domain has SUPP-- variables in its spec, even if none of them ended up with a
+   *  value this build — the picker must offer SUPP either way, or there is no way to see
+   *  the (rightly) empty result and tell that apart from the option being missing entirely */
+  hasSuppVars?: boolean
 }) {
   const [source, setSource] = useState("parent")
   const [page, setPage] = useState<DataPage | null>(null)
@@ -285,6 +289,7 @@ export function DataView({ domain, datasets, refreshKey }: {
 
   const empties = page?.columns.filter((c) => c.populated === 0).length ?? 0
   const capped = (page?.nrows ?? 0) >= FULL
+  const showSupp = page?.has_supp || hasSuppVars
 
   return (
     <div className="space-y-3">
@@ -293,7 +298,7 @@ export function DataView({ domain, datasets, refreshKey }: {
           <SelectTrigger className="h-8 w-64 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="parent" className="text-xs">{domain} — built dataset</SelectItem>
-            {page?.has_supp && <SelectItem value="supp" className="text-xs">SUPP{domain}</SelectItem>}
+            {showSupp && <SelectItem value="supp" className="text-xs">SUPP{domain}</SelectItem>}
             {datasets.map((d) => (
               <SelectItem key={d} value={`raw:${d}`} className="text-xs">input · {d}</SelectItem>
             ))}
@@ -306,6 +311,12 @@ export function DataView({ domain, datasets, refreshKey }: {
         <Callout tone="warn" title={`Showing the first ${FULL.toLocaleString()} records`}>
           The dataset is larger than one view can hold. The written file in the run folder has
           all of it.
+        </Callout>
+      )}
+      {page && source === "supp" && page.nrows === 0 && (
+        <Callout tone="warn" title="No qualifier values were populated">
+          SUPP{domain} variables are defined in the spec, but none of them had a value to
+          carry for any record in this build.
         </Callout>
       )}
       {page && empties > 0 && source === "parent" && (

@@ -1,36 +1,37 @@
+// A standalone window browsing the vendor's delivered SDTM datasets — the same picker as
+// Vendor delivery, but as its own page for a second monitor. Opened as #vendor or
+// #vendor/DATASETNAME to land straight on one dataset. Same server session as the main window.
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { ExternalLink, PackageCheck, Search } from "lucide-react"
+import { Search } from "lucide-react"
 import { api } from "@/api"
 import type { DataPage } from "@/api"
-import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Chip, Mono } from "@/components/grid"
-import { Callout, EmptyState, PageHeader } from "@/components/shell"
+import { Callout } from "@/components/shell"
 import { RecordTable } from "@/components/DataView"
 
 const FULL = 100_000
 
-/** The vendor's delivered SDTM datasets, browsable the same way the raw data is — the
- *  output side of the comparison, for checking a value against exactly what was submitted,
- *  not just the diff summary. Needs a vendor delivery folder set (in Compare) first. */
-export function VendorDataView({ vendorPath }: { vendorPath: string }) {
+export function VendorWindow({ dataset }: { dataset?: string }) {
+  const [vendorPath, setVendorPath] = useState("")
   const [list, setList] = useState<Array<{ name: string; file: string; label: string }> | null>(null)
   const [schema, setSchema] = useState<Record<string, string[]> | null>(null)
   const [q, setQ] = useState("")
-  const [sel, setSel] = useState<string>("")
+  const [sel, setSel] = useState(dataset ?? "")
   const [page, setPage] = useState<DataPage | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
 
+  useEffect(() => { document.title = "Vendor delivery — SDTM Oversight" }, [])
+
   useEffect(() => {
-    if (!vendorPath) { setList(null); return }
-    setError("")
+    void api.state().then((st) => setVendorPath((st as { vendor?: string }).vendor ?? ""))
     api.vendorDatasets()
-      .then((r) => { setList(r.datasets); if (r.datasets.length) setSel((s) => s || r.datasets[0].name) })
+      .then((r) => { setList(r.datasets); if (!dataset && r.datasets.length) setSel((s) => s || r.datasets[0].name) })
       .catch((e) => setError((e as Error).message))
     // the column map loads in the background — the filter box searches columns too
     api.vendorColumns().then((r) => setSchema(r.columns)).catch(() => setSchema({}))
-  }, [vendorPath])
+  }, [dataset])
 
   const load = useCallback(async (name: string) => {
     if (!name) return
@@ -41,7 +42,6 @@ export function VendorDataView({ vendorPath }: { vendorPath: string }) {
   }, [])
   useEffect(() => { void load(sel) }, [sel, load])
 
-  // one box, two searches: dataset names AND their columns — same pattern as raw data
   const shown = useMemo(() => {
     if (!list) return []
     if (!q.trim()) return list.map((d) => ({ ...d, hit: "" }))
@@ -56,29 +56,15 @@ export function VendorDataView({ vendorPath }: { vendorPath: string }) {
       .filter((d) => d.keep)
   }, [list, q, schema])
 
-  if (!vendorPath) {
-    return (
-      <>
-        <PageHeader title="Vendor delivery"
-                    subtitle="The vendor's own SDTM datasets — the output side of the comparison." />
-        <EmptyState icon={<PackageCheck className="h-8 w-8" />} title="No vendor delivery folder set">
-          Set the vendor's delivered SDTM folder in Compare first, then come back here to
-          browse it directly — the same way Raw data browses the inputs.
-        </EmptyState>
-      </>
-    )
-  }
-
   return (
-    <>
-      <PageHeader title="Vendor delivery"
-                  subtitle={<>The vendor's own SDTM datasets, as submitted — <Mono>{vendorPath}</Mono></>}
-                  actions={<Button variant="outline" size="sm" className="h-8 px-2 text-xs"
-                                    disabled={!sel} title="open this dataset in its own window (for a second monitor)"
-                                    onClick={() => window.open(`#vendor/${encodeURIComponent(sel)}`, "_blank",
-                                                               "width=1400,height=900,noopener")}>
-                    <ExternalLink className="h-3.5 w-3.5" /></Button>} />
-      <div className="flex min-h-0 gap-4" style={{ height: "calc(100vh - 11rem)" }}>
+    <div className="flex h-screen flex-col gap-3 p-4">
+      <div className="flex items-baseline gap-2">
+        <h1 className="text-[15px] font-semibold">Vendor delivery</h1>
+        <span className="text-xs text-muted-foreground">
+          read-only reference · same vendor folder as the main window
+          {vendorPath ? <> · <Mono>{vendorPath}</Mono></> : ""}</span>
+      </div>
+      <div className="flex min-h-0 flex-1 gap-4">
         <div className="flex w-64 shrink-0 flex-col gap-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
@@ -110,10 +96,10 @@ export function VendorDataView({ vendorPath }: { vendorPath: string }) {
               {page.columns.length} column(s)
               {(page.total ?? 0) >= FULL ? " · showing the first page" : ""}</p>
           )}
-          <RecordTable page={page} busy={busy} height="calc(100vh - 16rem)"
+          <RecordTable page={page} busy={busy} height="calc(100vh - 10rem)"
                        onRefresh={() => void load(sel)} />
         </div>
       </div>
-    </>
+    </div>
   )
 }

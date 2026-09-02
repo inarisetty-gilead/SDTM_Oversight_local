@@ -20,6 +20,7 @@ import { DomainView } from "@/views/DomainView"
 import { SpecWindow } from "@/components/SpecPeek"
 import { RawDataView } from "@/views/RawDataView"
 import { VendorDataView } from "@/views/VendorDataView"
+import { VendorWindow } from "@/views/VendorWindow"
 import { VarsWindow } from "@/views/VarsWindow"
 
 type View = "studies" | "setup" | "spec" | "rawdata" | "vendordata" | "build" | "functions" | "compare" | "acrf" | { domain: string }
@@ -32,6 +33,10 @@ export default function App() {
   // #vars/DM: the built variables grid alone in its own window, same idea
   const varsHash = /^#vars\/([A-Za-z0-9_]+)$/.exec(window.location.hash)
   if (varsHash) return <VarsWindow domain={varsHash[1].toUpperCase()} />
+  // #vendor or #vendor/aeds1: the vendor delivery browser alone, optionally landing on
+  // one dataset straight away
+  const vendorHash = /^#vendor(?:\/([^/]+))?$/.exec(window.location.hash)
+  if (vendorHash) return <VendorWindow dataset={vendorHash[1] ? decodeURIComponent(vendorHash[1]) : undefined} />
   return <MainApp />
 }
 

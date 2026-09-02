@@ -222,14 +222,15 @@ export function DomainView({ domain, onBack, onChanged }: {
   const [error, setError] = useState("")
   // bumped after any rebuild so the data view reloads rather than showing stale records
   const [dataKey, setDataKey] = useState(0)
-  const records = useDomainRecords(domain, dataKey)
+  const [recPart, setRecPart] = useState<"parent" | "supp">("parent")
+  const records = useDomainRecords(domain, dataKey, recPart)
 
   const load = useCallback(async (dom: string) => {
     setError("")
     try { setD(await api.domain(dom)) }
     catch (e) { setError((e as Error).message); setD(null) }
   }, [])
-  useEffect(() => { setEditing(null); setPane("data"); void load(domain) }, [domain, load])
+  useEffect(() => { setEditing(null); setPane("data"); setRecPart("parent"); void load(domain) }, [domain, load])
 
   const afterRebuild = async () => {
     for (;;) {
@@ -501,19 +502,37 @@ export function DomainView({ domain, onBack, onChanged }: {
               <div className="flex items-baseline gap-2">
                 <h4 className="text-[13px] font-medium">Resulting dataset</h4>
                 <span className="text-[12px] text-muted-foreground">
-                  {d.domain}{editing ? ` · ${editing.variable} highlighted` : ""}
+                  {recPart === "supp" ? `SUPP${d.domain}` : d.domain}
+                  {editing ? ` · ${editing.variable} highlighted` : ""}
                 </span>
+                {(d.supp_rows > 0 || d.variables.some((v) => v.supp)) && (
+                  <div className="ml-auto flex gap-1">
+                    <Button size="sm" variant={recPart === "parent" ? "secondary" : "ghost"}
+                            className="h-6 px-2 text-[11px]" onClick={() => setRecPart("parent")}>
+                      {d.domain}</Button>
+                    <Button size="sm" variant={recPart === "supp" ? "secondary" : "ghost"}
+                            className="h-6 px-2 text-[11px]" onClick={() => setRecPart("supp")}>
+                      SUPP{d.domain}</Button>
+                  </div>
+                )}
               </div>
+              {recPart === "supp" && records.page && records.page.nrows === 0 && (
+                <Callout tone="warn" title="No qualifier values were populated">
+                  SUPP{d.domain} variables are defined in the spec, but none of them had a
+                  value to carry for any record in this build.
+                </Callout>
+              )}
               {records.error
                 ? <Callout tone="bad">{records.error}</Callout>
                 : <RecordTable page={records.page} busy={records.busy} height="26rem"
-                               highlight={editing?.variable}
+                               highlight={recPart === "parent" ? editing?.variable : undefined}
                                onRefresh={() => void records.reload()} />}
             </div>
           </TabsContent>
 
           <TabsContent value="data" className="pt-4">
-            <DataView domain={d.domain} datasets={d.datasets} refreshKey={dataKey} />
+            <DataView domain={d.domain} datasets={d.datasets} refreshKey={dataKey}
+                      hasSuppVars={d.variables.some((v) => v.supp)} />
           </TabsContent>
 
           <TabsContent value="program" className="pt-4">
