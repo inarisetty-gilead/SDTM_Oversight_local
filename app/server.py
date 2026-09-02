@@ -70,7 +70,7 @@ class Session:
     ta_path: str = ""                                # therapeutic-area spec workbook
     acrf_report: dict | None = None                  # last aCRF check
     template_overrides: dict = field(default_factory=dict)  # VARIABLE -> {"enabled": False}
-    preview_outputs: set = field(default_factory=set)  # prepared datasets from an unapplied run
+    preview_outputs: dict = field(default_factory=dict)  # DOMAIN -> unapplied prep-draft output names
     study_id: str = ""
     study_name: str = ""
     open_problems: list = field(default_factory=list)
@@ -389,7 +389,7 @@ def _apply_study(study: Study) -> None:
                 outputs, _reports = prep_module.run_pipeline(steps, SESSION.store, dom)
                 for name, frame in outputs.items():
                     SESSION.store.put(name, frame)
-                    SESSION.preview_outputs.add(name)
+                    SESSION.preview_outputs.setdefault(dom, set()).add(name)
             except Exception:                                    # noqa: BLE001
                 pass          # a draft may be half-finished — restoring the steps is enough
     # resume the last build, so reopening a study lands where the reader left it —
@@ -1043,6 +1043,45 @@ def _samples(res, variable: str, n: int = 4) -> list[str]:
     return vals
 
 
+def _domain_prepared(dom: str) -> list[str]:
+    """This domain's OWN prep-pipeline output names — applied, drafted, or just previewed.
+    Every domain's outputs sit in the same shared raw store under the hood, but a picker
+    must never offer domain X's 'prep1' while editing domain Y — the reader has no way to
+    tell the two apart, and Y's build would silently read X's data if it were picked."""
+    names = {norm_key(st.get("name", "")) for st in SESSION.pipelines.get(dom, []) if st.get("name")}
+    names |= {norm_key(st.get("name", "")) for st in SESSION.draft_pipelines.get(dom, []) if st.get("name")}
+    names |= set(SESSION.preview_outputs.get(dom, set()))
+    return sorted(names)
+
+
+def _raw_dataset_names(dom: str = "") -> list[str]:
+    """Datasets usable as a source while editing dom: everything the raw folder scan
+    found, plus dom's OWN prep-pipeline outputs (a preview registers those the moment it
+    runs, so a dataset just built in the pipeline doesn't vanish from the picker). Another
+    domain's prep output is never included — see _domain_prepared."""
+    if SESSION.store is None:
+        return []
+    owned_by_others: set[str] = set()
+    for other, steps in list(SESSION.pipelines.items()) + list(SESSION.draft_pipelines.items()):
+        if other == dom:
+            continue
+        owned_by_others |= {norm_key(st.get("name", "")) for st in steps if st.get("name")}
+    for other, names in SESSION.preview_outputs.items():
+        if other != dom:
+            owned_by_others |= set(names)
+    return sorted(k for k in SESSION.store.refs if k not in owned_by_others)
+
+
+def _store_for(dom: str):
+    """The raw store, extended so 'built_<domain>' also resolves — to any OTHER domain
+    already built this session. Used wherever a dataset name typed/picked while editing
+    dom needs to be read (schema, distinct values, a pipeline run)."""
+    if SESSION.store is None:
+        return None
+    built = {d: r.dataset for d, r in SESSION.results.items() if d != dom and r.ok}
+    return prep_module._StoreWithBuilt(SESSION.store, built) if built else SESSION.store
+
+
 def _domain_payload(dom: str) -> dict:
     res = SESSION.results.get(dom)
     if res is None:
@@ -1092,12 +1131,10 @@ def _domain_payload(dom: str) -> dict:
         "prep_reports": res.prep_reports,
         "prep_outputs": res.prep_outputs,
         "edits": SESSION.edits.get(dom, {}),
-        "datasets": sorted(SESSION.store.refs) if SESSION.store else [],
-        "prepared_datasets": sorted(
-            {norm_key(st.get("name", "")) for steps in SESSION.pipelines.values()
-             for st in steps if st.get("name")} | set(SESSION.preview_outputs)),
-        "unapplied_datasets": sorted(SESSION.preview_outputs),
-        "built_domains": sorted(d for d in SESSION.results if d != dom),
+        "datasets": _raw_dataset_names(dom),
+        "prepared_datasets": _domain_prepared(dom),
+        "unapplied_datasets": sorted(SESSION.preview_outputs.get(dom, set())),
+        "built_domains": sorted(d for d, r in SESSION.results.items() if d != dom and r.ok),
         "variables": variables,
     }
 
@@ -1736,13 +1773,16 @@ def set_dedup(domain: str, body: DedupIn):
 
 @app.get("/api/domain/{domain}/columns/{dataset}")
 def dataset_columns(domain: str, dataset: str):
-    """Columns of a raw dataset, for the editor's column picker."""
-    if SESSION.store is None:
+    """Columns of a raw dataset (or, if named 'built_<domain>', an already-built domain's
+    output), for the editor's column picker."""
+    dom = upper(domain)
+    store = _store_for(dom)
+    if store is None:
         raise HTTPException(400, "scan the raw data folder first")
-    key = SESSION.store.resolve(dataset)
+    key = store.resolve(dataset)
     if not key:
         raise HTTPException(404, f"no raw dataset '{dataset}'")
-    return {"dataset": key, "columns": sorted(SESSION.store.columns(key))}
+    return {"dataset": key, "columns": sorted(store.columns(key))}
 
 
 @app.get("/api/domain/{domain}/values/{dataset}/{column}")
@@ -1750,13 +1790,15 @@ def dataset_values(domain: str, dataset: str, column: str):
     """Distinct values of a raw column, for a dropdown instead of a typed guess — the same
     trap the dedup 'Group by' free-text box had, just one level down: a condition value that
     matches no record fails silently, not loudly."""
-    if SESSION.store is None:
+    dom = upper(domain)
+    store = _store_for(dom)
+    if store is None:
         raise HTTPException(400, "scan the raw data folder first")
-    key = SESSION.store.resolve(dataset)
+    key = store.resolve(dataset)
     if not key:
         raise HTTPException(404, f"no raw dataset '{dataset}'")
     try:
-        frame = SESSION.store.get(key)
+        frame = store.get(key)
     except Exception as exc:                                     # noqa: BLE001
         raise HTTPException(400, str(exc))
     col = upper(column)
@@ -2055,11 +2097,11 @@ def fn_context(domain: str):
     dom = upper(domain)
     if SESSION.spec is None or dom not in SESSION.spec.domains:
         raise HTTPException(404, f"{dom} is not in the mapping spec")
-    datasets = sorted(SESSION.store.refs) if SESSION.store else []
     variables = [{"variable": upper(r.variable)}
                  for r in SESSION.spec.rows(dom) if r.variable]
-    return {"domain": dom, "datasets": datasets,
-            "prepared_datasets": sorted(SESSION.preview_outputs),
+    return {"domain": dom, "datasets": _raw_dataset_names(dom),
+            "prepared_datasets": _domain_prepared(dom),
+            "built_domains": sorted(d for d, r in SESSION.results.items() if d != dom and r.ok),
             "variables": variables,
             "codelists": sorted(SESSION.spec.codelists) if SESSION.spec else []}
 
@@ -2076,7 +2118,8 @@ def prep_ops():
 def get_pipeline(domain: str):
     dom = upper(domain)
     return {"domain": dom, "steps": SESSION.pipelines.get(dom, []),
-            "datasets": sorted(SESSION.store.refs) if SESSION.store else []}
+            "datasets": _raw_dataset_names(dom),
+            "built_domains": sorted(d for d, r in SESSION.results.items() if d != dom and r.ok)}
 
 
 @app.post("/api/domain/{domain}/pipeline/preview")
@@ -2093,8 +2136,9 @@ def preview_pipeline(domain: str, body: PipelineIn):
     else:
         SESSION.draft_pipelines.pop(dom, None)
     _autosave()
+    built = {d: r.dataset for d, r in SESSION.results.items() if d != dom and r.ok}
     try:
-        outputs, reports = prep_module.run_pipeline(body.steps, SESSION.store, upper(domain))
+        outputs, reports = prep_module.run_pipeline(body.steps, SESSION.store, dom, built=built)
     except prep_module.PrepError as exc:
         return {"ok": False, "error": str(exc)}
     # Register what the preview produced, so a prepared dataset can be used as a source the
@@ -2103,7 +2147,7 @@ def preview_pipeline(domain: str, body: PipelineIn):
     preview = {}
     for name, frame in outputs.items():
         SESSION.store.put(name, frame)
-        SESSION.preview_outputs.add(name)
+        SESSION.preview_outputs.setdefault(dom, set()).add(name)
         head = frame.head(8)
         preview[name] = {
             "rows": int(len(frame)), "columns": [str(c) for c in frame.columns],
@@ -2119,7 +2163,8 @@ def set_pipeline(domain: str, body: PipelineIn):
         raise HTTPException(404, f"{dom} is not in the mapping spec")
     SESSION.draft_pipelines.pop(dom, None)       # applying (or clearing) supersedes the draft
     if body.steps:
-        SESSION.preview_outputs -= {norm_key(st.get("name", "")) for st in body.steps}
+        SESSION.preview_outputs[dom] = SESSION.preview_outputs.get(dom, set()) \
+            - {norm_key(st.get("name", "")) for st in body.steps}
         SESSION.pipelines[dom] = body.steps
         SESSION.overrides.setdefault(dom, {})["prep_mode"] = "custom"
         if body.base is not None:

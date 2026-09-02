@@ -640,8 +640,61 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
     raise PrepError(f"unknown preparation step '{op}'")
 
 
-def run_pipeline(steps: list[dict], store, domain: str = "") -> tuple[dict, list[dict]]:
-    """Run an ordered pipeline. Returns ({output name: frame}, [per-step report])."""
+class _StoreWithBuilt:
+    """A raw store view that ALSO resolves 'built_<domain>' to an already-built SDTM
+    domain's own output — so one domain's prep pipeline can merge in another domain that
+    has already been built (e.g. AE merging in DM). Kept as a distinct 'built_' name rather
+    than the domain's raw dataset name (often the SAME letters, 'dm') so a step can never
+    silently switch between "the raw EDC extract" and "the built SDTM domain" — the reader
+    always picked one of the two on purpose."""
+
+    def __init__(self, store, built: dict | None = None):
+        self._store = store
+        self._built = built or {}
+
+    def _built_frame(self, name: str) -> pd.DataFrame | None:
+        key = norm_key(name)
+        if not key.startswith("built_"):
+            return None
+        return self._built.get(key[len("built_"):].upper())
+
+    def resolve(self, name: str) -> str | None:
+        if self._built_frame(name) is not None:
+            return norm_key(name)
+        return self._store.resolve(name)
+
+    def resolve_all(self, name: str) -> list[str]:
+        r = self.resolve(name)
+        return [r] if r else self._store.resolve_all(name)
+
+    def get(self, name: str) -> pd.DataFrame:
+        frame = self._built_frame(name)
+        if frame is not None:
+            return frame
+        return self._store.get(name)
+
+    def columns(self, name: str):
+        try:
+            return set(self.get(name).columns)
+        except (KeyError, OSError, ValueError):
+            return set()
+
+    def schema(self):
+        return self._store.schema()
+
+    @property
+    def refs(self):
+        return self._store.refs
+
+
+def run_pipeline(steps: list[dict], store, domain: str = "",
+                 built: dict | None = None) -> tuple[dict, list[dict]]:
+    """Run an ordered pipeline. Returns ({output name: frame}, [per-step report]).
+
+    `built` is {DOMAIN: its built dataset} for every domain already built this session —
+    a step may name 'built_<domain>' as its dataset to read that instead of the raw data."""
+    if built:
+        store = _StoreWithBuilt(store, built)
     ns: dict[str, pd.DataFrame] = {}
     reports: list[dict] = []
     for i, step in enumerate(steps or [], start=1):

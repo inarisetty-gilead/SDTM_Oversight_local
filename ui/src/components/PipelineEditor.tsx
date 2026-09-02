@@ -56,6 +56,13 @@ function FullDataDialog({ dataset, onClose }: { dataset: string; onClose: () => 
 type Step = { op: string; name: string; params: Record<string, unknown> }
 type Report = { step: number; name: string; op: string; ok: boolean; rows?: number; columns?: string[]; error?: string; extra_outputs?: string[] }
 
+/** A dataset name as it should read in a picker — 'built_<domain>' is a distinct entry
+ *  for an already-built domain's own output, never to be confused with its raw dataset
+ *  of the same name (often the same letters, e.g. 'dm'), so it gets a label that says so. */
+const datasetLabel = (d: string) =>
+  d.startsWith("built_") ? `${d.slice(6).toUpperCase()} (built)` : d
+
+
 type Field = { k: string; t: string; ph?: string; label?: string
                opts?: [string, string][]; funcs?: string[] }
 
@@ -143,7 +150,7 @@ function MergeInputs({ rows, datasets, domain, onChange }: {
                 <SelectTrigger className="h-8 w-52 text-xs"><SelectValue placeholder="dataset" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none" className="text-xs">—</SelectItem>
-                  {datasets.map((d) => <SelectItem key={d} value={d} className="text-xs">{d}</SelectItem>)}
+                  {datasets.map((d) => <SelectItem key={d} value={d} className="text-xs">{datasetLabel(d)}</SelectItem>)}
                 </SelectContent>
               </Select>
               <Button type="button" size="sm" variant="outline" className="h-8 text-xs"
@@ -248,18 +255,19 @@ function useColumns(domain: string, dataset?: string) {
   return cols
 }
 
-function ColSelect({ value, columns, onChange, placeholder = "column", width = "w-44" }: {
+function ColSelect({ value, columns, onChange, placeholder = "column", width = "w-44", label }: {
   value?: string; columns: string[]; onChange: (v: string) => void
-  placeholder?: string; width?: string
+  placeholder?: string; width?: string; label?: (c: string) => string
 }) {
   // a hand-set or stale name stays selectable so an existing pipeline never renders blank
   const all = value && !columns.includes(value) ? [value, ...columns] : columns
+  const lab = label ?? ((c: string) => c)
   return (
     <Select value={value || "__none"} onValueChange={(v) => onChange(v === "__none" ? "" : v)}>
       <SelectTrigger className={`h-8 ${width} text-xs`}><SelectValue placeholder={placeholder} /></SelectTrigger>
       <SelectContent className="max-h-64">
         <SelectItem value="__none" className="text-xs">—</SelectItem>
-        {all.map((c) => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+        {all.map((c) => <SelectItem key={c} value={c} className="text-xs">{lab(c)}</SelectItem>)}
       </SelectContent>
     </Select>
   )
@@ -459,7 +467,7 @@ function DateSourceRow({ row, datasets, domain, onChange, onRemove }: {
   const columns = useColumns(domain, row.dataset)
   return (
     <div className="flex items-center gap-1.5">
-      <ColSelect value={row.dataset} columns={datasets} placeholder="dataset"
+      <ColSelect value={row.dataset} columns={datasets} placeholder="dataset" label={datasetLabel}
                  onChange={(v) => onChange({ dataset: v, date_col: "" })} />
       <span className="text-[11px] text-muted-foreground">date in</span>
       <ColSelect value={row.date_col} columns={columns}
@@ -675,12 +683,15 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
       return { ...st, params: p }
     }))
 
-  // earlier steps' outputs first, then the raw datasets — deduplicated: once a step's
-  // preview has run, its output is ALSO in the store (detail.datasets), and a name
-  // listed twice renders as "prep1 prep1" in every picker
+  // earlier steps' outputs first, then the raw datasets, then any already-built domain
+  // (as a distinct 'built_<domain>' entry, never the domain's raw dataset name — the two
+  // can share the same letters, e.g. 'dm', and must never be confused) — deduplicated:
+  // once a step's preview has run, its output is ALSO in the store (detail.datasets), and a
+  // name listed twice renders as "prep1 prep1" in every picker
   const datasetsFor = (i: number) =>
     Array.from(new Set([...steps.slice(0, i).map((s, k) => s.name || `prep${k + 1}`),
-                        ...detail.datasets]))
+                        ...detail.datasets,
+                        ...detail.built_domains.map((d) => `built_${d.toLowerCase()}`)]))
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError("")
@@ -800,7 +811,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                             onValueChange={(x) => setParam(i, f.k, x === "__none" ? "" : x)}>
                       <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="—" /></SelectTrigger>
                       <SelectContent><SelectItem value="__none" className="text-xs">—</SelectItem>
-                        {datasetsFor(i).map((d) => <SelectItem key={d} value={d} className="text-xs">{d}</SelectItem>)}
+                        {datasetsFor(i).map((d) => <SelectItem key={d} value={d} className="text-xs">{datasetLabel(d)}</SelectItem>)}
                       </SelectContent></Select>)
                 } else if (f.t === "dslist") {
                   const chosen = (v as string[]) ?? []
@@ -810,7 +821,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                         <label key={d} className="flex items-center gap-2 text-xs">
                           <input type="checkbox" checked={chosen.includes(d)}
                                  onChange={(e) => setParam(i, f.k, e.target.checked
-                                   ? [...chosen, d] : chosen.filter((x) => x !== d))} />{d}
+                                   ? [...chosen, d] : chosen.filter((x) => x !== d))} />{datasetLabel(d)}
                         </label>))}
                     </div>)
                 } else if (f.t.startsWith("choice:")) {

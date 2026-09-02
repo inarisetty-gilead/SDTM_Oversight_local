@@ -176,7 +176,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
     prep_final = ""
     if prep_mode == "custom" and prep_steps:
         try:
-            outputs, reports = prep.run_pipeline(prep_steps, store, dom)
+            outputs, reports = prep.run_pipeline(prep_steps, store, dom, built=built)
             for name, frame in outputs.items():
                 store.put(name, frame)
             result.prep_reports = reports

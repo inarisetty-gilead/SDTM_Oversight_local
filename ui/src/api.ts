@@ -169,7 +169,7 @@ export interface CustomFn {
 }
 export interface FnContext {
   domain: string; datasets: string[]; prepared_datasets: string[]
-  variables: Array<{ variable: string }>
+  built_domains: string[]; variables: Array<{ variable: string }>
 }
 
 export interface AcrfRow {
@@ -319,7 +319,8 @@ export const api = {
 
   prepOps: () => call<{ ops: Array<{ id: string; label: string }>; conditions: Array<{ id: string; label: string }> }>(
     "/api/prep/ops"),
-  getPipeline: (d: string) => call<{ steps: Array<Record<string, unknown>>; datasets: string[] }>(
+  getPipeline: (d: string) => call<{ steps: Array<Record<string, unknown>>; datasets: string[]
+    built_domains: string[] }>(
     `/api/domain/${d}/pipeline`),
   previewPipeline: (d: string, steps: unknown) => post<{
     ok: boolean; error?: string; reports?: Array<Record<string, unknown>>;
