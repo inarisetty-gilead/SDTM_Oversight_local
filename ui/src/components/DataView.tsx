@@ -124,7 +124,7 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
         <table className="border-separate border-spacing-0 text-[12px]"
                style={{ width: table.getTotalSize() + 44 }}>
           <thead className="sticky top-0 z-20">
-            <tr>
+            <tr className="grid-head-row">
               <th className="sticky left-0 z-30 w-11 border-b bg-muted px-2 py-1.5 text-left
                              text-[10px] font-medium text-muted-foreground">#</th>
               {table.getHeaderGroups()[0].headers.map((h: Header<Row, unknown>) => {
@@ -136,6 +136,7 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
                   <th key={h.id} style={{ width: h.getSize(), left: stuck }} data-col={h.column.id}
                       className={cn("group relative border-b bg-muted px-2 py-1.5 text-left",
                                     stuck !== undefined && "sticky z-30",
+                                    sorted && "th-sorted",
                                     highlight === h.column.id && "bg-primary/20")}>
                     <button onClick={h.column.getToggleSortingHandler()}
                             title={meta?.label || h.column.id}
@@ -167,15 +168,17 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
                     {opts && opts.length && opts.length <= DROPDOWN_MAX ? (
                       <select value={value}
                               onChange={(e) => h.column.setFilterValue(e.target.value || undefined)}
-                              className="h-6 w-full rounded border bg-background px-1 text-[11px]">
+                              className={cn("filter-control h-6 w-full rounded-md border px-1 text-[11px]",
+                                            value && "filter-active")}>
                         <option value="">All</option>
                         {opts.map((o) => <option key={o} value={o}>{o}</option>)}
                       </select>
                     ) : (
                       <input value={value} placeholder="Search…"
                              onChange={(e) => h.column.setFilterValue(e.target.value || undefined)}
-                             className="h-6 w-full rounded border bg-background px-1.5 text-[11px]
-                                        placeholder:text-muted-foreground/60" />
+                             className={cn("filter-control h-6 w-full rounded-md border px-1.5 text-[11px]",
+                                           "placeholder:text-muted-foreground/60",
+                                           value && "filter-active")} />
                     )}
                   </th>
                 )
@@ -187,7 +190,8 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
             {items.map((vi) => {
               const row = rows[vi.index]
               return (
-                <tr key={row.id} className="grid-row" style={{ height: ROW_H }}>
+                <tr key={row.id} className={cn("grid-row", vi.index % 2 === 1 && "row-alt")}
+                    style={{ height: ROW_H }}>
                   <td className="num-cell sticky left-0 z-10 border-b bg-surface px-2
                                  text-[10px] text-muted-foreground">{vi.index + 1}</td>
                   {row.getVisibleCells().map((cell) => {
@@ -200,7 +204,7 @@ export function RecordTable({ page, busy, height = "34rem", onRefresh, highlight
                           className={cn("truncate border-b px-2",
                             meta?.numeric && "num-cell text-right",
                             stuck !== undefined && "sticky z-10 bg-surface font-medium",
-                            highlight === cell.column.id && "bg-primary/10")}>
+                            highlight === cell.column.id && "col-hot")}>
                         {v === "" ? <span className="text-muted-foreground/40">—</span> : v}
                       </td>
                     )

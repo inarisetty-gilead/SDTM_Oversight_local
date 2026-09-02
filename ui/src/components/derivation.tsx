@@ -10,22 +10,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CondsEditor, type Cond } from "./PipelineEditor"
+import { FN_LABELS } from "./fnLabels"
 
 type Dict = Record<string, unknown>
 
 /* ── the SAS functions, in a SAS programmer's words ─────────────────────── */
-export const FN_LABELS: Record<string, string> = {
-  substr: "SUBSTR — part of the text", scan: "SCAN — nth word",
-  strip: "STRIP — trim both ends", trim: "TRIM — trim trailing blanks",
-  left: "LEFT — trim leading blanks", compress: "COMPRESS — remove characters",
-  upcase: "UPCASE — uppercase", lowcase: "LOWCASE — lowercase",
-  propcase: "PROPCASE — Title Case", reverse: "REVERSE — reverse the text",
-  length: "LENGTH — number of characters", index: "INDEX — position of text",
-  tranwrd: "TRANWRD — find and replace", catx: "CATX — join with a separator",
-  cats: "CATS — join, trimming each", cat: "CAT — join as-is",
-  coalesce: "COALESCE — first non-missing", compbl: "COMPBL — squeeze blanks",
-  zeropad: "Zero-pad to a width", put: "PUT — number to text", input: "INPUT — text to number",
-}
 const FN_PARAMS: Record<string, Array<{ k: string; label: string; ph?: string }>> = {
   substr: [{ k: "start", label: "From position", ph: "1" }, { k: "len", label: "Length", ph: "to the end" }],
   scan: [{ k: "word", label: "Word number", ph: "-1 = last" }, { k: "delim", label: "Separated by", ph: "-" }],

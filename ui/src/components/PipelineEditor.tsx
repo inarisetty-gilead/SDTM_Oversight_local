@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { FN_LABELS } from "./derivation"
+import { FN_LABELS } from "./fnLabels"
 import { RecordTable } from "./DataView"
 import { DataGrid, Mono } from "./grid"
 import { Callout } from "./shell"

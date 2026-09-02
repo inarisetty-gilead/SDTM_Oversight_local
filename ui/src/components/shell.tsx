@@ -34,8 +34,10 @@ export function RailItem({ icon, label, meta, active, disabled, tone, onClick }:
     <button
       onClick={onClick} disabled={disabled}
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors",
-        active ? "bg-primary/12 font-medium text-primary" : "hover:bg-accent",
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-all",
+        active
+          ? "bg-gradient-to-r from-primary/15 to-primary/5 font-medium text-primary [box-shadow:inset_2.5px_0_0_0_var(--primary)]"
+          : "hover:translate-x-0.5 hover:bg-accent",
         disabled && "cursor-not-allowed opacity-40 hover:bg-transparent")}>
       {icon && <span className="shrink-0 opacity-70">{icon}</span>}
       <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -48,7 +50,7 @@ export function RailItem({ icon, label, meta, active, disabled, tone, onClick }:
 
 export function TopBar({ children }: { children: ReactNode }) {
   return (
-    <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-3 border-b
+    <header className="fancy-topbar sticky top-0 z-40 flex h-14 shrink-0 items-center gap-3
                        bg-background/85 px-4 backdrop-blur-md">
       {children}
     </header>
@@ -74,7 +76,7 @@ export function Panel({ title, description, actions, children, className }: {
   children: ReactNode; className?: string
 }) {
   return (
-    <section className={cn("rounded-xl border bg-surface", className)}>
+    <section className={cn("fancy-card fancy-card-hover rounded-xl border bg-surface", className)}>
       {(title || actions) && (
         <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
           <div className="min-w-0 flex-1">
@@ -93,7 +95,7 @@ export function Metric({ value, label, tone, hint }: {
   value: ReactNode; label: string; tone?: "good" | "warn" | "bad"; hint?: string
 }) {
   return (
-    <div className="rounded-xl border bg-surface px-4 py-3" title={hint}>
+    <div className="fancy-card fancy-card-hover rounded-xl border bg-surface px-4 py-3" title={hint}>
       <div className={cn("num-cell text-[26px] font-semibold leading-none tracking-tight",
         tone === "good" && "text-emerald-600 dark:text-emerald-400",
         tone === "warn" && "text-amber-600 dark:text-amber-400",

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   AlignLeft, ArrowDownAZ, ArrowDownWideNarrow, ArrowUpNarrowWide, Calendar,
   ChevronDown, ChevronRight, Hash, Key, Ruler, Sigma, Tag, Type,
@@ -48,6 +49,18 @@ export function DataGrid<T>({
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
+  // Ungrouped, height-bounded grids render only the rows in view — a 10,000-row table
+  // costs the same as a 40-row one, however long the study gets.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const VROW = dense ? 33 : 41
+  const flat = !groupBy && height !== "auto"
+  const virt = useVirtualizer({
+    count: flat ? rows.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => VROW,
+    overscan: 16,
+  })
+
   const groups = useMemo(() => {
     if (!groupBy) return [["", rows]] as [string, T[]][]
     const m = new Map<string, T[]>()
@@ -61,7 +74,7 @@ export function DataGrid<T>({
 
   if (!rows.length) {
     return (
-      <div className="rounded-xl border bg-surface p-8 text-center text-sm text-muted-foreground">
+      <div className="fancy-card rounded-xl border bg-surface p-8 text-center text-sm text-muted-foreground">
         {empty ?? "Nothing to show"}
       </div>
     )
@@ -70,12 +83,37 @@ export function DataGrid<T>({
   const pad = dense ? "py-1.5" : "py-2.5"
   let running = 0
 
+  const bodyRow = (r: T, i: number, n: number, fixed: boolean) => (
+    <tr key={rowKey ? rowKey(r, i) : `r-${n}`}
+        onClick={() => onRowClick?.(r)}
+        style={fixed ? { height: VROW } : undefined}
+        className={cn("grid-row transition-colors", n % 2 === 0 && "row-alt",
+                      onRowClick && "cursor-pointer")}>
+      {rowNumbers && (
+        <td className="num-cell sticky left-0 z-10 border-b bg-surface px-2 text-[11px]
+                       text-muted-foreground">{n}</td>
+      )}
+      {cols.map((c) => (
+        <td key={c.id}
+            className={cn("whitespace-nowrap border-b px-3", pad,
+              c.align === "right" && "num-cell text-right",
+              c.sticky && "sticky left-10 z-10 bg-surface font-medium")}>
+          {c.cell(r, n - 1)}
+        </td>
+      ))}
+    </tr>
+  )
+
+  const vItems = flat ? virt.getVirtualItems() : []
+  const vPadTop = vItems.length ? vItems[0].start : 0
+  const vPadBottom = vItems.length ? virt.getTotalSize() - vItems[vItems.length - 1].end : 0
+
   return (
-    <div className="thin-scroll overflow-auto rounded-xl border bg-surface"
+    <div ref={scrollRef} className="fancy-card thin-scroll overflow-auto rounded-xl border bg-surface"
          style={height === "auto" ? undefined : { maxHeight: height }}>
       <table className="w-full border-separate border-spacing-0 text-[13px]">
         <thead className="sticky top-0 z-20">
-          <tr>
+          <tr className="grid-head-row">
             {rowNumbers && (
               <th className="sticky left-0 z-30 w-10 border-b bg-muted/80 px-2 py-2 text-left
                              text-[11px] font-medium text-muted-foreground backdrop-blur">#</th>
@@ -90,7 +128,8 @@ export function DataGrid<T>({
                       "whitespace-nowrap border-b bg-muted/80 px-3 py-2 text-[11px] font-medium",
                       "uppercase tracking-wide text-muted-foreground backdrop-blur",
                       c.align === "right" ? "text-right" : "text-left",
-                      c.sticky && "sticky left-10 z-30")}>
+                      c.sticky && "sticky left-10 z-30",
+                      sorted && "th-sorted")}>
                   <button type="button" disabled={!onSort}
                           onClick={() => onSort?.(c.id)}
                           className={cn("inline-flex items-center gap-1.5",
@@ -116,17 +155,19 @@ export function DataGrid<T>({
                     {opts && opts.length > 0 ? (
                       <select value={filters?.[c.id] ?? ""}
                               onChange={(e) => onFilter(c.id, e.target.value)}
-                              className="h-6 w-full rounded border bg-background px-1 text-[11px]
-                                         font-normal normal-case text-foreground">
+                              className={cn("filter-control h-6 w-full rounded-md border px-1 text-[11px]",
+                                            "font-normal normal-case text-foreground",
+                                            filters?.[c.id] && "filter-active")}>
                         <option value="">All</option>
                         {opts.map((o) => <option key={o} value={o}>{o}</option>)}
                       </select>
                     ) : (
                       <input value={filters?.[c.id] ?? ""} placeholder="Search…"
                              onChange={(e) => onFilter(c.id, e.target.value)}
-                             className="h-6 w-full rounded border bg-background px-1.5 text-[11px]
-                                        font-normal normal-case text-foreground
-                                        placeholder:text-muted-foreground/60" />
+                             className={cn("filter-control h-6 w-full rounded-md border px-1.5 text-[11px]",
+                                           "font-normal normal-case text-foreground",
+                                           "placeholder:text-muted-foreground/60",
+                                           filters?.[c.id] && "filter-active")} />
                     )}
                   </th>
                 )
@@ -135,12 +176,18 @@ export function DataGrid<T>({
           )}
         </thead>
         <tbody>
-          {groups.map(([g, list]) => (
+          {flat ? (
+            <>
+              {vPadTop > 0 && <tr><td style={{ height: vPadTop }} /></tr>}
+              {vItems.map((vi) => bodyRow(rows[vi.index], vi.index, vi.index + 1, true))}
+              {vPadBottom > 0 && <tr><td style={{ height: vPadBottom }} /></tr>}
+            </>
+          ) : groups.map(([g, list]) => (
             <>
               {groupBy && (
                 <tr key={`g-${g}`}>
                   <td colSpan={cols.length + (rowNumbers ? 1 : 0)}
-                      className="sticky left-0 border-b bg-accent/40 px-3 py-1.5">
+                      className="group-band sticky left-0 border-b px-3 py-1.5">
                     <button onClick={() => setCollapsed((c) => ({ ...c, [g]: !c[g] }))}
                             className="inline-flex items-center gap-1.5 text-[12px] font-medium">
                       {collapsed[g] ? <ChevronRight className="h-3.5 w-3.5" />
@@ -154,25 +201,7 @@ export function DataGrid<T>({
               )}
               {!collapsed[g] && list.map((r, i) => {
                 running += 1
-                const n = running
-                return (
-                  <tr key={rowKey ? rowKey(r, i) : `${g}-${i}`}
-                      onClick={() => onRowClick?.(r)}
-                      className={cn("grid-row transition-colors", onRowClick && "cursor-pointer")}>
-                    {rowNumbers && (
-                      <td className="num-cell sticky left-0 z-10 border-b bg-surface px-2 text-[11px]
-                                     text-muted-foreground group-hover:bg-transparent">{n}</td>
-                    )}
-                    {cols.map((c) => (
-                      <td key={c.id}
-                          className={cn("whitespace-nowrap border-b px-3", pad,
-                            c.align === "right" && "num-cell text-right",
-                            c.sticky && "sticky left-10 z-10 bg-surface font-medium")}>
-                        {c.cell(r, n - 1)}
-                      </td>
-                    ))}
-                  </tr>
-                )
+                return bodyRow(r, i, running, false)
               })}
             </>
           ))}
