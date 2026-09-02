@@ -215,6 +215,231 @@ def to_block_args(sas: str, resolve) -> dict | None:
     return {"mtype": "derived", "recipe": "pipeline", "args": {"steps": steps}}
 
 
+# ── conditional statements: IF ... THEN x = ...; ELSE IF ...; ELSE x = ...; ────────────
+# A second, separate grammar from the expression parser above: SAS recodes are usually
+# written as IF-THEN-ELSE statements, not expressions, and need their own keyword-aware
+# tokenizer (THEN, ELSE, AND, IN, MISSING, comparison operators) rather than the function/
+# concatenation grammar `parse()` handles.
+
+_COND_KEYWORDS = {"IF", "THEN", "ELSE", "AND", "OR", "NOT", "IN", "MISSING"}
+_COMPARE_OPS = {"=": "eq", "eq": "eq", "^=": "ne", "~=": "ne", "<>": "ne", "ne": "ne",
+                ">": "gt", "gt": "gt", "<": "lt", "lt": "lt",
+                ">=": "ge", "ge": "ge", "<=": "le", "le": "le"}
+
+_COND_TOKEN = re.compile(r"""
+    \s*(?:
+      (?P<num>-?\d+(?:\.\d+)?)
+    | (?P<str>'[^']*'|"[^"]*")
+    | (?P<op><=|>=|\^=|~=|<>|=|<|>)
+    | (?P<name>[A-Za-z_][A-Za-z0-9_]*)
+    | (?P<punct>[(),;])
+    )
+""", re.X)
+
+
+def looks_conditional(sas: str) -> bool:
+    """True when the spec's SAS code is visibly an IF-THEN(-ELSE) statement — a shape a
+    naive raw assign can never stand in for, unlike a plain character-function transform."""
+    text = s(sas)
+    return bool(re.match(r"(?i)^\s*if\b", text) and re.search(r"(?i)\bthen\b", text))
+
+
+def _cond_tokenize(src: str) -> list[tuple[str, str]] | None:
+    out, pos = [], 0
+    src = src.strip()
+    while pos < len(src):
+        m = _COND_TOKEN.match(src, pos)
+        if not m or m.end() == pos:
+            return None
+        pos = m.end()
+        for k in ("num", "str", "op", "name", "punct"):
+            v = m.group(k)
+            if v is not None:
+                out.append((k, v))
+                break
+    return out
+
+
+class _CondParser:
+    def __init__(self, toks: list[tuple[str, str]]):
+        self.t, self.i = toks, 0
+
+    def peek(self) -> tuple[str, str]:
+        return self.t[self.i] if self.i < len(self.t) else ("end", "")
+
+    def take(self) -> tuple[str, str]:
+        tok = self.peek()
+        self.i += 1
+        return tok
+
+    def kw(self, *words: str) -> str | None:
+        """Consume a keyword name token (case-insensitive), else leave the position alone."""
+        k, v = self.peek()
+        if k == "name" and v.upper() in words:
+            self.take()
+            return v.upper()
+        return None
+
+    def take_punct(self, ch: str) -> bool:
+        if self.peek() == ("punct", ch):
+            self.take()
+            return True
+        return False
+
+    def take_ident(self) -> str | None:
+        k, v = self.peek()
+        if k == "name" and v.upper() not in _COND_KEYWORDS:
+            self.take()
+            return v
+        return None
+
+    def take_value(self) -> str | None:
+        k, v = self.peek()
+        if k == "str":
+            self.take()
+            return v[1:-1]
+        if k == "num":
+            self.take()
+            return v
+        return None
+
+
+def _value_list(p: _CondParser) -> list[str] | None:
+    if not p.take_punct("("):
+        return None
+    vals = []
+    while True:
+        v = p.take_value()
+        if v is None:
+            return None
+        vals.append(v)
+        if p.take_punct(")"):
+            return vals
+        if not p.take_punct(","):
+            return None
+
+
+def _condition(p: _CondParser, resolve) -> dict | None:
+    if p.kw("NOT"):
+        if not p.kw("MISSING") or not p.take_punct("("):
+            return None
+        ident = p.take_ident()
+        if ident is None or not p.take_punct(")"):
+            return None
+        try:
+            src = resolve(ident)
+        except Unresolved:
+            return None
+        return {"src": src, "op": "notmissing", "value": ""}
+    if p.kw("MISSING"):
+        if not p.take_punct("("):
+            return None
+        ident = p.take_ident()
+        if ident is None or not p.take_punct(")"):
+            return None
+        try:
+            src = resolve(ident)
+        except Unresolved:
+            return None
+        return {"src": src, "op": "missing", "value": ""}
+
+    ident = p.take_ident()
+    if ident is None:
+        return None
+    try:
+        src = resolve(ident)
+    except Unresolved:
+        return None
+
+    negate = bool(p.kw("NOT"))
+    if p.kw("IN"):
+        vals = _value_list(p)
+        if vals is None:
+            return None
+        return {"src": src, "op": "notin" if negate else "in", "value": ",".join(vals)}
+    if negate:
+        return None                                   # 'NOT' only makes sense before IN/MISSING
+
+    k, v = p.peek()
+    if k == "op":
+        op = v
+    elif k == "name" and v.lower() in _COMPARE_OPS:
+        op = v
+    else:
+        return None
+    p.take()
+    val = p.take_value()
+    if val is None:
+        return None
+    return {"src": src, "op": _COMPARE_OPS.get(op.lower(), "eq"), "value": val}
+
+
+def _and_cond(p: _CondParser, resolve) -> dict | None:
+    first = _condition(p, resolve)
+    if first is None:
+        return None
+    extra = []
+    while p.kw("AND"):
+        c = _condition(p, resolve)
+        if c is None:
+            return None
+        extra.append(c)
+    if extra:
+        first = {**first, "and": extra}
+    return first
+
+
+def _assign_rhs(p: _CondParser, target: str) -> dict | None:
+    name = p.take_ident()
+    if name is None or upper(name) != upper(target):
+        return None                                   # a branch must set the SAME variable
+    if p.peek() != ("op", "="):
+        return None
+    p.take()
+    val = p.take_value()
+    if val is None:
+        return None                                   # only literal branches are supported
+    return {"kind": "text", "text": val}
+
+
+def _eat_semi(p: _CondParser) -> None:
+    while p.take_punct(";"):
+        pass
+
+
+def parse_cond(sas: str, target: str, resolve) -> dict | None:
+    """'IF x = 1 THEN y = "A"; ELSE IF ... THEN y = "B"; ELSE y = "C";' -> {rules, else} for
+    the 'cond' recipe, or None outside the supported grammar (an OR, a non-literal branch, a
+    branch that sets a different variable, ...) — never a guess at what an unsupported
+    statement might have meant."""
+    toks = _cond_tokenize(sas)
+    if not toks:
+        return None
+    p = _CondParser(toks)
+    if not p.kw("IF"):
+        return None
+    rules: list[dict] = []
+    while True:
+        cond = _and_cond(p, resolve)
+        if cond is None or not p.kw("THEN"):
+            return None
+        then = _assign_rhs(p, target)
+        if then is None:
+            return None
+        rules.append({**cond, "then": then})
+        _eat_semi(p)
+        if not p.kw("ELSE"):
+            return {"rules": rules, "else": {"kind": "missing"}} if p.i == len(p.t) else None
+        if p.kw("IF"):
+            continue
+        else_val = _assign_rhs(p, target)
+        if else_val is None:
+            return None
+        _eat_semi(p)
+        return {"rules": rules, "else": else_val} if p.i == len(p.t) else None
+
+
+
 def describe(sas: str) -> str:
     node = parse(sas)
     return "" if node is None else upper(s(sas))

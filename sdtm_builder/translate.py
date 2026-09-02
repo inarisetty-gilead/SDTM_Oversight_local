@@ -237,10 +237,24 @@ def apply_sas_code(blocks: list[Block], store, base_dataset: str) -> tuple[int, 
         except (ValueError, TypeError, IndexError):
             got = None
 
+        # A recode written as IF ... THEN ... ELSE ... is a different grammar from the
+        # function/concatenation expressions above, and needs its own parser.
+        if got is None and sasexpr.looks_conditional(sas):
+            try:
+                cond_args = sasexpr.parse_cond(sas, b.variable, resolve)
+            except (ValueError, TypeError, IndexError):
+                cond_args = None
+            if cond_args is not None:
+                got = {"mtype": "derived", "recipe": "cond", "args": cond_args}
+
         if got is None:
             # Only report a refusal when the SAS code was the ONLY thing that could have
-            # mapped this variable — a plain raw assign stands on its own.
-            if b.mtype in ("unmapped", "derived") and b.recipe in ("", "copy_var", "sdtm_ref"):
+            # mapped this variable — a plain raw assign stands on its own. A visibly
+            # conditional statement is the exception: a naive raw assign would silently
+            # stand in for a recode it never applied, which is a wrong value, not a
+            # simplified one.
+            if (b.mtype in ("unmapped", "derived") and b.recipe in ("", "copy_var", "sdtm_ref")) \
+                    or sasexpr.looks_conditional(sas):
                 b.mtype, b.recipe, b.args = "unmapped", "", {}
                 b.reason = (f"the spec's SAS code is not a supported expression: {sas[:80]}"
                             + ("…" if len(sas) > 80 else ""))
