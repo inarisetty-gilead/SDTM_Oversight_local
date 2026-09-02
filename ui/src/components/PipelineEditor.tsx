@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { FN_LABELS } from "./fnLabels"
 import { RecordTable } from "./DataView"
 import { DataGrid, Mono } from "./grid"
@@ -213,26 +213,29 @@ function MergeInputs({ rows, datasets, domain, on, onChange }: {
 function JoinKeys({ value, inputs, domain, onChange }: {
   value: string[]; inputs: MergeInput[]; domain: string; onChange: (keys: string[]) => void
 }) {
-  const [shared, setShared] = useState<string[]>([])
-  const [union, setUnion] = useState<string[]>([])
+  const [byDataset, setByDataset] = useState<Record<string, string[]>>({})
   const names = inputs.map((i) => i.dataset).filter(Boolean).join("|")
 
   useEffect(() => { void (async () => {
-    const sets: string[][] = []
+    const next: Record<string, string[]> = {}
     for (const i of inputs) {
       if (!i.dataset) continue
-      try { sets.push((await api.columns(domain, i.dataset)).columns) } catch { /* skip */ }
+      try { next[i.dataset] = (await api.columns(domain, i.dataset)).columns } catch { next[i.dataset] = [] }
     }
-    setShared(sets.length < 2 ? []
-      : sets.reduce((a, b) => a.filter((c) => b.includes(c))).sort())
-    setUnion(Array.from(new Set(sets.flat())).sort())
+    setByDataset(next)
   })() }, [names, domain, inputs])
 
+  const sets = Object.values(byDataset)
+  const shared = sets.length < 2 ? []
+    : sets.reduce((a, b) => a.filter((c) => b.includes(c))).sort()
   const extra = value.filter((v) => !shared.includes(v))
-  // every column any of the chosen datasets has, minus the ones already offered as a
-  // shared name above — a dataset that doesn't have the one picked gets its own
-  // "<key> is called ..." picker on that dataset's row instead
-  const options = union.filter((c) => !shared.includes(c) && !value.includes(c))
+  // one group per dataset, not one flat list — five datasets' worth of columns run
+  // together is unreadable, and the group name is exactly what a picker needs anyway:
+  // which dataset actually has the column being added
+  const datasetNames = Array.from(new Set(inputs.map((i) => i.dataset).filter((d): d is string => !!d)))
+  const groups = datasetNames
+    .map((ds) => ({ ds, opts: (byDataset[ds] ?? []).filter((c) => !shared.includes(c) && !value.includes(c)) }))
+    .filter((g) => g.opts.length)
 
   return (
     <div className="space-y-2">
@@ -258,13 +261,22 @@ function JoinKeys({ value, inputs, domain, onChange }: {
           ))}
         </div>
       )}
-      {!!options.length && (
+      {!!groups.length && (
         <Select value="__none"
                 onValueChange={(v) => { if (v !== "__none") onChange([...value, v]) }}>
-          <SelectTrigger className="h-7 w-48 text-[11px]"><SelectValue placeholder="add a join key" /></SelectTrigger>
-          <SelectContent className="max-h-64">
+          <SelectTrigger className="h-7 w-56 text-[11px]"><SelectValue placeholder="add a join key" /></SelectTrigger>
+          <SelectContent className="max-h-72">
             <SelectItem value="__none" className="text-xs">add a join key…</SelectItem>
-            {options.map((c) => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+            {groups.map((g) => (
+              <SelectGroup key={g.ds}>
+                <SelectLabel className="text-[10px] uppercase text-muted-foreground">
+                  {datasetLabel(g.ds)}
+                </SelectLabel>
+                {g.opts.map((c) => (
+                  <SelectItem key={`${g.ds}-${c}`} value={c} className="text-xs">{c}</SelectItem>
+                ))}
+              </SelectGroup>
+            ))}
           </SelectContent>
         </Select>
       )}
@@ -272,9 +284,9 @@ function JoinKeys({ value, inputs, domain, onChange }: {
         {shared.length
           ? "If a dataset calls this key something else (e.g. AE's X_SUBJID for USUBJID), " +
             "set that in \u201c… is called\u201d on that dataset above."
-          : options.length
-          ? "No column name is shared by every dataset chosen above — pick one from any of " +
-            "them, then set what it is called in each dataset above."
+          : groups.length
+          ? "No column name is shared by every dataset chosen above — pick one below (grouped " +
+            "by the dataset that has it), then set what it is called in each other dataset above."
           : "Choose two or more datasets above first."}
       </p>
     </div>
