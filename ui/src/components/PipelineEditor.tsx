@@ -110,11 +110,13 @@ const FIELDS: Record<string, Field[]> = {
 }
 
 
-type MergeInput = { dataset?: string; columns?: string[] }
+type MergeInput = { dataset?: string; columns?: string[]; key?: string }
 
-/** Merge inputs as pickers: one row per dataset, with the columns to keep. */
-function MergeInputs({ rows, datasets, domain, onChange }: {
-  rows: MergeInput[]; datasets: string[]; domain: string
+/** Merge inputs as pickers: one row per dataset, with the columns to keep and, when this
+ *  dataset calls the first join key something else (AE's X_SUBJID for DM's USUBJID), what
+ *  its own column for that key is called. */
+function MergeInputs({ rows, datasets, domain, on, onChange }: {
+  rows: MergeInput[]; datasets: string[]; domain: string; on: string[]
   onChange: (rows: MergeInput[]) => void
 }) {
   const [cols, setCols] = useState<Record<string, string[]>>({})
@@ -134,6 +136,7 @@ function MergeInputs({ rows, datasets, domain, onChange }: {
 
   const set = (i: number, patch: MergeInput) =>
     onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
+  const keyName = on[0] ?? ""
 
   return (
     <div className="space-y-1.5">
@@ -142,7 +145,7 @@ function MergeInputs({ rows, datasets, domain, onChange }: {
         const chosen = r.columns ?? []
         return (
           <div key={i} className="rounded-md border p-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="w-5 text-[11px] text-muted-foreground">{i + 1}</span>
               <Select value={r.dataset || "__none"}
                       onValueChange={(v) => { set(i, { dataset: v === "__none" ? "" : v, columns: [] })
@@ -153,6 +156,20 @@ function MergeInputs({ rows, datasets, domain, onChange }: {
                   {datasets.map((d) => <SelectItem key={d} value={d} className="text-xs">{datasetLabel(d)}</SelectItem>)}
                 </SelectContent>
               </Select>
+              {!!keyName && (
+                <>
+                  <span className="text-[11px] text-muted-foreground">{keyName} is called</span>
+                  <Select value={r.key || "__same"}
+                          onValueChange={(v) => set(i, { key: v === "__same" ? "" : v })}>
+                    <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      <SelectItem value="__same" className="text-xs">{keyName} (same name)</SelectItem>
+                      {available.filter((c) => c !== keyName).map((c) =>
+                        <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
               <Button type="button" size="sm" variant="outline" className="h-8 text-xs"
                       disabled={!r.dataset}
                       onClick={() => setOpen(open === i ? null : i)}>
@@ -190,11 +207,14 @@ function MergeInputs({ rows, datasets, domain, onChange }: {
   )
 }
 
-/** Join keys, offered from the columns the chosen datasets actually share. */
+/** Join keys: the columns every chosen dataset shares by name, plus a place to type one
+ *  by hand when they don't share a name at all — a dataset that calls it something else
+ *  says so on its own row above ("USUBJID is called ..."). */
 function JoinKeys({ value, inputs, domain, onChange }: {
   value: string[]; inputs: MergeInput[]; domain: string; onChange: (keys: string[]) => void
 }) {
   const [shared, setShared] = useState<string[]>([])
+  const [custom, setCustom] = useState("")
   const names = inputs.map((i) => i.dataset).filter(Boolean).join("|")
 
   useEffect(() => { void (async () => {
@@ -207,23 +227,53 @@ function JoinKeys({ value, inputs, domain, onChange }: {
       : sets.reduce((a, b) => a.filter((c) => b.includes(c))).sort())
   })() }, [names, domain, inputs])
 
-  if (!shared.length) {
-    return (
-      <p className="text-[11px] text-muted-foreground">
-        Choose two or more datasets and their shared columns will be offered here. Left empty,
-        the merge joins on the subject key they have in common.
-      </p>
-    )
+  const extra = value.filter((v) => !shared.includes(v))
+  const addCustom = () => {
+    const k = custom.trim().toUpperCase()
+    if (k && !value.includes(k)) onChange([...value, k])
+    setCustom("")
   }
+
   return (
-    <div className="max-h-32 overflow-auto rounded-md border p-2">
-      {shared.map((c) => (
-        <label key={c} className="flex items-center gap-2 text-[11px]">
-          <input type="checkbox" checked={value.includes(c)}
-                 onChange={(e) => onChange(e.target.checked
-                   ? [...value, c] : value.filter((x) => x !== c))} />{c}
-        </label>
-      ))}
+    <div className="space-y-2">
+      {!!shared.length && (
+        <div className="max-h-32 overflow-auto rounded-md border p-2">
+          {shared.map((c) => (
+            <label key={c} className="flex items-center gap-2 text-[11px]">
+              <input type="checkbox" checked={value.includes(c)}
+                     onChange={(e) => onChange(e.target.checked
+                       ? [...value, c] : value.filter((x) => x !== c))} />{c}
+            </label>
+          ))}
+        </div>
+      )}
+      {!!extra.length && (
+        <div className="space-y-1">
+          {extra.map((c) => (
+            <div key={c} className="flex items-center gap-2 text-[11px]">
+              <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{c}</span>
+              <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px]"
+                      onClick={() => onChange(value.filter((x) => x !== c))}>Remove</Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-1.5">
+        <Input className="h-7 w-40 text-[11px]" placeholder="key name, e.g. USUBJID"
+               value={custom} onChange={(e) => setCustom(e.target.value)}
+               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom() } }} />
+        <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]"
+                disabled={!custom.trim()} onClick={addCustom}>
+          Add a join key
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        {shared.length
+          ? "If a dataset calls this key something else (e.g. AE's X_SUBJID for USUBJID), " +
+            "set that in \u201c… is called\u201d on that dataset above."
+          : "No column name is shared by every dataset chosen above — type the key's name here " +
+            "(e.g. USUBJID), then set what it is called in each dataset above."}
+      </p>
     </div>
   )
 }
@@ -835,7 +885,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                       </SelectContent></Select>)
                 } else if (f.t === "mergeinputs") {
                   control = <MergeInputs rows={(v as MergeInput[]) ?? []} datasets={datasetsFor(i)}
-                                         domain={detail.domain}
+                                         domain={detail.domain} on={(st.params.on as string[]) ?? []}
                                          onChange={(rows) => setParam(i, f.k, rows)} />
                 } else if (f.t === "joinkeys") {
                   control = <JoinKeys value={(v as string[]) ?? []}

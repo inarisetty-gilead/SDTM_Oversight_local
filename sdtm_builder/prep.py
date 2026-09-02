@@ -449,10 +449,22 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
             raise PrepError("merge needs at least two datasets")
         how = str(p.get("how", "left")).lower()
         on = [upper(x) for x in (p.get("on") or [])]
+        canon = on[0] if on else ""
         frames = []
         for spec in specs:
             d = _load(spec.get("dataset"), store, ns)
-            keep = [c for c in (spec.get("columns") or []) if c in d.columns]
+            # a dataset may carry the first join key under a different name — DM's USUBJID
+            # is AE's X_SUBJID — 'key' renames it to that name before the merge, so the two
+            # line up instead of silently finding no column in common
+            key_col = upper(s(spec.get("key")))
+            if key_col and canon and key_col != canon and key_col in d.columns:
+                if canon in d.columns:
+                    raise PrepError(f"{spec.get('dataset')} already has a column named "
+                                     f"{canon} — remove the join key override or drop it")
+                d = d.rename(columns={key_col: canon})
+            keep = [(canon if key_col and upper(c) == key_col else c)
+                    for c in (spec.get("columns") or [])]
+            keep = [c for c in keep if c in d.columns]
             if keep:                    # always retain join and subject keys alongside the pick
                 keep = list(dict.fromkeys(
                     keep + [k for k in on if k in d.columns]

@@ -449,16 +449,23 @@ def _py_prep_lines(g: _Py, step: dict) -> list[str]:
         specs = p.get("inputs") or []
         how = str(p.get("how", "left")).lower()
         on = [upper(x) for x in (p.get("on") or [])]
+        canon = on[0] if on else ""
         frames = []
         for i, spec_in in enumerate(specs):
             fr = g.frame(spec_in.get("dataset"))
-            keep = [upper(c) for c in (spec_in.get("columns") or [])]
+            var = f"_m{i}"
+            key_col = upper(s(spec_in.get("key")))
+            if key_col and canon and key_col != canon:
+                L.append(f'{var} = {fr}.rename(columns={{"{key_col}": "{canon}"}}) '
+                         f'if "{key_col}" in {fr}.columns else {fr}')
+            else:
+                L.append(f'{var} = {fr}')
+            keep = [(canon if key_col and upper(c) == key_col else upper(c))
+                    for c in (spec_in.get("columns") or [])]
             if keep:
                 keys = list(dict.fromkeys(keep + on + [k for k in SUBJECT_KEYS + ("STUDYID",)]))
-                L.append(f'_m{i} = {fr}[[c for c in {keys!r} if c in {fr}.columns]]')
-                frames.append(f"_m{i}")
-            else:
-                frames.append(fr)
+                L.append(f'{var} = {var}[[c for c in {keys!r} if c in {var}.columns]]')
+            frames.append(var)
         L.append(f"{name} = {frames[0]}")
         for fr in frames[1:]:
             key_expr = (repr(on) if on
@@ -1130,9 +1137,18 @@ def _sas_prep(step: dict) -> list[str]:
                 "run;"]
     if op == "merge":
         on = [upper(x) for x in (p.get("on") or [])] or ["USUBJID"]
-        ins = [norm_key(i.get("dataset")) for i in (p.get("inputs") or [])]
-        L = [f"proc sort data={d}; by {' '.join(on)}; run;" for d in ins]
-        return L + [f"data {name};", f"  merge {' '.join(ins)};",
+        canon = on[0]
+        L = []
+        sorted_names = []
+        for inp in p.get("inputs") or []:
+            ds = norm_key(inp.get("dataset"))
+            key_col = upper(s(inp.get("key")))
+            if key_col and key_col != canon:                # this dataset calls the key something else
+                L.append(f"data {ds}__k; set {ds}(rename=({key_col}={canon})); run;")
+                ds = f"{ds}__k"
+            L.append(f"proc sort data={ds}; by {' '.join(on)}; run;")
+            sorted_names.append(ds)
+        return L + [f"data {name};", f"  merge {' '.join(sorted_names)};",
                     f"  by {' '.join(on)};", "run;"]
     if op == "select":
         cols = " ".join(upper(c) for c in p.get("columns") or [])
