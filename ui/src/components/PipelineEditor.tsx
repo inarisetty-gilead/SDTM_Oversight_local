@@ -214,7 +214,7 @@ function JoinKeys({ value, inputs, domain, onChange }: {
   value: string[]; inputs: MergeInput[]; domain: string; onChange: (keys: string[]) => void
 }) {
   const [shared, setShared] = useState<string[]>([])
-  const [custom, setCustom] = useState("")
+  const [union, setUnion] = useState<string[]>([])
   const names = inputs.map((i) => i.dataset).filter(Boolean).join("|")
 
   useEffect(() => { void (async () => {
@@ -225,14 +225,14 @@ function JoinKeys({ value, inputs, domain, onChange }: {
     }
     setShared(sets.length < 2 ? []
       : sets.reduce((a, b) => a.filter((c) => b.includes(c))).sort())
+    setUnion(Array.from(new Set(sets.flat())).sort())
   })() }, [names, domain, inputs])
 
   const extra = value.filter((v) => !shared.includes(v))
-  const addCustom = () => {
-    const k = custom.trim().toUpperCase()
-    if (k && !value.includes(k)) onChange([...value, k])
-    setCustom("")
-  }
+  // every column any of the chosen datasets has, minus the ones already offered as a
+  // shared name above — a dataset that doesn't have the one picked gets its own
+  // "<key> is called ..." picker on that dataset's row instead
+  const options = union.filter((c) => !shared.includes(c) && !value.includes(c))
 
   return (
     <div className="space-y-2">
@@ -258,21 +258,24 @@ function JoinKeys({ value, inputs, domain, onChange }: {
           ))}
         </div>
       )}
-      <div className="flex items-center gap-1.5">
-        <Input className="h-7 w-40 text-[11px]" placeholder="key name, e.g. USUBJID"
-               value={custom} onChange={(e) => setCustom(e.target.value)}
-               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom() } }} />
-        <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]"
-                disabled={!custom.trim()} onClick={addCustom}>
-          Add a join key
-        </Button>
-      </div>
+      {!!options.length && (
+        <Select value="__none"
+                onValueChange={(v) => { if (v !== "__none") onChange([...value, v]) }}>
+          <SelectTrigger className="h-7 w-48 text-[11px]"><SelectValue placeholder="add a join key" /></SelectTrigger>
+          <SelectContent className="max-h-64">
+            <SelectItem value="__none" className="text-xs">add a join key…</SelectItem>
+            {options.map((c) => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      )}
       <p className="text-[11px] text-muted-foreground">
         {shared.length
           ? "If a dataset calls this key something else (e.g. AE's X_SUBJID for USUBJID), " +
             "set that in \u201c… is called\u201d on that dataset above."
-          : "No column name is shared by every dataset chosen above — type the key's name here " +
-            "(e.g. USUBJID), then set what it is called in each dataset above."}
+          : options.length
+          ? "No column name is shared by every dataset chosen above — pick one from any of " +
+            "them, then set what it is called in each dataset above."
+          : "Choose two or more datasets above first."}
       </p>
     </div>
   )
