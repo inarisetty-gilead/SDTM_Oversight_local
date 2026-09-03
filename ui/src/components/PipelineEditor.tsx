@@ -80,6 +80,7 @@ const FIELDS: Record<string, Field[]> = {
   select: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "collist", label: "Columns" }],
   drop: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "collist", label: "Columns" }],
   rename: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "renames", t: "renames", label: "Rename" }],
+  constant: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "constants", label: "Columns to add" }],
   derive: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "target", t: "text", ph: "new column", label: "Column to set" },
            { k: "else_value", t: "text", ph: "value when no rule matches", label: "Otherwise" }, { k: "rules", t: "rules", label: "Rules" }],
   compute: [{ k: "dataset", t: "ds", label: "Dataset" },
@@ -524,6 +525,41 @@ function RenamesEditor({ rows, columns, onChange }: {
   )
 }
 
+/** One or more new columns, each set to a fixed value on every record — no condition,
+ *  no source column, for when "derive" and its if/then rules are more than the job needs. */
+function ConstantsEditor({ rows, onChange }: {
+  rows: Array<{ name?: string; value?: string }>
+  onChange: (r: Array<{ name?: string; value?: string }>) => void
+}) {
+  const set = (i: number, patch: { name?: string; value?: string }) =>
+    onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <Input className="h-8 w-44 font-mono text-xs" placeholder="new column, e.g. EPOCH"
+                 value={r.name ?? ""} onChange={(e) => set(i, { name: e.target.value })} />
+          <span className="text-[11px] text-muted-foreground">=</span>
+          <Input className="h-8 w-56 text-xs" placeholder="value"
+                 value={r.value ?? ""} onChange={(e) => set(i, { value: e.target.value })} />
+          <Button type="button" size="icon" variant="ghost" className="h-7 w-7"
+                  onClick={() => onChange(rows.filter((_, k) => k !== i))}>
+            <Trash2 className="h-3 w-3" /></Button>
+        </div>
+      ))}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
+              onClick={() => onChange([...rows, {}])}>
+        <Plus className="mr-1 h-3 w-3" />Add a column
+      </Button>
+      {!rows.length && (
+        <p className="text-[11px] text-muted-foreground">
+          One row per new column — every record gets the same value, no condition needed.
+        </p>
+      )}
+    </div>
+  )
+}
+
 /** One dataset + its date column; the column list follows the chosen dataset. */
 function DateSourceRow({ row, datasets, domain, onChange, onRemove }: {
   row: { dataset?: string; date_col?: string }; datasets: string[]; domain: string
@@ -868,7 +904,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                 if (f.funcs && !f.funcs.includes(st.params.func as string)) return null
                 const v = st.params[f.k]
                 const wide = ["mergeinputs", "joinkeys", "conds", "rules", "branches",
-                              "renames", "datesources", "measures"].includes(f.t)
+                              "renames", "datesources", "measures", "constants"].includes(f.t)
                 let control
                 if (f.t === "ds") {
                   control = (
@@ -944,6 +980,9 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                                                    columns={columns}
                                                    onChange={(r) => setParam(i, f.k, r)} />}
                     </StepColumns>)
+                } else if (f.t === "constants") {
+                  control = <ConstantsEditor rows={(v as Array<{ name?: string; value?: string }>) ?? []}
+                                             onChange={(r) => setParam(i, f.k, r)} />
                 } else if (f.t === "measures") {
                   control = (
                     <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>

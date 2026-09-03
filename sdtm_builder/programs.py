@@ -490,6 +490,13 @@ def _py_prep_lines(g: _Py, step: dict) -> list[str]:
                    for r in p.get("renames") or [] if s(r.get("from")) and s(r.get("to"))}
         L.append(f'{name} = {g.frame(p.get("dataset"))}.rename(columns={mapping!r})')
         return L
+    if op == "constant":
+        L.append(f'{name} = {g.frame(p.get("dataset"))}.copy()')
+        for item in p.get("columns") or []:
+            col = upper(s(item.get("name")))
+            if col:
+                L.append(f'{name}["{col}"] = {s(item.get("value"))!r}')
+        return L
     if op == "filter":
         conds = p.get("conds") or [{"column": p.get("column"),
                                     "operator": p.get("operator", "=="), "value": p.get("value", "")}]
@@ -1161,6 +1168,10 @@ def _sas_prep(step: dict) -> list[str]:
                          for r in p.get("renames") or []
                          if s(r.get("from")) and s(r.get("to")))
         return [f"data {name}; set {norm_key(p.get('dataset'))}(rename=({pairs})); run;"]
+    if op == "constant":
+        sets = "; ".join(f"{upper(s(item.get('name')))} = {_sas_quote(s(item.get('value')))}"
+                         for item in p.get("columns") or [] if s(item.get("name")))
+        return [f"data {name}; set {norm_key(p.get('dataset'))};", f"  {sets};", "run;"]
     if op == "filter":
         conds = p.get("conds") or [{"column": p.get("column"),
                                     "operator": p.get("operator", "=="),

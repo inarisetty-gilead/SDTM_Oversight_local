@@ -311,6 +311,7 @@ PREP_OPS = {
     "select": "Select — keep only these columns",
     "drop": "Drop — remove these columns",
     "rename": "Rename — change column names",
+    "constant": "Add columns — set one or more new columns to a fixed value, no condition needed",
     "derive": "Derive — set a column with if/then rules",
     "compute": "Compute — make a column from other columns (fix a partial date, year, join text)",
     "aggregate": "Aggregate — group and summarise",
@@ -517,6 +518,15 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
             if frm and s(r.get("to")):
                 mapping[frm] = upper(r.get("to"))
         return src.rename(columns=mapping), extra
+
+    if op == "constant":
+        src = _load(p.get("dataset"), store, ns)
+        out = src.copy()
+        for item in p.get("columns") or []:
+            name = upper(s(item.get("name")))
+            if name:
+                out[name] = s(item.get("value"))
+        return out, extra
 
     if op == "derive":
         src = _load(p.get("dataset"), store, ns)
