@@ -1,4 +1,4 @@
-import { Download, FileText, GitCompare, Play } from "lucide-react"
+import { Download, FileText, GitCompare, PackageCheck, Play } from "lucide-react"
 import type { CompareRow, JobState } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -40,7 +40,7 @@ export function CompareView({
         subtitle="Check the delivered SDTM against the datasets rebuilt here, record by record and value by value." />
 
       <div className="space-y-4">
-        <Panel title="Vendor delivery" description="Folder holding the delivered SDTM datasets.">
+        <Panel icon={<PackageCheck className="h-4 w-4" />} tone="violet" title="Vendor delivery" description="Folder holding the delivered SDTM datasets.">
           <div className="flex flex-wrap gap-2">
             <div className="min-w-72 flex-1">
               <PathField value={vendorPath} onChange={setVendorPath} mode="dir"
@@ -128,7 +128,7 @@ export function CompareView({
               { value: errored, tone: "slate", label: "not comparable" },
             ]} />
 
-            <Panel title="Domains">
+            <Panel icon={<GitCompare className="h-4 w-4" />} tone="blue" title="Domains">
               <ClientGrid rows={rows} height="26rem" rowKey={(r) => r.domain}
                 cols={[
                   { id: "d", head: "Domain", kind: "key", sticky: true, width: 110,
@@ -234,7 +234,7 @@ export function CompareView({
               ))}
             </Accordion>
 
-            <Panel title="Reports">
+            <Panel icon={<FileText className="h-4 w-4" />} tone="teal" title="Reports">
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" asChild>
                   <a href="/api/download?name=comparison">

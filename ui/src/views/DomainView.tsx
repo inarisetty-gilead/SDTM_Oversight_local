@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowDown, ArrowLeft, ArrowUp, BookOpen, ExternalLink, Plus, Search, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowLeft, ArrowUp, BookOpen, CheckCircle2, Copy, ExternalLink, MessageSquare, Plus, Search, Table2, Trash2 } from "lucide-react"
 import { api } from "@/api"
 import type { CtInspect, DomainDetail, DomainReview, JobState, ReviewComment, ReviewStatus, VariableRow } from "@/api"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -248,7 +248,7 @@ function ReviewPane({ domain, review, variables, onSaved }: {
 
   return (
     <div className='max-w-3xl space-y-4'>
-      <Panel title='Review status'
+      <Panel icon={<CheckCircle2 className="h-4 w-4" />} tone="green" title='Review status'
              description='Your own record of whether this domain has been looked at, kept with the study.'>
         <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
           <F label='Status'>
@@ -268,7 +268,7 @@ function ReviewPane({ domain, review, variables, onSaved }: {
         </div>
       </Panel>
 
-      <Panel title='Comments'
+      <Panel icon={<MessageSquare className="h-4 w-4" />} tone="blue" title='Comments'
              description='One row per note — pick the variable it is about, or leave it as a general comment on the domain.'>
         <div className='space-y-2'>
           {comments.length === 0 && (
@@ -763,7 +763,7 @@ function DomainSettings({ detail, onDone }: { detail: DomainDetail; onDone: () =
 
   return (
     <div className="space-y-4">
-      <Panel title="Records">
+      <Panel icon={<Table2 className="h-4 w-4" />} tone="blue" title="Records">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <F label="Record source">
             <Select value={base || "__auto"} onValueChange={(v) => setBase(v === "__auto" ? "" : v)}>
@@ -792,7 +792,7 @@ function DomainSettings({ detail, onDone }: { detail: DomainDetail; onDone: () =
         </div>
       </Panel>
 
-      <Panel title="De-duplicate" description="Applied after the columns are built, before --SEQ numbering.">
+      <Panel icon={<Copy className="h-4 w-4" />} tone="red" title="De-duplicate" description="Applied after the columns are built, before --SEQ numbering.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <label className="flex items-center gap-2 text-xs">
             <Checkbox checked={ddOn} onCheckedChange={(v) => setDdOn(!!v)} />

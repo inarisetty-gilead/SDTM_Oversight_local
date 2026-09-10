@@ -41,12 +41,102 @@ const OP_META: Record<string, { icon: LucideIcon; tone: ChipTone }> = {
 }
 const DEFAULT_META = { icon: SplitSquareHorizontal, tone: "slate" as ChipTone }
 
+/** A short operator wording for step summaries — mirrors COND_OPS but compressed. */
+const OP_SHORT: Record<string, string> = {
+  "==": "=", "!=": "≠", in: "in", notin: "not in", contains: "contains",
+  startswith: "starts with", endswith: "ends with", ">": ">", "<": "<",
+  ">=": "≥", "<=": "≤", between: "between", missing: "is missing", notmissing: "is not missing",
+}
+
+/** One plain sentence per step — what it does, read without opening it. With twenty steps
+ *  in a pipeline, "which one filtered the consents?" must be answerable from the headers. */
+function stepSummary(st: Step): string {
+  const p = st.params as Record<string, unknown>
+  const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "")
+  const arr = (k: string) => (Array.isArray(p[k]) ? (p[k] as unknown[]) : [])
+  const names = (k: string) => arr(k).filter((x): x is string => typeof x === "string" && !!x)
+  const condText = (c: { column?: string; operator?: string; value?: string } | undefined) =>
+    c?.column ? `${c.column} ${OP_SHORT[c.operator ?? "=="] ?? c.operator ?? "="}${
+      c.value && !COND_NO_VALUE.has(c.operator ?? "") ? ` ${c.value}` : ""}` : ""
+  const more = (nAll: number, nShown: number) => (nAll > nShown ? ` +${nAll - nShown} more` : "")
+  switch (st.op) {
+    case "stack": {
+      const d = names("datasets")
+      return d.length ? `append ${d.slice(0, 3).join(" + ")}${more(d.length, 3)}` : "append datasets"
+    }
+    case "merge": {
+      const ins = arr("inputs").map((x) => (x as { dataset?: string }).dataset).filter(Boolean) as string[]
+      const on = names("on")
+      return ins.length
+        ? `join ${ins.slice(0, 3).join(" + ")}${more(ins.length, 3)}${on.length ? ` on ${on.join(", ")}` : ""}`
+        : "join datasets"
+    }
+    case "filter": {
+      const conds = arr("conds") as Array<{ column?: string; operator?: string; value?: string }>
+      const first = condText(conds[0])
+      return first ? `keep ${str("dataset") || "records"} where ${first}${more(conds.length, 1)}`
+                   : `filter ${str("dataset") || "…"}`
+    }
+    case "select": return `keep ${names("columns").length || "…"} column(s) of ${str("dataset") || "…"}`
+    case "drop": return `drop ${names("columns").length || "…"} column(s) from ${str("dataset") || "…"}`
+    case "rename": {
+      const r = arr("renames") as Array<{ from?: string; to?: string }>
+      const shown = r.filter((x) => x.from).slice(0, 2).map((x) => `${x.from}→${x.to ?? "?"}`)
+      return shown.length ? `rename ${shown.join(", ")}${more(r.length, 2)} in ${str("dataset") || "…"}`
+                          : `rename columns in ${str("dataset") || "…"}`
+    }
+    case "constant": {
+      const c = arr("columns") as Array<{ column?: string; value?: string }>
+      const shown = c.filter((x) => x.column).slice(0, 2).map((x) => `${x.column}="${x.value ?? ""}"`)
+      return shown.length ? `set ${shown.join(", ")}${more(c.length, 2)} on ${str("dataset") || "…"}`
+                          : `add constants to ${str("dataset") || "…"}`
+    }
+    case "derive": {
+      const t = names("targets").length ? names("targets") : (str("target") ? [str("target")] : [])
+      return t.length ? `derive ${t.slice(0, 3).join(", ")}${more(t.length, 3)} on ${str("dataset") || "…"}`
+                      : `derive column(s) on ${str("dataset") || "…"}`
+    }
+    case "compute": {
+      const fn = str("func"); const cols = names("columns")
+      return `${FN_LABELS[fn] ?? fn ?? "compute"}(${cols.slice(0, 3).join(", ")}${more(cols.length, 3)})${
+        str("out_col") ? ` → ${str("out_col")}` : ""} on ${str("dataset") || "…"}`
+    }
+    case "aggregate":
+      return `${str("func") || "summarise"} ${str("column") || "…"} per ${names("group_by").join(", ") || "…"}${
+        str("out_col") ? ` → ${str("out_col")}` : ""}`
+    case "date_extreme": {
+      const srcs = arr("sources").length
+      return `${str("func") === "max" ? "latest" : "earliest"} date across ${srcs || "…"} source(s)${
+        str("out_col") ? ` → ${str("out_col")}` : ""}`
+    }
+    case "sort": return `sort ${str("dataset") || "…"} by ${names("columns").join(", ") || "…"}`
+    case "dedup":
+      return `keep ${str("keep") || "first"} record per ${names("keys").join(", ") || "…"} of ${str("dataset") || "…"}`
+    case "split": {
+      const b = (arr("branches") as Array<{ name?: string }>).map((x) => x.name).filter(Boolean)
+      return b.length ? `split ${str("dataset") || "…"} into ${b.join(", ")}` : `split ${str("dataset") || "…"}`
+    }
+    case "transpose_long":
+      return `pivot ${names("value_vars").length || "…"} column(s) of ${str("dataset") || "…"} into rows`
+    case "transpose_findings":
+      return `reshape ${str("dataset") || "…"} into findings (${arr("measures").length || "…"} measurement(s))`
+    default: return str("dataset") ? `on ${str("dataset")}` : ""
+  }
+}
+
+/** Header band tint per op tone — the step's colour, but as a wash the header sits on. */
+const HEAD_TINT: Record<ChipTone, string> = {
+  violet: "bg-indigo-500/[0.07]", green: "bg-emerald-500/[0.07]", amber: "bg-amber-500/[0.08]",
+  red: "bg-rose-500/[0.07]", blue: "bg-sky-500/[0.07]", teal: "bg-teal-500/[0.07]",
+  fuchsia: "bg-purple-500/[0.07]", slate: "bg-muted/60",
+}
+
 /** A left-edge colour stripe on the step's whole card, matching its op's chip \u2014 findable by
  *  colour while scrolling, not just by reading every header. */
 const ACCENT_BORDER: Record<ChipTone, string> = {
-  violet: "border-l-violet-500", green: "border-l-emerald-500", amber: "border-l-amber-500",
+  violet: "border-l-indigo-500", green: "border-l-emerald-500", amber: "border-l-amber-500",
   red: "border-l-rose-500", blue: "border-l-sky-500", teal: "border-l-teal-500",
-  fuchsia: "border-l-fuchsia-500", slate: "border-l-muted-foreground/30",
+  fuchsia: "border-l-purple-500", slate: "border-l-muted-foreground/30",
 }
 
 /** Every field box gets a colour BY WHAT KIND OF THING IT PICKS, not by which op it belongs
@@ -63,20 +153,20 @@ const FIELD_TONE: Partial<Record<string, ChipTone>> = {
   measures: "teal", datesources: "teal",
 }
 const FIELD_TONE_BOX: Record<ChipTone, string> = {
-  violet: "border-violet-500/30 bg-violet-500/[0.06]",
+  violet: "border-indigo-500/30 bg-indigo-500/[0.06]",
   green: "border-emerald-500/30 bg-emerald-500/[0.06]",
   amber: "border-amber-500/30 bg-amber-500/[0.06]",
   red: "border-rose-500/30 bg-rose-500/[0.06]",
   blue: "border-sky-500/30 bg-sky-500/[0.06]",
   teal: "border-teal-500/30 bg-teal-500/[0.06]",
-  fuchsia: "border-fuchsia-500/30 bg-fuchsia-500/[0.06]",
+  fuchsia: "border-purple-500/30 bg-purple-500/[0.06]",
   slate: "border-transparent",
 }
 const FIELD_TONE_TEXT: Record<ChipTone, string> = {
-  violet: "text-violet-700 dark:text-violet-300", green: "text-emerald-700 dark:text-emerald-300",
+  violet: "text-indigo-700 dark:text-indigo-300", green: "text-emerald-700 dark:text-emerald-300",
   amber: "text-amber-700 dark:text-amber-300", red: "text-rose-700 dark:text-rose-300",
   blue: "text-sky-700 dark:text-sky-300", teal: "text-teal-700 dark:text-teal-300",
-  fuchsia: "text-fuchsia-700 dark:text-fuchsia-300", slate: "text-muted-foreground",
+  fuchsia: "text-purple-700 dark:text-purple-300", slate: "text-muted-foreground",
 }
 
 const FULL_ROWS = 100_000
@@ -977,8 +1067,14 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
   const [dirty, setDirty] = useState(false)
   const [saveFailed, setSaveFailed] = useState(false)
   // per-step minimize/maximize + the remembered previews toggle — as in SDTM Designer's
-  // prep studio (👁 previews on/off, steps collapse to their one-line summary)
-  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
+  // prep studio (👁 previews on/off, steps collapse to their one-line summary).
+  // A pipeline with several steps OPENS collapsed: a numbered list of plain sentences,
+  // where each row is opened only to edit it — twenty steps must read like a recipe,
+  // not twenty forms.
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>(() => {
+    const saved = (detail.pipeline_draft ?? detail.pipeline ?? []) as Step[]
+    return saved.length > 1 ? Object.fromEntries(saved.map((_, i) => [i, true])) : {}
+  })
   // the dataset name of the step whose FULL output is open in a dialog — "" when closed
   const [fullView, setFullView] = useState<string>("")
   // which output the domain's records follow. "" = the last step (the default). Pinning
@@ -1003,6 +1099,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
     const saved = (detail.pipeline_draft ?? detail.pipeline ?? []) as Step[]
     if (!touched.current && !steps.length && saved.length) {
       setSteps(JSON.parse(JSON.stringify(saved)))
+      if (saved.length > 1) setCollapsed(Object.fromEntries(saved.map((_, i) => [i, true])))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail])
@@ -1141,17 +1238,45 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
     while (used.has(`prep${n}`)) n++
     return `prep${n}`
   }
-  const insertStepAt = (idx: number) =>
+  // collapsed is keyed by position, so inserting/removing/reordering steps must move the
+  // flags with the steps they describe — and a freshly added step always opens for editing
+  const shiftCollapsedFrom = (idx: number) =>
+    setCollapsed((c) => {
+      const n: Record<number, boolean> = {}
+      for (const [k, v] of Object.entries(c)) {
+        const i = Number(k)
+        n[i >= idx ? i + 1 : i] = v
+      }
+      n[idx] = false
+      return n
+    })
+  const dropCollapsedAt = (idx: number) =>
+    setCollapsed((c) => {
+      const n: Record<number, boolean> = {}
+      for (const [k, v] of Object.entries(c)) {
+        const i = Number(k)
+        if (i === idx) continue
+        n[i > idx ? i - 1 : i] = v
+      }
+      return n
+    })
+  const swapCollapsed = (a: number, b: number) =>
+    setCollapsed((c) => ({ ...c, [a]: c[b] ?? false, [b]: c[a] ?? false }))
+  const insertStepAt = (idx: number) => {
+    shiftCollapsedFrom(idx)
     updateSteps((s) => [...s.slice(0, idx), { op: "stack", name: nextPrepName(s), params: {} }, ...s.slice(idx)])
+  }
   // "I did this for one raw dataset, now the same for another" — clone everything (every
   // field, every rule) and drop it right after the original, so the only thing left to do
   // is swap the dataset/column picker(s), not rebuild the whole step from scratch.
-  const duplicateStepAt = (idx: number) =>
+  const duplicateStepAt = (idx: number) => {
+    shiftCollapsedFrom(idx + 1)
     updateSteps((s) => {
       const copy: Step = JSON.parse(JSON.stringify(s[idx]))
       copy.name = nextPrepName(s)
       return [...s.slice(0, idx + 1), copy, ...s.slice(idx + 1)]
     })
+  }
 
   const setOp = (i: number, op: string) => updateSteps((s) => s.map((st, k) => (k === i ? { ...st, op, params: {} } : st)))
   const upd = (i: number, patch: Partial<Step>) =>
@@ -1278,6 +1403,35 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
         </p>
       )}
 
+      {/* Pipeline map: with many steps, an index answers "where is the one that…?" without
+          scrolling — each chip is the step's number, colour, op and output name; click jumps. */}
+      {steps.length >= 4 && (
+        <div className="mx-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed
+                        bg-muted/30 px-2.5 py-2">
+          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Map
+          </span>
+          {steps.map((s, k) => {
+            const m = OP_META[s.op] ?? DEFAULT_META
+            const Icon = m.icon
+            return (
+              <button key={k} type="button" title={stepSummary(s)}
+                      onClick={() => {
+                        setCollapsed((c) => ({ ...c, [k]: false }))
+                        document.getElementById(`prep-step-${k}`)
+                          ?.scrollIntoView({ behavior: "smooth", block: "center" })
+                      }}>
+                <Chip tone={m.tone} className="cursor-pointer transition hover:scale-105 hover:shadow-sm">
+                  <span className="font-semibold">{k + 1}</span>
+                  <Icon className="h-3 w-3" />
+                  <span className="font-mono">{s.name || `prep${k + 1}`}</span>
+                </Chip>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {steps.length > 0 && <InsertRow onInsert={() => insertStepAt(0)} />}
       {(() => {
         const childrenOf: Record<number, number[]> = {}
@@ -1299,43 +1453,71 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
         const parent = stepParent(steps, i)
         const siblings = parent !== null ? (childrenOf[parent] ?? []) : []
         return (
-          <div key={i}>
+          <div key={i} id={`prep-step-${i}`}>
           <div className="flex">
           <GraphGutter hasParent={parent !== null} hasChildren={(childrenOf[i] ?? []).length > 0}
                        isLastChild={siblings[siblings.length - 1] === i} />
           <div className={`min-w-0 flex-1 space-y-3 border-b border-l-4 px-3 pb-3 last:border-b-0 ${ACCENT_BORDER[meta.tone]}`}>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className={cn(`-mx-1 flex flex-wrap items-center gap-2 rounded-lg px-1 py-1 ${HEAD_TINT[meta.tone]}`,
+                               isMin && "cursor-pointer")}
+                 onClick={isMin ? () => setCollapsed((c) => ({ ...c, [i]: false })) : undefined}
+                 title={isMin ? "click to open this step" : undefined}>
               <Button size="icon" variant="ghost" className="h-7 w-7"
-                      title={isMin ? "maximise this step" : "minimise this step"}
-                      onClick={() => setCollapsed((c) => ({ ...c, [i]: !c[i] }))}>
+                      title={isMin ? "open this step" : "collapse this step to one line"}
+                      onClick={(e) => { e.stopPropagation(); setCollapsed((c) => ({ ...c, [i]: !c[i] })) }}>
                 {isMin ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               </Button>
               <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
               <Chip tone={meta.tone} className="shrink-0"><OpIcon className="h-3 w-3" /></Chip>
-              <Select value={st.op} onValueChange={(v) => setOp(i, v)}>
-                <SelectTrigger className="h-8 w-72 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>{ops.map((o) => {
-                  const m = OP_META[o.id] ?? DEFAULT_META
-                  const Icon = m.icon
-                  return (
-                    <SelectItem key={o.id} value={o.id} className="text-xs">
-                      <span className="flex items-center gap-2">
-                        <Chip tone={m.tone}><Icon className="h-3 w-3" /></Chip>{o.label}
-                      </span>
-                    </SelectItem>)
-                })}</SelectContent>
-              </Select>
-              <Input className="h-8 w-40 font-mono text-xs" value={st.name} placeholder="output name"
-                     title="the name this step's output is known by everywhere else in the pipeline"
-                     onChange={(e) => upd(i, { name: e.target.value })} />
-              <div className="ml-auto flex gap-1">
+              {isMin ? (
+                <>
+                  {/* collapsed: one readable sentence, no controls — the step as a recipe line */}
+                  <span className="shrink-0 text-[13px] font-medium">
+                    {(ops.find((o) => o.id === st.op)?.label ?? st.op).split(" — ")[0]}
+                  </span>
+                  <Mono>{st.name || `prep${i + 1}`}</Mono>
+                  <span className={`min-w-0 flex-1 truncate text-[12px] italic ${FIELD_TONE_TEXT[meta.tone]}`}
+                        title={stepSummary(st)}>
+                    {stepSummary(st)}
+                  </span>
+                  {rep && (rep.ok
+                    ? <span className="num-cell shrink-0 text-[11px] text-muted-foreground">
+                        {rep.rows?.toLocaleString()} rec</span>
+                    : <span className="shrink-0 text-[11px] font-medium text-destructive"
+                            title={rep.error}>✗ error</span>)}
+                </>
+              ) : (
+                <>
+                  <Select value={st.op} onValueChange={(v) => setOp(i, v)}>
+                    <SelectTrigger className="h-8 w-72 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>{ops.map((o) => {
+                      const m = OP_META[o.id] ?? DEFAULT_META
+                      const Icon = m.icon
+                      return (
+                        <SelectItem key={o.id} value={o.id} className="text-xs">
+                          <span className="flex items-center gap-2">
+                            <Chip tone={m.tone}><Icon className="h-3 w-3" /></Chip>{o.label}
+                          </span>
+                        </SelectItem>)
+                    })}</SelectContent>
+                  </Select>
+                  <Input className="h-8 w-40 font-mono text-xs" value={st.name} placeholder="output name"
+                         title="the name this step's output is known by everywhere else in the pipeline"
+                         onChange={(e) => upd(i, { name: e.target.value })} />
+                  <span className={`hidden min-w-0 flex-1 truncate text-[11.5px] italic xl:inline ${FIELD_TONE_TEXT[meta.tone]}`}
+                        title={stepSummary(st)}>
+                    {stepSummary(st)}
+                  </span>
+                </>
+              )}
+              <div className="ml-auto flex gap-1" onClick={(e) => e.stopPropagation()}>
                 <Button size="icon" variant="ghost" className="h-7 w-7" disabled={i === 0}
                         title="move this step up"
-                        onClick={() => updateSteps((s) => { const n = [...s]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; return n })}>
+                        onClick={() => { swapCollapsed(i - 1, i); updateSteps((s) => { const n = [...s]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; return n }) }}>
                   <ArrowUp className="h-3.5 w-3.5" /></Button>
                 <Button size="icon" variant="ghost" className="h-7 w-7" disabled={i === steps.length - 1}
                         title="move this step down"
-                        onClick={() => updateSteps((s) => { const n = [...s]; [n[i + 1], n[i]] = [n[i], n[i + 1]]; return n })}>
+                        onClick={() => { swapCollapsed(i, i + 1); updateSteps((s) => { const n = [...s]; [n[i + 1], n[i]] = [n[i], n[i + 1]]; return n }) }}>
                   <ArrowDown className="h-3.5 w-3.5" /></Button>
                 <Button size="icon" variant="ghost" className="h-7 w-7"
                         title="duplicate this step — everything is copied, so only the dataset/columns need changing"
@@ -1343,12 +1525,12 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                   <CopyPlus className="h-3.5 w-3.5" /></Button>
                 <Button size="icon" variant="ghost" className="h-7 w-7"
                         title="remove this step (Ctrl+Z to undo)"
-                        onClick={() => updateSteps((s) => s.filter((_, k) => k !== i))}>
+                        onClick={() => { dropCollapsedAt(i); updateSteps((s) => s.filter((_, k) => k !== i)) }}>
                   <Trash2 className="h-3.5 w-3.5" /></Button>
               </div>
             </div>
 
-            {(parent !== null || (childrenOf[i] ?? []).length > 0) && (
+            {!isMin && (parent !== null || (childrenOf[i] ?? []).length > 0) && (
               <p className="-mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-9 text-[11px] text-primary">
                 {parent !== null && (
                   <span className="inline-flex items-center gap-1">
@@ -1499,7 +1681,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
               })}
             </div>}
 
-            {rep && (rep.ok
+            {!isMin && rep && (rep.ok
               ? <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <span>→ <Mono>{rep.name}</Mono>{" "}
                     {rep.rows?.toLocaleString()} records, {rep.columns?.length} columns

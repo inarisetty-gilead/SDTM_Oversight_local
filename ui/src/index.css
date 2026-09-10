@@ -32,53 +32,59 @@
   --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* ── Enterprise palette ─────────────────────────────────────────────────────
+   A deep corporate blue carries every interactive accent, with a violet
+   partner hue reserved for gradients; neutrals are cool and quiet; status
+   colors (emerald / amber / rose) mark data, never decoration. */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(0.995 0.002 280);
+  --radius: 0.5rem;
+  --accent-2: oklch(0.55 0.19 292);
+  --background: oklch(0.982 0.003 255);
   --surface: oklch(1 0 0);
-  --rail: oklch(0.975 0.004 285);
-  --foreground: oklch(0.19 0.012 285);
+  --rail: oklch(0.968 0.004 255);
+  --foreground: oklch(0.21 0.015 260);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.19 0.012 285);
+  --card-foreground: oklch(0.21 0.015 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.19 0.012 285);
-  --primary: oklch(0.54 0.19 283);
+  --popover-foreground: oklch(0.21 0.015 260);
+  --primary: oklch(0.49 0.155 258);
   --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.965 0.005 285);
-  --secondary-foreground: oklch(0.28 0.012 285);
-  --muted: oklch(0.966 0.004 285);
-  --muted-foreground: oklch(0.53 0.016 285);
-  --accent: oklch(0.955 0.012 283);
-  --accent-foreground: oklch(0.34 0.06 283);
-  --destructive: oklch(0.58 0.22 25);
+  --secondary: oklch(0.962 0.006 255);
+  --secondary-foreground: oklch(0.29 0.015 258);
+  --muted: oklch(0.962 0.005 255);
+  --muted-foreground: oklch(0.51 0.018 258);
+  --accent: oklch(0.945 0.014 255);
+  --accent-foreground: oklch(0.33 0.06 258);
+  --destructive: oklch(0.55 0.2 25);
   --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.915 0.005 285);
-  --input: oklch(0.915 0.005 285);
-  --ring: oklch(0.54 0.19 283);
+  --border: oklch(0.908 0.006 255);
+  --input: oklch(0.908 0.006 255);
+  --ring: oklch(0.49 0.155 258);
 }
 
 .dark {
-  --background: oklch(0.155 0.008 285);
-  --surface: oklch(0.185 0.009 285);
-  --rail: oklch(0.135 0.008 285);
-  --foreground: oklch(0.965 0.002 285);
-  --card: oklch(0.195 0.009 285);
-  --card-foreground: oklch(0.965 0.002 285);
-  --popover: oklch(0.205 0.01 285);
-  --popover-foreground: oklch(0.965 0.002 285);
-  --primary: oklch(0.68 0.17 285);
-  --primary-foreground: oklch(0.16 0.01 285);
-  --secondary: oklch(0.26 0.012 285);
-  --secondary-foreground: oklch(0.95 0.002 285);
-  --muted: oklch(0.25 0.011 285);
-  --muted-foreground: oklch(0.7 0.015 285);
-  --accent: oklch(0.29 0.03 285);
-  --accent-foreground: oklch(0.93 0.02 285);
-  --destructive: oklch(0.7 0.19 22);
-  --destructive-foreground: oklch(0.16 0.01 285);
+  --accent-2: oklch(0.7 0.15 292);
+  --background: oklch(0.15 0.01 258);
+  --surface: oklch(0.183 0.011 258);
+  --rail: oklch(0.132 0.01 258);
+  --foreground: oklch(0.96 0.003 255);
+  --card: oklch(0.192 0.011 258);
+  --card-foreground: oklch(0.96 0.003 255);
+  --popover: oklch(0.203 0.012 258);
+  --popover-foreground: oklch(0.96 0.003 255);
+  --primary: oklch(0.67 0.13 258);
+  --primary-foreground: oklch(0.14 0.01 258);
+  --secondary: oklch(0.255 0.014 258);
+  --secondary-foreground: oklch(0.95 0.003 255);
+  --muted: oklch(0.245 0.013 258);
+  --muted-foreground: oklch(0.7 0.015 258);
+  --accent: oklch(0.28 0.028 258);
+  --accent-foreground: oklch(0.93 0.02 258);
+  --destructive: oklch(0.68 0.18 22);
+  --destructive-foreground: oklch(0.14 0.01 258);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 13%);
-  --ring: oklch(0.68 0.17 285);
+  --ring: oklch(0.67 0.13 258);
 }
 
 @layer base {
@@ -87,45 +93,48 @@
     @apply bg-background text-foreground;
     font-synthesis-weight: none;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
   ::selection {
-    background: color-mix(in oklch, var(--primary) 25%, transparent);
+    background: color-mix(in oklch, var(--primary) 22%, transparent);
   }
 }
 
-/* ── The fancy pass ─────────────────────────────────────────────────────────
+/* ── The system pass ────────────────────────────────────────────────────────
    Every primitive carries data-slot, so the whole application is restyled from
-   here: depth, motion and gradient accents once, everywhere. No component file
-   needs to know. All local — nothing is fetched. */
+   here: depth, glow and motion once, everywhere. No component file needs to
+   know. All local — nothing is fetched. */
 @layer components {
-  /* Buttons: primary gets a lit gradient and a lift; everything springs. */
+  /* Buttons: lit from above, glowing in the brand hue, springy under the hand. */
   [data-slot="button"] {
-    transition: transform .15s ease, box-shadow .2s ease, background-color .15s ease,
-                border-color .15s ease, color .15s ease, filter .15s ease, opacity .15s ease;
+    transition: transform .16s cubic-bezier(.2,.9,.3,1.4), box-shadow .2s ease,
+                background-color .15s ease, border-color .15s ease, color .15s ease,
+                filter .15s ease, opacity .15s ease;
   }
-  [data-slot="button"]:active:not(:disabled) { transform: translateY(1px) scale(.985); }
+  [data-slot="button"]:active:not(:disabled) { transform: translateY(1px) scale(.98); }
   [data-slot="button"][data-variant="default"] {
     background-image: linear-gradient(180deg,
-      color-mix(in oklch, var(--primary) 82%, white) 0%,
-      var(--primary) 45%,
-      color-mix(in oklch, var(--primary) 82%, black) 100%);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / .22),
+      color-mix(in oklch, var(--primary) 80%, white) 0%,
+      var(--primary) 55%,
+      color-mix(in oklch, var(--primary) 84%, black) 100%);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .25),
                 0 1px 2px rgb(0 0 0 / .2),
-                0 2px 8px -2px color-mix(in oklch, var(--primary) 55%, transparent);
+                0 3px 10px -2px color-mix(in oklch, var(--primary) 55%, transparent);
   }
   [data-slot="button"][data-variant="default"]:hover:not(:disabled) {
-    filter: brightness(1.07) saturate(1.05);
+    filter: brightness(1.08) saturate(1.05);
     transform: translateY(-1px);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / .25),
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .28),
                 0 2px 4px rgb(0 0 0 / .18),
-                0 6px 16px -4px color-mix(in oklch, var(--primary) 60%, transparent);
+                0 8px 20px -6px color-mix(in oklch, var(--primary) 65%, transparent);
   }
   [data-slot="button"][data-variant="destructive"] {
     background-image: linear-gradient(180deg,
-      color-mix(in oklch, var(--destructive) 85%, white),
-      var(--destructive) 50%,
-      color-mix(in oklch, var(--destructive) 85%, black));
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / .2), 0 1px 2px rgb(0 0 0 / .2);
+      color-mix(in oklch, var(--destructive) 82%, white),
+      var(--destructive) 55%,
+      color-mix(in oklch, var(--destructive) 84%, black));
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .2), 0 1px 2px rgb(0 0 0 / .2),
+                0 3px 10px -2px color-mix(in oklch, var(--destructive) 45%, transparent);
   }
   [data-slot="button"][data-variant="outline"] {
     box-shadow: 0 1px 2px rgb(0 0 0 / .05), inset 0 1px 0 rgb(255 255 255 / .5);
@@ -133,13 +142,17 @@
   .dark [data-slot="button"][data-variant="outline"] { box-shadow: 0 1px 2px rgb(0 0 0 / .3); }
   [data-slot="button"][data-variant="outline"]:hover:not(:disabled) {
     border-color: color-mix(in oklch, var(--primary) 45%, var(--border));
+    transform: translateY(-1px);
     box-shadow: 0 2px 6px rgb(0 0 0 / .07),
-                0 0 0 3px color-mix(in oklch, var(--primary) 7%, transparent);
+                0 0 0 3px color-mix(in oklch, var(--primary) 8%, transparent);
+  }
+  [data-slot="button"][data-variant="ghost"]:hover:not(:disabled) {
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--primary) 18%, transparent);
   }
 
   /* Inputs, textareas, selects: a soft inner well that lights up on focus. */
   [data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"] {
-    background: color-mix(in oklch, var(--surface) 78%, transparent);
+    background: color-mix(in oklch, var(--surface) 80%, transparent);
     box-shadow: inset 0 1px 2px rgb(0 0 0 / .045);
     transition: border-color .15s ease, box-shadow .2s ease, background .15s ease;
   }
@@ -154,86 +167,120 @@
   }
   [data-slot="input"]:focus-visible, [data-slot="textarea"]:focus-visible {
     background: var(--surface);
-    box-shadow: inset 0 1px 2px rgb(0 0 0 / .03),
-                0 2px 10px -2px color-mix(in oklch, var(--primary) 25%, transparent);
+    border-color: color-mix(in oklch, var(--primary) 55%, var(--border));
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 15%, transparent),
+                0 2px 12px -2px color-mix(in oklch, var(--primary) 25%, transparent);
   }
 
-  /* Floating layers: real depth, not a hairline. */
+  /* Floating layers: real depth and a whisper of brand light along the top edge. */
   [data-slot="select-content"], [data-slot="dropdown-menu-content"],
   [data-slot="tooltip-content"] {
-    box-shadow: 0 4px 12px -2px rgb(0 0 0 / .12), 0 12px 32px -8px rgb(0 0 0 / .18);
+    box-shadow: 0 4px 12px -2px rgb(0 0 0 / .12), 0 16px 40px -10px rgb(0 0 0 / .2);
   }
   [data-slot="dialog-content"], [data-slot="sheet-content"] {
-    box-shadow: 0 10px 30px -5px rgb(0 0 0 / .2), 0 30px 80px -20px rgb(0 0 0 / .3);
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 10%, transparent),
+                0 12px 34px -6px rgb(0 0 0 / .2), 0 36px 90px -20px rgb(0 0 0 / .32);
   }
   [data-slot="select-item"], [data-slot="dropdown-menu-item"] { transition: background .12s ease; }
 
-  /* Tabs: the active tab sits ON the page, the rest sit behind it. */
+  /* Tabs: the active tab sits ON the page, lit by a primary underline. */
   [data-slot="tabs-list"] {
-    background: color-mix(in oklch, var(--muted) 80%, transparent);
-    box-shadow: inset 0 1px 3px rgb(0 0 0 / .06);
+    background: color-mix(in oklch, var(--muted) 82%, transparent);
+    box-shadow: inset 0 1px 3px rgb(0 0 0 / .07);
   }
   [data-slot="tabs-trigger"] { transition: color .15s ease, box-shadow .2s ease, background .15s ease; }
   [data-slot="tabs-trigger"][data-state="active"] {
-    box-shadow: 0 1px 3px rgb(0 0 0 / .12), 0 3px 8px -2px rgb(0 0 0 / .08),
-                inset 0 -2px 0 color-mix(in oklch, var(--primary) 70%, transparent);
+    box-shadow: 0 1px 3px rgb(0 0 0 / .12), 0 4px 10px -3px rgb(0 0 0 / .1),
+                inset 0 -2px 0 var(--primary);
   }
 
   [data-slot="checkbox"] { transition: background .15s ease, border-color .15s ease, box-shadow .15s ease; }
   [data-slot="checkbox"][data-state="checked"] {
     background-image: linear-gradient(180deg,
-      color-mix(in oklch, var(--primary) 85%, white), var(--primary));
-    box-shadow: 0 1px 3px color-mix(in oklch, var(--primary) 45%, transparent);
+      color-mix(in oklch, var(--primary) 82%, white), var(--primary));
+    box-shadow: 0 1px 4px color-mix(in oklch, var(--primary) 50%, transparent);
   }
   [data-slot="progress-indicator"] {
-    background-image: linear-gradient(90deg,
-      var(--primary), color-mix(in oklch, var(--primary) 60%, oklch(0.7 0.15 200)));
+    background-image: linear-gradient(90deg, var(--primary), var(--accent-2));
+  }
+  [data-slot="skeleton"] {
+    background: linear-gradient(100deg, var(--muted) 40%,
+      color-mix(in oklch, var(--muted) 60%, white) 50%, var(--muted) 60%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
   }
 }
 
+@keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rise-in, [data-slot="skeleton"] { animation: none !important; }
+}
+
 @layer utilities {
-  /* the wash behind the app frame — three hues, still quiet */
+  /* the wash behind the app frame — two brand hues breathing at the top edge */
   .app-wash {
     background-image:
-      radial-gradient(60rem 30rem at 10% -8%, color-mix(in oklch, var(--primary) 14%, transparent), transparent 60%),
-      radial-gradient(48rem 26rem at 94% -12%, color-mix(in oklch, oklch(0.6 0.16 330) 9%, transparent), transparent 60%),
-      radial-gradient(40rem 22rem at 55% -14%, color-mix(in oklch, oklch(0.65 0.13 200) 7%, transparent), transparent 55%);
+      radial-gradient(64rem 30rem at 8% -10%, color-mix(in oklch, var(--primary) 12%, transparent), transparent 60%),
+      radial-gradient(52rem 26rem at 96% -12%, color-mix(in oklch, var(--accent-2) 9%, transparent), transparent 60%);
   }
-  /* brand name in the top bar */
+  /* brand name in the top bar — gradient ink, blue into violet */
   .brand-ink {
-    background-image: linear-gradient(92deg, var(--primary), oklch(0.62 0.2 330));
+    background-image: linear-gradient(92deg, var(--primary), var(--accent-2));
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
-  /* cards, panels, metric tiles, grids — one soft layered shadow language */
+  /* the brand mark and any hero icon disc — lit and glowing */
+  .glow-mark {
+    background-image: linear-gradient(135deg,
+      color-mix(in oklch, var(--primary) 80%, white),
+      var(--primary) 45%, var(--accent-2));
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .3),
+                0 2px 8px -1px color-mix(in oklch, var(--primary) 55%, transparent),
+                0 6px 20px -6px color-mix(in oklch, var(--accent-2) 55%, transparent);
+  }
+  /* cards, panels, metric tiles, grids — one layered shadow language with lift */
   .fancy-card {
-    box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 6px 20px -12px rgb(0 0 0 / .1);
-    transition: box-shadow .2s ease, transform .2s ease, border-color .2s ease;
+    box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 8px 24px -14px rgb(0 0 0 / .12);
+    transition: box-shadow .22s ease, transform .22s ease, border-color .22s ease;
   }
-  .dark .fancy-card { box-shadow: 0 1px 2px rgb(0 0 0 / .3), 0 8px 24px -12px rgb(0 0 0 / .5); }
+  .dark .fancy-card { box-shadow: 0 1px 2px rgb(0 0 0 / .3), 0 10px 28px -14px rgb(0 0 0 / .55); }
   .fancy-card-hover:hover {
-    box-shadow: 0 2px 4px rgb(0 0 0 / .05), 0 14px 34px -14px rgb(0 0 0 / .16);
-    border-color: color-mix(in oklch, var(--primary) 22%, var(--border));
+    transform: translateY(-2px);
+    border-color: color-mix(in oklch, var(--primary) 28%, var(--border));
+    box-shadow: 0 2px 4px rgb(0 0 0 / .05), 0 18px 40px -16px rgb(0 0 0 / .18),
+                0 0 0 3px color-mix(in oklch, var(--primary) 6%, transparent);
   }
-  /* top bar: a gradient hairline instead of a plain rule */
+  /* panel headers: a whisper of tint so structure reads at a glance */
+  .panel-head {
+    background: linear-gradient(180deg,
+      color-mix(in oklch, var(--primary) 4%, var(--surface)),
+      color-mix(in oklch, var(--surface) 60%, transparent));
+  }
+  /* top bar: glassy, finished with a gradient hairline instead of a plain rule */
   .fancy-topbar { border-bottom: none; position: relative; }
   .fancy-topbar::after {
     content: ""; position: absolute; inset: auto 0 0 0; height: 1px;
     background: linear-gradient(90deg,
-      color-mix(in oklch, var(--primary) 45%, var(--border)),
-      var(--border) 35%, var(--border) 65%,
-      color-mix(in oklch, oklch(0.62 0.2 330) 35%, var(--border)));
+      color-mix(in oklch, var(--primary) 55%, var(--border)),
+      var(--border) 40%, var(--border) 60%,
+      color-mix(in oklch, var(--accent-2) 45%, var(--border)));
   }
+  /* views and panels arrive, they don't pop */
+  .rise-in { animation: rise-in .28s cubic-bezier(.2,.8,.3,1) both; }
   /* grid rows: zebra stripes by DATA index (stable under virtual scrolling), tinted
      hover with a primary tick on the row number. All colors opaque, so frozen columns
      keep masking the content scrolling beneath them. */
   .row-alt td { background: color-mix(in oklch, var(--muted) 42%, var(--surface)); }
   .grid-row:hover td { background: color-mix(in oklch, var(--primary) 6%, var(--surface)); }
-  .grid-row:hover td:first-child { box-shadow: inset 2px 0 0 var(--primary); }
+  .grid-row:hover td:first-child { box-shadow: inset 2.5px 0 0 var(--primary); }
   /* grid header: a faint vertical sheen under the blur */
   .grid-head-row th {
     background: linear-gradient(180deg,
-      color-mix(in oklch, var(--muted) 92%, var(--primary) 4%),
-      color-mix(in oklch, var(--muted) 78%, transparent)) !important;
+      color-mix(in oklch, var(--muted) 92%, var(--primary) 5%),
+      color-mix(in oklch, var(--muted) 78%, var(--surface))) !important;
   }
   /* the column the table is sorted by carries a primary underline in its header */
   .th-sorted {
@@ -246,26 +293,26 @@
     box-shadow: inset 0 1px 2px rgb(0 0 0 / .04);
     transition: border-color .15s ease, box-shadow .15s ease;
   }
-  .filter-control:hover { border-color: color-mix(in oklch, var(--primary) 35%, var(--border)); }
+  .filter-control:hover { border-color: color-mix(in oklch, var(--primary) 30%, var(--border)); }
   .filter-control:focus {
     outline: none;
-    border-color: color-mix(in oklch, var(--primary) 55%, var(--border));
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 15%, transparent);
+    border-color: color-mix(in oklch, var(--primary) 50%, var(--border));
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 12%, transparent);
   }
   .filter-active {
-    border-color: color-mix(in oklch, var(--primary) 55%, var(--border));
-    background: color-mix(in oklch, var(--primary) 7%, var(--surface));
+    border-color: color-mix(in oklch, var(--primary) 50%, var(--border));
+    background: color-mix(in oklch, var(--primary) 6%, var(--surface));
     font-weight: 500;
   }
   /* the column being edited — outranks zebra and hover so it never vanishes */
   .grid-row td.col-hot,
   .grid-row:hover td.col-hot {
-    background: color-mix(in oklch, var(--primary) 12%, var(--surface));
+    background: color-mix(in oklch, var(--primary) 10%, var(--surface));
   }
   /* group bands in grouped grids */
   .group-band {
     background: linear-gradient(90deg,
-      color-mix(in oklch, var(--primary) 10%, var(--muted)),
+      color-mix(in oklch, var(--primary) 11%, var(--muted)),
       var(--muted) 55%);
   }
   .num-cell {

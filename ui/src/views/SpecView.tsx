@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { Download, RefreshCw, Search } from "lucide-react"
+import { BookOpen, Download, RefreshCw, Search } from "lucide-react"
 import { api } from "@/api"
 import type { ReviewComment, SpecCheckIssue, SpecDomain, SpecSheetRow } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -68,7 +68,7 @@ function SpecChecksPanel() {
 
   return (
     <div className="space-y-4">
-      <Panel title="Reference specs (optional)"
+      <Panel icon={<BookOpen className="h-4 w-4" />} tone="teal" title="Reference specs (optional)"
              description="Point at the company standards mapping and/or the TA spec — the same workbook shape as the mapping spec — to also flag a Codelist/Type/Role/Origin/Action that disagrees with the standard. The TA spec wins where both name the same variable.">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="space-y-1">

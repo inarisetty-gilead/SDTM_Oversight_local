@@ -3,7 +3,7 @@
 // every variable they fill. No JSON anywhere: the same dropdown builders as the
 // variable editor.
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ChevronDown, ChevronRight, FunctionSquare, Library, Plus, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronRight, FunctionSquare, Library, PenLine, Plus, Trash2, Wand2 } from "lucide-react"
 import { api } from "@/api"
 import type { CustomFn, DomainDetail, TemplateFn, TemplateResolved } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -73,7 +73,7 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
     <div className="space-y-4">
       {err && <Callout tone="bad">{err}</Callout>}
 
-      <Panel title="Standard derivations from the SAS templates"
+      <Panel icon={<FunctionSquare className="h-4 w-4" />} tone="violet" title="Standard derivations from the SAS templates"
              description="These fill variables the spec leaves without a workable mapping — only when their inputs exist in the study. Switch one off to keep it out of every build. Open one to see the derivation as it resolved for THIS study — and change it; the change applies on the next build.">
         <div className="divide-y">
           {templates.map((t) => (
@@ -82,7 +82,7 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
         </div>
       </Panel>
 
-      <Panel title="The sdtm.oak function set — in Python, all dropdowns"
+      <Panel icon={<FunctionSquare className="h-4 w-4" />} tone="teal" title="The sdtm.oak function set — in Python, all dropdowns"
              description="Every mapping algorithm from the pharmaverse {sdtm.oak} R package has its equivalent here. The building blocks are steps in a variable derivation or a custom function; the rest run automatically on every build.">
         <div className="divide-y">
           {OAK_MAP.map((r) => (
@@ -96,7 +96,7 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
         </div>
       </Panel>
 
-      <Panel title="Your custom functions"
+      <Panel icon={<Wand2 className="h-4 w-4" />} tone="fuchsia" title="Your custom functions"
              description="Reusable derivations of your own, saved as you type. Give one an auto-fill variable and it fills it in the chosen domains on every build; give it none and apply it yourself — on any variable, pick mapping type 'derived' and the derivation 'A function from your library'."
              actions={
                <Button size="sm" disabled={!ready}
@@ -113,7 +113,7 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
           {custom.map((fn) => (
             <div key={fn.name}
                  className={`flex flex-wrap items-center gap-3 rounded-md border p-2.5 ${fn.enabled ? "" : "opacity-55"}`}>
-              <FunctionSquare className="h-4 w-4 text-fuchsia-600" />
+              <FunctionSquare className="h-4 w-4 text-purple-600" />
               <span className="text-sm font-medium">{fn.name}</span>
               <Chip tone="fuchsia">custom</Chip>
               <span className="text-xs text-muted-foreground">
@@ -148,7 +148,7 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
       </Panel>
 
       {shared.length > 0 && (
-        <Panel title="Shared across studies"
+        <Panel icon={<Library className="h-4 w-4" />} tone="blue" title="Shared across studies"
                description="Functions any study can pull in. Adding one makes a COPY in this study — edit the copy freely, the shared original stays as it is. To publish a change back, edit your copy and press its Share button again.">
           <div className="space-y-2">
             {shared.map((fn) => {
@@ -185,7 +185,7 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
       )}
 
       {editing && (
-        <Panel title={origName ? `Edit — ${origName}` : "New function"}
+        <Panel icon={<PenLine className="h-4 w-4" />} tone="amber" title={origName ? `Edit — ${origName}` : "New function"}
                description="Write it once with the same building blocks as a variable derivation; the steps run top to bottom and the last value fills the variable."
                actions={
                  <div className="flex items-center gap-2">

@@ -55,8 +55,8 @@ export function StudiesView({ onOpen }: { onOpen: (id: string, name: string) => 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {studies.map((s) => (
               <button key={s.id} onClick={() => onOpen(s.id, s.name)}
-                      className="group rounded-xl border bg-surface p-4 text-left transition
-                                 hover:border-primary/50 hover:shadow-sm">
+                      className="group fancy-card fancy-card-hover rise-in rounded-xl border
+                                 bg-surface p-4 text-left">
                 <div className="flex items-start gap-2">
                   <h3 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{s.name}</h3>
                   <span role="button" tabIndex={0}

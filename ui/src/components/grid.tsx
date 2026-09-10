@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { useMemo, useRef, useState } from "react"
+import { Fragment, useMemo, useRef, useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   AlignLeft, ArrowDownAZ, ArrowDownWideNarrow, ArrowUpNarrowWide, Calendar,
@@ -183,9 +183,9 @@ export function DataGrid<T>({
               {vPadBottom > 0 && <tr><td style={{ height: vPadBottom }} /></tr>}
             </>
           ) : groups.map(([g, list]) => (
-            <>
+            <Fragment key={`g-${g}`}>
               {groupBy && (
-                <tr key={`g-${g}`}>
+                <tr>
                   <td colSpan={cols.length + (rowNumbers ? 1 : 0)}
                       className="group-band sticky left-0 border-b px-3 py-1.5">
                     <button onClick={() => setCollapsed((c) => ({ ...c, [g]: !c[g] }))}
@@ -203,7 +203,7 @@ export function DataGrid<T>({
                 running += 1
                 return bodyRow(r, i, running, false)
               })}
-            </>
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -284,13 +284,13 @@ export function ClientGrid<T>({ cols, rows, dropdownMax = 40, ...rest }: {
 export type ChipTone = "violet" | "green" | "amber" | "red" | "blue" | "slate" | "teal" | "fuchsia"
 
 const TONE: Record<ChipTone, string> = {
-  violet: "bg-violet-500/12 text-violet-700 ring-violet-500/25 dark:text-violet-300",
-  green: "bg-emerald-500/12 text-emerald-700 ring-emerald-500/25 dark:text-emerald-300",
-  amber: "bg-amber-500/15 text-amber-700 ring-amber-500/30 dark:text-amber-300",
-  red: "bg-rose-500/12 text-rose-700 ring-rose-500/25 dark:text-rose-300",
-  blue: "bg-sky-500/12 text-sky-700 ring-sky-500/25 dark:text-sky-300",
-  teal: "bg-teal-500/12 text-teal-700 ring-teal-500/25 dark:text-teal-300",
-  fuchsia: "bg-fuchsia-500/12 text-fuchsia-700 ring-fuchsia-500/25 dark:text-fuchsia-300",
+  violet: "bg-indigo-500/10 text-indigo-700 ring-indigo-500/25 dark:text-indigo-300",
+  green: "bg-emerald-500/10 text-emerald-700 ring-emerald-500/25 dark:text-emerald-300",
+  amber: "bg-amber-500/12 text-amber-700 ring-amber-500/30 dark:text-amber-300",
+  red: "bg-rose-500/10 text-rose-700 ring-rose-500/25 dark:text-rose-300",
+  blue: "bg-sky-500/10 text-sky-700 ring-sky-500/25 dark:text-sky-300",
+  teal: "bg-teal-500/10 text-teal-700 ring-teal-500/25 dark:text-teal-300",
+  fuchsia: "bg-purple-500/10 text-purple-700 ring-purple-500/25 dark:text-purple-300",
   slate: "bg-muted text-muted-foreground ring-border",
 }
 
@@ -299,7 +299,7 @@ export function Chip({ tone = "slate", children, className }: {
 }) {
   return (
     <span className={cn(
-      "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+      "inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset",
       TONE[tone], className)}>{children}</span>
   )
 }
@@ -325,15 +325,21 @@ export function SegmentBar({ segments, className }: {
 }) {
   const total = segments.reduce((a, s) => a + s.value, 0) || 1
   const FILL: Record<ChipTone, string> = {
-    violet: "bg-violet-500", green: "bg-emerald-500", amber: "bg-amber-500",
-    red: "bg-rose-500", blue: "bg-sky-500", teal: "bg-teal-500",
-    fuchsia: "bg-fuchsia-500", slate: "bg-muted-foreground/35",
+    violet: "bg-gradient-to-r from-indigo-500 to-indigo-400",
+    green: "bg-gradient-to-r from-emerald-500 to-emerald-400",
+    amber: "bg-gradient-to-r from-amber-500 to-amber-400",
+    red: "bg-gradient-to-r from-rose-500 to-rose-400",
+    blue: "bg-gradient-to-r from-sky-500 to-sky-400",
+    teal: "bg-gradient-to-r from-teal-500 to-teal-400",
+    fuchsia: "bg-gradient-to-r from-purple-500 to-purple-400",
+    slate: "bg-muted-foreground/35",
   }
   return (
-    <div className={cn("flex h-2 overflow-hidden rounded-full bg-muted", className)}>
+    <div className={cn("flex h-2.5 overflow-hidden rounded-full bg-muted shadow-inner", className)}>
       {segments.filter((s) => s.value > 0).map((s, i) => (
         <div key={i} title={`${s.label}: ${s.value.toLocaleString()}`}
-             className={FILL[s.tone]} style={{ width: `${(100 * s.value) / total}%` }} />
+             className={cn(FILL[s.tone], "transition-[width] duration-500")}
+             style={{ width: `${(100 * s.value) / total}%` }} />
       ))}
     </div>
   )

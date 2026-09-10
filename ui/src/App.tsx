@@ -184,12 +184,12 @@ function MainApp() {
     return (
       <div className="app-wash flex h-screen flex-col overflow-hidden">
         <TopBar>
-          <div className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-primary via-primary to-fuchsia-600 text-primary-foreground shadow-md shadow-primary/30">
+          <div className="flex items-center gap-2.5">
+            <div className="glow-mark grid h-8 w-8 place-items-center rounded-lg text-primary-foreground">
               <ShieldCheck className="h-4 w-4" />
             </div>
             <div className="leading-tight">
-              <div className="brand-ink text-[13px] font-bold">SDTM Oversight</div>
+              <div className="brand-ink text-[13px] font-bold tracking-tight">SDTM Oversight</div>
               <div className="text-[11px] text-muted-foreground">local only · no network · no AI</div>
             </div>
           </div>
@@ -212,17 +212,18 @@ function MainApp() {
   return (
     <div className="app-wash flex h-screen flex-col overflow-hidden">
       <TopBar>
-        <div className="flex items-center gap-2">
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-primary via-primary to-fuchsia-600 text-primary-foreground shadow-md shadow-primary/30">
+        <div className="flex items-center gap-2.5">
+          <div className="glow-mark grid h-8 w-8 place-items-center rounded-lg text-primary-foreground">
             <ShieldCheck className="h-4 w-4" />
           </div>
           <div className="leading-tight">
-            <div className="brand-ink text-[13px] font-bold">{study?.name ?? "SDTM Oversight"}</div>
+            <div className="brand-ink text-[13px] font-bold tracking-tight">{study?.name ?? "SDTM Oversight"}</div>
             <div className="text-[11px] text-muted-foreground">
               {study ? "saved as you work · local only" : "local only · no network · no AI"}
             </div>
           </div>
         </div>
+        <div className="mx-1 h-6 w-px bg-border" />
         <Button variant="ghost" size="sm" onClick={() => {
           if (study) void api.closeStudy(study.id)
           setStudy(null); setSpec(null); setRaw(null); setBuild(null); setCompare(null)

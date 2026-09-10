@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Sparkles } from "lucide-react"
+import { FileSpreadsheet, FolderOpen, Sparkles } from "lucide-react"
 import { api } from "@/api"
 import type { RawInfo, SpecInfo } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -30,7 +30,7 @@ export function SetupView({
         subtitle="Point the tool at the mapping spec and the raw extract. Everything after this reads only those two." />
 
       <div className="space-y-4">
-        <Panel title="Mapping specification"
+        <Panel icon={<FileSpreadsheet className="h-4 w-4" />} tone="violet" title="Mapping specification"
                description="One worksheet per SDTM domain. A title row above the headings is handled.">
           <div className="flex flex-wrap gap-2">
             <div className="min-w-72 flex-1">
@@ -84,9 +84,9 @@ export function SetupView({
           )}
         </Panel>
 
-        <Panel title="Raw datasets"
+        <Panel icon={<FolderOpen className="h-4 w-4" />} tone="blue" title="Raw datasets"
                description="Folder of extracts — .sas7bdat, .xpt, .csv, .xlsx, .parquet. Subfolders are searched."
-               actions={spec ? <SynthButton onGenerated={onSynth} /> : undefined}>
+               actions={spec ? <SynthButton onGenerated={onSynth} specPath={specPath} /> : undefined}>
           <div className="flex flex-wrap gap-2">
             <div className="min-w-72 flex-1">
               <PathField value={rawPath} onChange={setRawPath} mode="dir"
@@ -147,7 +147,9 @@ export function SetupView({
   )
 }
 
-function SynthButton({ onGenerated }: { onGenerated: (dir: string) => void }) {
+function SynthButton({ onGenerated, specPath }: {
+  onGenerated: (dir: string) => void; specPath: string
+}) {
   const [open, setOpen] = useState(false)
   const [subjects, setSubjects] = useState("40")
   const [visits, setVisits] = useState("5")
@@ -178,10 +180,22 @@ function SynthButton({ onGenerated }: { onGenerated: (dir: string) => void }) {
       </div>
       <Button size="sm" disabled={busy} onClick={() => void (async () => {
         setBusy(true); setError("")
+        const opts = { subjects: Number(subjects) || 40, visits: Number(visits) || 5, studyid }
         try {
-          const r = await api.synth({ subjects: Number(subjects) || 40, visits: Number(visits) || 5, studyid })
+          const r = await api.synth(opts)
           onGenerated(r.out_dir); setOpen(false)
-        } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+        } catch (e) {
+          // The server keeps one session for every window: if another window closed or
+          // switched the study, its spec is gone while this page still shows it loaded.
+          // The page knows the path — re-load the spec and retry once before giving up.
+          if (/load the mapping spec/i.test((e as Error).message) && specPath) {
+            try {
+              await api.setSpec(specPath)
+              const r = await api.synth(opts)
+              onGenerated(r.out_dir); setOpen(false)
+            } catch (e2) { setError((e2 as Error).message) }
+          } else setError((e as Error).message)
+        } finally { setBusy(false) }
       })()}>{busy ? "Generating…" : "Generate from spec"}</Button>
       <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
       {error && <span className="text-xs text-destructive">{error}</span>}

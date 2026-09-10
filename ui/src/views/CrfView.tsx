@@ -2,7 +2,7 @@
 // against the standards mapping (and the TA spec) — what is off-standard, what to do
 // about it, and what the standards expected on the CRF that never appears.
 import { useEffect, useState } from "react"
-import { Download, FileSearch, GitCompare, Play } from "lucide-react"
+import { AlertTriangle, Download, FileSearch, GitCompare, ListChecks, Play, Split, Tag } from "lucide-react"
 import { api } from "@/api"
 import type { AcrfReport, CrfCmp } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -65,7 +65,7 @@ export function CrfView() {
   const cc = cmp?.counts ?? {}
   return (
     <div className="space-y-4">
-      <Panel title="Annotated CRF vs the standards"
+      <Panel icon={<FileSearch className="h-4 w-4" />} tone="violet" title="Annotated CRF vs the standards"
              description="Point at the aCRF PDF and the standards mapping (the TA spec is optional). Every SDTM annotation is extracted — annotation boxes and flattened text — and judged against the specs; the reverse look lists what the standards collect on the CRF that was never annotated."
              actions={
                <div className="flex items-center gap-2">
@@ -134,7 +134,7 @@ export function CrfView() {
                     tone={(c.missing ?? 0) > 0 ? "warn" : "good"} />
           </Metrics>
 
-          <Panel title="Every annotation, judged"
+          <Panel icon={<ListChecks className="h-4 w-4" />} tone="blue" title="Every annotation, judged"
                  description={`Domains annotated: ${report.domains_annotated.join(", ") || "none recognised"}. Filter any column; the advice says what to do about each finding.`}>
             <ClientGrid rows={report.rows} height="26rem"
               rowKey={(r, i) => `${r.page}-${r.variable}-${i}`}
@@ -163,7 +163,7 @@ export function CrfView() {
               ]} />
           </Panel>
 
-          <Panel title="In the standards, never annotated"
+          <Panel icon={<AlertTriangle className="h-4 w-4" />} tone="amber" title="In the standards, never annotated"
                  description={report.origins_recorded
                    ? "Variables the standards collect on the CRF for the annotated domains, absent from the aCRF."
                    : "Variables the standards define for the annotated domains, absent from the aCRF. This standards workbook records no origins, so derived variables appear here too — read with that in mind."}>
@@ -190,7 +190,7 @@ export function CrfView() {
         </>
       )}
 
-      <Panel title="Vendor CRF vs the internal standards CRF"
+      <Panel icon={<GitCompare className="h-4 w-4" />} tone="violet" title="Vendor CRF vs the internal standards CRF"
              description="Point at your company's own annotated CRF: the questions of both CRFs are aligned — worded differently but related still pairs up, with the similarity shown — and each pair's SDTM mappings are compared. 'T-Primary Diagnosis' mapped to RS in the standards but FA by the vendor is exactly what this finds."
              actions={
                <Button onClick={() => void runCmp()} disabled={busy || !acrf || !stdAcrf}>
@@ -232,7 +232,7 @@ export function CrfView() {
                     tone={(cc.vendor_only ?? 0) > 0 ? "warn" : "good"} />
           </Metrics>
 
-          <Panel title="Question by question"
+          <Panel icon={<ListChecks className="h-4 w-4" />} tone="blue" title="Question by question"
                  description="Each aligned pair of questions with both mappings. Filter any column.">
             <ClientGrid rows={cmp.pairs} height="24rem"
               rowKey={(r, i) => `${r.standard_question}-${i}`}
@@ -260,7 +260,7 @@ export function CrfView() {
           </Panel>
 
           {(cmp.standard_only.length > 0 || cmp.vendor_only.length > 0) && (
-            <Panel title="Questions only one CRF has">
+            <Panel icon={<Split className="h-4 w-4" />} tone="amber" title="Questions only one CRF has">
               <ClientGrid rows={[...cmp.standard_only.map((x) => ({ ...x, side: "standards CRF only" })),
                                  ...cmp.vendor_only.map((x) => ({ ...x, side: "vendor CRF only" }))]}
                 height="16rem" rowKey={(r, i) => `${r.side}-${i}`}
@@ -280,7 +280,7 @@ export function CrfView() {
           )}
 
           {(cmp.ann_vendor_only.length > 0 || cmp.ann_standard_only.length > 0) && (
-            <Panel title="Annotation names only one CRF uses"
+            <Panel icon={<Tag className="h-4 w-4" />} tone="teal" title="Annotation names only one CRF uses"
                    description="Independent of question text — useful when a CRF's questions could not be read.">
               <div className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
                 <div>

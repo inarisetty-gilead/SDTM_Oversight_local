@@ -95,8 +95,14 @@ class RawStore:
             raise NotADirectoryError(f"raw data folder not found: {p}")
         store = cls(root=p, encoding=encoding)
         files = sorted(p.rglob("*") if recursive else p.glob("*"))
+        # Folders that never hold raw study data. A raw folder pointed at (or near) a code
+        # checkout would otherwise ingest thousands of package files as "datasets".
+        SKIP_DIRS = {"node_modules", ".venv", "venv", ".git", "__pycache__",
+                     "site-packages", ".tox", ".mypy_cache", "dist", "build"}
         for f in files:
             if not f.is_file() or f.name.startswith((".", "~$")):
+                continue
+            if any(part in SKIP_DIRS for part in f.parent.parts):
                 continue
             kind = READERS.get(f.suffix.lower())
             if not kind:
@@ -214,8 +220,17 @@ def _read(ref: DatasetRef, encoding: str) -> pd.DataFrame:
         df = pd.read_json(p)
     else:
         sep = "\t" if p.suffix.lower() == ".tsv" else None
-        df = pd.read_csv(p, sep=sep, engine="python", dtype=object,
-                         encoding=encoding, keep_default_na=True)
+        try:
+            df = pd.read_csv(p, sep=sep, engine="python", dtype=object,
+                             encoding=encoding, keep_default_na=True)
+        except Exception as exc:
+            # The sniffer cannot type a single-column file ("Could not determine
+            # delimiter") — those are legitimate; read them as plain comma CSV.
+            if sep is None and "delimiter" in str(exc).lower():
+                df = pd.read_csv(p, sep=",", engine="python", dtype=object,
+                                 encoding=encoding, keep_default_na=True)
+            else:
+                raise ValueError(f"could not read {p.name}: {exc}") from exc
     df = df.copy()
     df.columns = [upper(c) for c in df.columns]
     return df.reset_index(drop=True)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Database, Download, FileText, FolderOpen, Play } from "lucide-react"
+import { Database, Download, FileText, FolderOpen, Layers, Play, Settings2, Table2 } from "lucide-react"
 import type { BuildResults, DomainRow, DomainReview, JobState } from "@/api"
 import { api } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -48,7 +48,7 @@ export function BuildView({
 
       <div className="space-y-4">
         {specDomains.length > 0 && (
-          <Panel title="Domains to build"
+          <Panel icon={<Layers className="h-4 w-4" />} tone="violet" title="Domains to build"
                  description="Pick one or a few to work one domain at a time — each build ADDS to what is already built, it never wipes the others. Nothing selected builds every active domain.">
             <div className="flex flex-wrap items-center gap-1">
               {specDomains.map((d) => {
@@ -76,7 +76,7 @@ export function BuildView({
           </Panel>
         )}
 
-        <Panel title="Options">
+        <Panel icon={<Settings2 className="h-4 w-4" />} title="Options">
           <div className="flex flex-wrap items-end gap-4">
             <Field label="Output format">
               <Pick value={opts.fmt} onChange={(v) => setOpts({ fmt: v })} width="w-52" options={[
@@ -144,7 +144,7 @@ export function BuildView({
               { value: notBuilt, tone: "red", label: "not built" },
             ]} />
 
-            <Panel title="Domains" description="Click a domain to inspect its variables and edit its mapping.">
+            <Panel icon={<Table2 className="h-4 w-4" />} tone="blue" title="Domains" description="Click a domain to inspect its variables and edit its mapping.">
               <DataGrid rows={build.domains} height="30rem" rowKey={(d) => d.domain}
                 groupBy={(d) => d.ok ? "Built" : "Failed to build"}
                 onRowClick={(d) => onOpenDomain(d.domain)}
@@ -175,7 +175,7 @@ export function BuildView({
               </Accordion>
             )}
 
-            <Panel title="Output" description={build.out_dir}>
+            <Panel icon={<FolderOpen className="h-4 w-4" />} tone="teal" title="Output" description={build.out_dir}>
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={() => void api.reveal()}>
                   <FolderOpen className="mr-1.5 h-3.5 w-3.5" />Open folder
