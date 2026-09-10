@@ -444,6 +444,8 @@ def _py_prep_lines(g: _Py, step: dict) -> list[str]:
         for n in p.get("datasets") or []:
             parts.append(f'{g.frame(n)}.assign(__SOURCE_DATASET="{norm_key(n)}")')
         L.append(f'{name} = pd.concat([{", ".join(parts)}], ignore_index=True, sort=False)')
+        L.append(f'{name} = {name}[[c for c in {name}.columns if c != "__SOURCE_DATASET"] '
+                 f'+ ["__SOURCE_DATASET"]]  # keep it last regardless of schema differences')
         return L
     if op == "merge":
         specs = p.get("inputs") or []

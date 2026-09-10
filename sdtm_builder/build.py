@@ -257,7 +257,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
             f"{refused} variable(s) have SAS code this engine cannot interpret deterministically "
             "— map them by hand in the domain view rather than trusting a guess")
 
-    missing = automap.unmap_missing_sources(blocks, store)
+    missing = automap.unmap_missing_sources(blocks, store, prep_outputs=tuple(result.prep_outputs))
     if missing:
         result.warnings.append(
             f"{missing} variable(s) name a raw source that is not in this raw data — they are "

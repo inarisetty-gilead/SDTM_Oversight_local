@@ -114,14 +114,25 @@ def refine_listed_sources(blocks: list[Block], store) -> int:
     return changed
 
 
-def unmap_missing_sources(blocks: list[Block], store) -> int:
+def unmap_missing_sources(blocks: list[Block], store, prep_outputs: tuple[str, ...] = ()) -> int:
     """A spec that names `raw.ae.AETERM` when the study collected `event_term` has named a
     column that does not exist. Mark those blocks unmapped rather than letting them fail at
     execution time: unmapped is recoverable (name matching, hand mapping) and gives the
-    reader a far better reason than a column-not-found error."""
+    reader a far better reason than a column-not-found error.
+
+    `prep_outputs` are this build's own hand-built pipeline step outputs (already computed
+    and in `store` by the time this runs). A spec naming a raw column a custom step later
+    renames or derives — e.g. mapping TUORRES to a source the pipeline only produces AFTER
+    a rename step — must not be unmapped here just because the RAW form lacks that column;
+    `prep.retarget_to_output` repoints it correctly afterwards, but only if this pass leaves
+    the block alone."""
+    prep_keys = {k for k in (store.resolve(d) for d in prep_outputs) if k}
+
     def column_missing(ds: str, col: str) -> bool:
         key = store.resolve(ds)
-        return not key or upper(col) not in {upper(c) for c in store.columns(key)}
+        if key and upper(col) in {upper(c) for c in store.columns(key)}:
+            return False
+        return not any(upper(col) in {upper(c) for c in store.columns(k)} for k in prep_keys)
 
     missed = 0
     for b in blocks:

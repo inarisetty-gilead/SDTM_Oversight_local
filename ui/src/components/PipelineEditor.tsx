@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, Maximize2, Plus, Trash2 } from "lucide-react"
+import {
+  ArrowDown, ArrowUp, ArrowUpDown, CalendarClock, Calculator, ChevronDown, ChevronRight,
+  ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Eraser, Eye, EyeOff, Filter, GitMerge, Hash,
+  Layers, ListChecks, Loader2, Maximize2, PenLine, Plus, Redo2, RotateCcw, Rows3, Sigma, Split,
+  SplitSquareHorizontal, Table2, Trash2, Undo2, Wand2, type LucideIcon,
+} from "lucide-react"
 import { api } from "@/api"
 import type { DataPage, DomainDetail } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -7,10 +12,72 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { cn } from "@/lib/utils"
 import { FN_LABELS } from "./fnLabels"
 import { RecordTable } from "./DataView"
-import { DataGrid, Mono } from "./grid"
+import { Chip, DataGrid, Mono, type ChipTone } from "./grid"
 import { Callout } from "./shell"
+
+/** Every step reads the same at a glance, in any order, after any amount of time away:
+ *  one operation \u2192 one icon \u2192 one colour, everywhere the op appears (the step header,
+ *  the op picker itself, and the left edge of the step's whole card). */
+const OP_META: Record<string, { icon: LucideIcon; tone: ChipTone }> = {
+  stack: { icon: Layers, tone: "blue" },
+  merge: { icon: GitMerge, tone: "green" },
+  filter: { icon: Filter, tone: "amber" },
+  select: { icon: ListChecks, tone: "teal" },
+  drop: { icon: Eraser, tone: "red" },
+  rename: { icon: PenLine, tone: "violet" },
+  constant: { icon: Hash, tone: "slate" },
+  derive: { icon: Wand2, tone: "fuchsia" },
+  compute: { icon: Calculator, tone: "blue" },
+  aggregate: { icon: Sigma, tone: "violet" },
+  date_extreme: { icon: CalendarClock, tone: "amber" },
+  sort: { icon: ArrowUpDown, tone: "slate" },
+  dedup: { icon: Copy, tone: "red" },
+  split: { icon: Split, tone: "green" },
+  transpose_long: { icon: Rows3, tone: "teal" },
+  transpose_findings: { icon: Table2, tone: "teal" },
+}
+const DEFAULT_META = { icon: SplitSquareHorizontal, tone: "slate" as ChipTone }
+
+/** A left-edge colour stripe on the step's whole card, matching its op's chip \u2014 findable by
+ *  colour while scrolling, not just by reading every header. */
+const ACCENT_BORDER: Record<ChipTone, string> = {
+  violet: "border-l-violet-500", green: "border-l-emerald-500", amber: "border-l-amber-500",
+  red: "border-l-rose-500", blue: "border-l-sky-500", teal: "border-l-teal-500",
+  fuchsia: "border-l-fuchsia-500", slate: "border-l-muted-foreground/30",
+}
+
+/** Every field box gets a colour BY WHAT KIND OF THING IT PICKS, not by which op it belongs
+ *  to \u2014 "choose a dataset" reads the same blue whether it is in a filter, a merge or a sort,
+ *  so a plain white wall of boxes stops being "which one is the dataset again?". Kept to a
+ *  handful of tones, one per concept, so it stays scannable instead of a rainbow. */
+const FIELD_TONE: Partial<Record<string, ChipTone>> = {
+  ds: "blue", dslist: "blue",                  // which dataset(s)
+  mergeinputs: "green", joinkeys: "green",     // how datasets join
+  conds: "amber",                              // what records to keep
+  collist: "teal", colseq: "teal",             // which columns
+  rules: "fuchsia", branches: "fuchsia", targets: "fuchsia", elsevalues: "fuchsia",  // conditional logic
+  renames: "violet", constants: "violet",
+  measures: "teal", datesources: "teal",
+}
+const FIELD_TONE_BOX: Record<ChipTone, string> = {
+  violet: "border-violet-500/30 bg-violet-500/[0.06]",
+  green: "border-emerald-500/30 bg-emerald-500/[0.06]",
+  amber: "border-amber-500/30 bg-amber-500/[0.06]",
+  red: "border-rose-500/30 bg-rose-500/[0.06]",
+  blue: "border-sky-500/30 bg-sky-500/[0.06]",
+  teal: "border-teal-500/30 bg-teal-500/[0.06]",
+  fuchsia: "border-fuchsia-500/30 bg-fuchsia-500/[0.06]",
+  slate: "border-transparent",
+}
+const FIELD_TONE_TEXT: Record<ChipTone, string> = {
+  violet: "text-violet-700 dark:text-violet-300", green: "text-emerald-700 dark:text-emerald-300",
+  amber: "text-amber-700 dark:text-amber-300", red: "text-rose-700 dark:text-rose-300",
+  blue: "text-sky-700 dark:text-sky-300", teal: "text-teal-700 dark:text-teal-300",
+  fuchsia: "text-fuchsia-700 dark:text-fuchsia-300", slate: "text-muted-foreground",
+}
 
 const FULL_ROWS = 100_000
 
@@ -62,6 +129,118 @@ type Report = { step: number; name: string; op: string; ok: boolean; rows?: numb
 const datasetLabel = (d: string) =>
   d.startsWith("built_") ? `${d.slice(6).toUpperCase()} (built)` : d
 
+/** A precise, hover-revealed "insert exactly here" slot between two steps (and before the
+ *  first) — so putting a step in the middle never means adding it at the end and dragging
+ *  it up past everything else with the reorder arrows. */
+function InsertRow({ onInsert }: { onInsert: () => void }) {
+  return (
+    <div className="group relative h-3">
+      <div className="absolute inset-x-3 top-1/2 h-px -translate-y-1/2 bg-border opacity-0 transition-opacity group-hover:opacity-100" />
+      <button type="button" onClick={onInsert} title="insert a new step here"
+              className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1
+                         rounded-full border bg-background px-2 py-0.5 text-[10px] text-muted-foreground opacity-0
+                         shadow-sm transition-opacity hover:border-primary hover:text-primary group-hover:opacity-100">
+        <Plus className="h-3 w-3" />insert step here
+      </button>
+    </div>
+  )
+}
+
+/** A checkbox list (datasets to stack, columns to carry through or melt, ...) that can pop
+ *  into a full-size dialog — ticking a dozen items in a cramped, scrolling 7-row box is
+ *  where a reader stops trusting they got them all. The small box stays for a quick glance;
+ *  "maximise" opens the same list full-size, with a filter box, for checking many at once. */
+function MaximizableCheckList({ title, options, chosen, labelFor, onChange }: {
+  title: string; options: string[]; chosen: string[]
+  labelFor?: (opt: string) => string; onChange: (v: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState("")
+  const label = labelFor ?? ((x: string) => x)
+  const toggle = (opt: string, checked: boolean) =>
+    onChange(checked ? [...chosen, opt] : chosen.filter((x) => x !== opt))
+  const shown = q ? options.filter((o) => label(o).toLowerCase().includes(q.toLowerCase())) : options
+  return (
+    <div className="space-y-1">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-1 flex-wrap gap-1">
+          {chosen.map((o) => <Mono key={o}>{label(o)}</Mono>)}
+        </div>
+        <Button type="button" size="icon" variant="ghost" className="h-6 w-6 shrink-0"
+                title={`open a bigger view to check ${title.toLowerCase()} more easily`}
+                onClick={() => setOpen(true)}>
+          <Maximize2 className="h-3.5 w-3.5" /></Button>
+      </div>
+      <div className="max-h-28 space-y-1 overflow-auto rounded-md border p-2">
+        {options.map((o) => (
+          <label key={o} className="flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={chosen.includes(o)}
+                   onChange={(e) => toggle(o, e.target.checked)} />{label(o)}
+          </label>))}
+        {!options.length && <p className="text-[11px] text-muted-foreground">nothing to pick from</p>}
+      </div>
+      {open && (
+        <Dialog open onOpenChange={(o) => { if (!o) { setOpen(false); setQ("") } }}>
+          <DialogContent className="flex h-[80vh] w-full max-w-lg flex-col overflow-hidden">
+            <DialogHeader>
+              <DialogTitle className="text-[14px]">{title}
+                <span className="ml-2 text-[12px] font-normal text-muted-foreground">
+                  {chosen.length} of {options.length} selected</span>
+              </DialogTitle>
+            </DialogHeader>
+            <Input className="h-8 shrink-0 text-xs" placeholder="filter…" value={q}
+                   onChange={(e) => setQ(e.target.value)} />
+            <div className="min-h-0 flex-1 space-y-0.5 overflow-auto rounded-md border p-2">
+              {shown.map((o) => (
+                <label key={o} className="flex items-center gap-2 rounded px-1.5 py-1.5 text-sm hover:bg-accent">
+                  <input type="checkbox" checked={chosen.includes(o)}
+                         onChange={(e) => toggle(o, e.target.checked)} />{label(o)}
+                </label>))}
+              {!shown.length && <p className="text-[11px] text-muted-foreground">no match</p>}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  )
+}
+
+/** Which earlier step's output THIS step reads from, if any — so a single step (1) feeding
+ *  several later ones (2, 3, 4), each doing something different to its output, can be drawn
+ *  as one workflow (a trunk branching into siblings) instead of reading as four unrelated
+ *  boxes stacked on top of each other. */
+function stepParent(steps: Step[], idx: number): number | null {
+  const st = steps[idx]
+  const p = st.params as Record<string, unknown>
+  const ref = st.op === "stack" ? (p.datasets as string[] | undefined)?.[0]
+            : st.op === "merge" ? (p.inputs as Array<{ dataset?: string }> | undefined)?.[0]?.dataset
+            : (p.dataset as string | undefined)
+  if (!ref) return null
+  const j = steps.findIndex((s, k) => k < idx && (s.name || `prep${k + 1}`) === ref)
+  return j >= 0 ? j : null
+}
+const stepName = (steps: Step[], k: number) => steps[k]?.name || `prep${k + 1}`
+
+/** A git-graph-style connector in the gutter to the left of a step: a line in from a parent
+ *  above, a line out to children below, and a dot marking the step itself — so a group of
+ *  steps built off the same earlier output reads as a branch, not a coincidence. Bold and
+ *  in the app's accent colour on purpose — a hairline in the same grey as every other border
+ *  reads as decoration, not as "this is the thing that shows you the routing". */
+function GraphGutter({ hasParent, hasChildren, isLastChild }: {
+  hasParent: boolean; hasChildren: boolean; isLastChild: boolean
+}) {
+  if (!hasParent && !hasChildren) return null
+  return (
+    <div className="relative w-6 shrink-0">
+      {hasParent && <div className="absolute left-1/2 top-0 h-6 w-1 -translate-x-1/2 rounded-full bg-primary" />}
+      {hasParent && <div className="absolute left-3 top-6 h-1 w-3 rounded-full bg-primary" />}
+      {(hasChildren || (hasParent && !isLastChild)) &&
+        <div className="absolute left-1/2 top-6 bottom-0 w-1 -translate-x-1/2 rounded-full bg-primary" />}
+      <div className="absolute left-3 top-6 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary bg-background" />
+    </div>
+  )
+}
+
 
 type Field = { k: string; t: string; ph?: string; label?: string
                opts?: [string, string][]; funcs?: string[] }
@@ -81,8 +260,10 @@ const FIELDS: Record<string, Field[]> = {
   drop: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "collist", label: "Columns" }],
   rename: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "renames", t: "renames", label: "Rename" }],
   constant: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "constants", label: "Columns to add" }],
-  derive: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "target", t: "text", ph: "new column", label: "Column to set" },
-           { k: "else_value", t: "text", ph: "value when no rule matches", label: "Otherwise" }, { k: "rules", t: "rules", label: "Rules" }],
+  derive: [{ k: "dataset", t: "ds", label: "Dataset" },
+           { k: "targets", t: "list", ph: "one column, or several — e.g. TRSTAT, TRREASND", label: "Column(s) to set" },
+           { k: "rules", t: "rules", label: "If / else if" },
+           { k: "else_values", t: "elsevalues", label: "Otherwise (else — when nothing above matched)" }],
   compute: [{ k: "dataset", t: "ds", label: "Dataset" },
             { k: "func", t: "choicel", label: "Calculation", opts: COMPUTE_FUNCS },
             { k: "columns", t: "colseq", label: "From column(s)" },
@@ -427,11 +608,117 @@ export function CondsEditor({ conds, columns, onChange, firstWord = "where", dom
   )
 }
 
-type Rule = { conds?: Cond[]; value?: string }
+type Rule = { conds?: Cond[]; value?: string; values?: Record<string, string> }
 
-/** Derive rules: IF conditions THEN set the column to a value; rules run in order. */
-function RulesEditor({ rules, columns, onChange, domain, dataset }: {
-  rules: Rule[]; columns: string[]; onChange: (r: Rule[]) => void
+/** A comma-separated free-text list (new column names, sort directions, ...) — kept as its
+ *  OWN local text while the reader is typing. Re-deriving the input's value from the parsed
+ *  array on every keystroke (the naive way) erases a trailing ", " the instant it is typed —
+ *  the array has no empty last element to show, so the comma the reader just pressed vanishes
+ *  and typing a second item is impossible. Committing on blur (or the array changing from
+ *  OUTSIDE, e.g. undo) avoids that fight entirely. */
+function ListInput({ value, onChange, placeholder }: {
+  value: string[]; onChange: (v: string[]) => void; placeholder?: string
+}) {
+  const [text, setText] = useState(() => value.join(", "))
+  const known = useRef<string[]>(value)
+  useEffect(() => {
+    if (JSON.stringify(known.current) !== JSON.stringify(value)) {
+      known.current = value
+      setText(value.join(", "))
+    }
+  }, [value])
+  const commit = () => {
+    const parsed = text.split(",").map((x) => x.trim()).filter(Boolean)
+    known.current = parsed
+    onChange(parsed)
+  }
+  return (
+    <Input className="h-8 text-xs" placeholder={placeholder ?? "comma separated"} value={text}
+           onChange={(e) => setText(e.target.value)} onBlur={commit}
+           onKeyDown={(e) => { if (e.key === "Enter") { commit(); (e.target as HTMLInputElement).blur() } }} />
+  )
+}
+
+// zero-argument character functions only — 'substr(start,len)'/'scan(word,delim)'/... need
+// more than "which column", which this one-column reference has no room to ask for
+const DERIVE_REF_FUNCS = ["upcase", "lowcase", "propcase", "strip", "trim", "left", "reverse", "compbl", "length"]
+
+/** A rule's (or "otherwise"'s) value: usually a fixed literal, but SAS as often sets one
+ *  variable FROM another — `_trstresc=_trorres`, `_trorres=upcase(LSSTATUS)` — which typing
+ *  can only express as syntax ("=COLUMN"). This offers that as pickers instead: a toggle
+ *  into "read a column" mode, then the column and an optional single function on it. */
+function ValueOrColumn({ value, columns, onChange }: {
+  value: string; columns: string[]; onChange: (v: string) => void
+}) {
+  const m = /^=\s*(?:([A-Za-z_]\w*)\s*\(\s*)?([A-Za-z_][\w.]*)\s*\)?\s*$/.exec(value)
+  const isRef = value.startsWith("=")
+  const func = m?.[1]?.toLowerCase() ?? ""
+  const col = m?.[2] ?? ""
+
+  if (!isRef) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <Input className="h-8 w-48 text-xs" placeholder="value" value={value}
+               onChange={(e) => onChange(e.target.value)} />
+        <Button type="button" size="sm" variant="ghost" className="h-8 px-1.5 text-[11px] text-muted-foreground"
+                title="set this from another column instead of a fixed value"
+                onClick={() => onChange(`=${columns[0] ?? ""}`)}>
+          or a column…</Button>
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Select value={func || "__asis"}
+              onValueChange={(f) => onChange(f === "__asis" ? `=${col}` : `=${f}(${col})`)}>
+        <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__asis" className="text-xs">as is</SelectItem>
+          {DERIVE_REF_FUNCS.map((f) => <SelectItem key={f} value={f} className="text-xs">{f.toUpperCase()}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Select value={col || "__none"}
+              onValueChange={(c) => onChange(c === "__none" ? "=" : (func ? `=${func}(${c})` : `=${c}`))}>
+        <SelectTrigger className="h-8 w-40 text-xs"><SelectValue placeholder="column" /></SelectTrigger>
+        <SelectContent><SelectItem value="__none" className="text-xs">—</SelectItem>
+          {columns.map((c) => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Button type="button" size="sm" variant="ghost" className="h-8 px-1.5 text-[11px] text-muted-foreground"
+              title="type a fixed value instead" onClick={() => onChange("")}>
+        or a value…</Button>
+    </span>
+  )
+}
+
+/** The "otherwise" (else) value for every column a derive step sets, one row each — a bare
+ *  single input when there is only the one legacy target, so a simple derive still looks
+ *  simple. */
+function ElseValuesEditor({ targets, columns, value, onChange }: {
+  targets: string[]; columns: string[]; value: Record<string, string>
+  onChange: (v: Record<string, string>) => void
+}) {
+  if (!targets.length) {
+    return <p className="text-[11px] text-muted-foreground">name the column(s) to set first</p>
+  }
+  return (
+    <div className="space-y-1">
+      {targets.map((t) => (
+        <div key={t} className="flex items-center gap-1.5">
+          <Mono>{t}</Mono>
+          <ValueOrColumn value={value[t] ?? ""} columns={columns}
+                        onChange={(v) => onChange({ ...value, [t]: v })} />
+        </div>))}
+    </div>
+  )
+}
+
+/** Derive rules: IF conditions THEN set the column(s) to a value; rules run in order. One
+ *  condition setting SEVERAL columns together — a SAS IF/DO/END block assigning _TRSTAT
+ *  and _TRREASND under the same IF — is one rule with several "then set" rows, not several
+ *  separate rules that happen to repeat the same condition. */
+function RulesEditor({ rules, columns, targets, onChange, domain, dataset }: {
+  rules: Rule[]; columns: string[]; targets: string[]; onChange: (r: Rule[]) => void
   domain?: string; dataset?: string
 }) {
   const set = (i: number, patch: Rule) =>
@@ -448,16 +735,28 @@ function RulesEditor({ rules, columns, onChange, domain, dataset }: {
           </div>
           <CondsEditor conds={r.conds ?? []} columns={columns} firstWord="when" domain={domain} dataset={dataset}
                        onChange={(c) => set(i, { conds: c })} />
-          <div className="flex items-center gap-1.5">
-            <span className="w-10 text-right text-[11px] text-muted-foreground">then</span>
-            <span className="text-[11px] text-muted-foreground">set it to</span>
-            <Input className="h-8 w-56 text-xs" placeholder="value" value={r.value ?? ""}
-                   onChange={(e) => set(i, { value: e.target.value })} />
+          <div className="space-y-1">
+            {targets.map((t, ti) => (
+              <div key={t} className="flex items-center gap-1.5">
+                <span className="w-10 shrink-0 text-right text-[11px] text-muted-foreground">
+                  {ti === 0 ? "then" : ""}</span>
+                <span className="text-[11px] text-muted-foreground">set</span>
+                <Mono>{t}</Mono>
+                <span className="text-[11px] text-muted-foreground">to</span>
+                <ValueOrColumn columns={columns}
+                       value={targets.length > 1 ? ((r.values ?? {})[t] ?? "") : (r.value ?? "")}
+                       onChange={(v) => (targets.length > 1
+                         ? set(i, { values: { ...(r.values ?? {}), [t]: v } })
+                         : set(i, { value: v }))} />
+              </div>))}
+            {!targets.length && <p className="text-[11px] text-muted-foreground">name the column(s) to set first</p>}
           </div>
         </div>
       ))}
       <Button type="button" size="sm" variant="outline" className="h-7 text-xs"
-              onClick={() => onChange([...rules, { conds: [{ operator: "==" }], value: "" }])}>
+              onClick={() => onChange([...rules, targets.length > 1
+                ? { conds: [{ operator: "==" }], values: {} }
+                : { conds: [{ operator: "==" }], value: "" }])}>
         <Plus className="mr-1 h-3 w-3" />Add a rule
       </Button>
     </div>
@@ -773,16 +1072,98 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.domain])
 
+  // Undo/redo over the whole step list — the answer to "what if I did something and want
+  // to revert": every structural change (add, delete, reorder, insert, op swap) is one entry;
+  // plain typing coalesces into a single entry per pause instead of one per keystroke, so
+  // undo steps back through *edits*, not characters. Separately, "Revert to last saved"
+  // (below) jumps straight back to the last Apply & rebuild, skipping the whole history.
+  const [past, setPast] = useState<Step[][]>([])
+  const [future, setFuture] = useState<Step[][]>([])
+  const coalesceBase = useRef<Step[] | null>(null)
+  const coalesceTimer = useRef<number | undefined>(undefined)
+  const updateSteps = useCallback((updater: (s: Step[]) => Step[], coalesce = false) => {
+    setSteps((cur) => {
+      const next = updater(cur)
+      if (next === cur) return cur
+      if (coalesce) {
+        if (coalesceBase.current === null) coalesceBase.current = cur
+        window.clearTimeout(coalesceTimer.current)
+        coalesceTimer.current = window.setTimeout(() => {
+          const base = coalesceBase.current
+          coalesceBase.current = null
+          if (base) { setPast((p) => [...p.slice(-49), base]); setFuture([]) }
+        }, 600)
+      } else {
+        window.clearTimeout(coalesceTimer.current)
+        coalesceBase.current = null
+        setPast((p) => [...p.slice(-49), cur]); setFuture([])
+      }
+      return next
+    })
+  }, [])
+  const undo = () => {
+    if (!past.length) return
+    const prev = past[past.length - 1]
+    setPast((p) => p.slice(0, -1))
+    setFuture((f) => [...f, stepsRef.current])
+    setSteps(prev)
+  }
+  const redo = () => {
+    if (!future.length) return
+    const next = future[future.length - 1]
+    setFuture((f) => f.slice(0, -1))
+    setPast((p) => [...p, stepsRef.current])
+    setSteps(next)
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z") return
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === "INPUT" || tag === "TEXTAREA") return   // let native text-field undo work
+      e.preventDefault()
+      if (e.shiftKey) redo(); else undo()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [past, future])
+
+  // the last-applied (Apply & rebuild) pipeline, frozen at mount — "Revert" goes back to
+  // this exact baseline no matter how far editing has since wandered
+  const savedBaseline = useRef<Step[]>(JSON.parse(JSON.stringify(detail.pipeline ?? [])))
+  const revert = () => {
+    updateSteps(() => JSON.parse(JSON.stringify(savedBaseline.current)))
+  }
+
+  const nextPrepName = (list: Step[]) => {
+    const used = new Set(list.map((s, k) => s.name || `prep${k + 1}`))
+    let n = list.length + 1
+    while (used.has(`prep${n}`)) n++
+    return `prep${n}`
+  }
+  const insertStepAt = (idx: number) =>
+    updateSteps((s) => [...s.slice(0, idx), { op: "stack", name: nextPrepName(s), params: {} }, ...s.slice(idx)])
+  // "I did this for one raw dataset, now the same for another" — clone everything (every
+  // field, every rule) and drop it right after the original, so the only thing left to do
+  // is swap the dataset/column picker(s), not rebuild the whole step from scratch.
+  const duplicateStepAt = (idx: number) =>
+    updateSteps((s) => {
+      const copy: Step = JSON.parse(JSON.stringify(s[idx]))
+      copy.name = nextPrepName(s)
+      return [...s.slice(0, idx + 1), copy, ...s.slice(idx + 1)]
+    })
+
+  const setOp = (i: number, op: string) => updateSteps((s) => s.map((st, k) => (k === i ? { ...st, op, params: {} } : st)))
   const upd = (i: number, patch: Partial<Step>) =>
-    setSteps((s) => s.map((st, k) => (k === i ? { ...st, ...patch } : st)))
-  const setParam = (i: number, k: string, v: unknown) =>
-    setSteps((s) => s.map((st, idx) => {
+    updateSteps((s) => s.map((st, k) => (k === i ? { ...st, ...patch } : st)), true)
+  const setParam = (i: number, k: string, v: unknown, coalesce = false) =>
+    updateSteps((s) => s.map((st, idx) => {
       if (idx !== i) return st
       const p = { ...st.params }
       if (v === "" || v === undefined || (Array.isArray(v) && !v.length)) delete p[k]
       else p[k] = v
       return { ...st, params: p }
-    }))
+    }), coalesce)
 
   // earlier steps' outputs first, then the raw datasets, then any already-built domain
   // (as a distinct 'built_<domain>' entry, never the domain's raw dataset name — the two
@@ -799,19 +1180,42 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
     try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
 
+  // every step starts expanded (collapsed defaults to {}, i.e. nothing minimised) — this
+  // just flips them all at once, on top of each step's own chevron for one-at-a-time control
+  const allCollapsed = steps.length > 0 && steps.every((_, i) => collapsed[i])
+  const toggleAllCollapsed = () => {
+    const target = !allCollapsed
+    setCollapsed(Object.fromEntries(steps.map((_, i) => [i, target])))
+  }
+
   return (
     <div className="space-y-3 rounded-lg border">
       <div className="flex flex-wrap items-center gap-2 border-b bg-muted/50 px-3 py-2">
         <h4 className="flex-1 text-sm font-medium">
           Prepare the data{steps.length ? ` — ${steps.length} step${steps.length > 1 ? "s" : ""}` : ""}
         </h4>
+        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={!past.length}
+                title="undo the last change (Ctrl+Z)" onClick={undo}>
+          <Undo2 className="h-3.5 w-3.5" /></Button>
+        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={!future.length}
+                title="redo (Ctrl+Shift+Z)" onClick={redo}>
+          <Redo2 className="h-3.5 w-3.5" /></Button>
+        {steps.length > 0 && (
+          <Button size="sm" variant="ghost" className="h-7 text-xs"
+                  disabled={JSON.stringify(steps) === JSON.stringify(savedBaseline.current)}
+                  title="discard every change since the last Apply & rebuild" onClick={revert}>
+            <RotateCcw className="mr-1 h-3.5 w-3.5" />Revert to last saved</Button>
+        )}
         <Button size="sm" variant="outline" className="h-7 text-xs"
-                onClick={() => setSteps((s) => [...s, { op: "stack", name: `prep${s.length + 1}`, params: {} }])}>
+                onClick={() => insertStepAt(steps.length)}>
           <Plus className="mr-1 h-3 w-3" />Add step
         </Button>
         {detail.prep && (
           <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
-                  onClick={() => void act(async () => setSteps((await api.pipelineFromAuto(detail.domain)).steps as Step[]))}>
+                  onClick={() => void act(async () => {
+                    const s = (await api.pipelineFromAuto(detail.domain)).steps as Step[]
+                    updateSteps(() => s)
+                  })}>
             Start from the detected step
           </Button>
         )}
@@ -821,6 +1225,13 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
           {showPrev ? <Eye className="mr-1 h-3.5 w-3.5" /> : <EyeOff className="mr-1 h-3.5 w-3.5" />}
           previews {showPrev ? "on" : "off"}
         </Button>
+        {steps.length > 1 && (
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={toggleAllCollapsed}
+                  title={allCollapsed ? "expand every step" : "collapse every step to one line each"}>
+            {allCollapsed ? <ChevronsUpDown className="mr-1 h-3.5 w-3.5" /> : <ChevronsDownUp className="mr-1 h-3.5 w-3.5" />}
+            {allCollapsed ? "expand all" : "collapse all"}
+          </Button>
+        )}
         <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           {live ? <><Loader2 className="h-3 w-3 animate-spin" />saving…</>
                 : saveFailed ? <span className="text-destructive">draft not saved — will retry</span>
@@ -853,6 +1264,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
         {steps.length > 0 && (
           <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy}
                   onClick={() => void act(async () => {
+                    if (!window.confirm("Remove every step and rebuild without preparation? This applies immediately.")) return
                     await api.setPipeline(detail.domain, [])
                     await api.rebuild(detail.domain); onDone()
                   })}>Remove all</Button>
@@ -866,11 +1278,32 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
         </p>
       )}
 
-      {steps.map((st, i) => {
+      {steps.length > 0 && <InsertRow onInsert={() => insertStepAt(0)} />}
+      {(() => {
+        const childrenOf: Record<number, number[]> = {}
+        steps.forEach((_, k) => {
+          const p = stepParent(steps, k)
+          if (p !== null) (childrenOf[p] ??= []).push(k)
+        })
+        return steps.map((st, i) => {
         const rep = reports.find((r) => r.step === i + 1)
         const isMin = !!collapsed[i]
+        const meta = OP_META[st.op] ?? DEFAULT_META
+        const OpIcon = meta.icon
+        // a derive step saved before "several columns at once" existed still has the single
+        // legacy 'target' — read it the same way the engine does, so re-opening an old step
+        // never LOOKS like it lost its column just because the field renamed
+        const deriveTargets = (st.params.targets as string[])?.length
+          ? (st.params.targets as string[])
+          : (st.params.target ? [String(st.params.target)] : [])
+        const parent = stepParent(steps, i)
+        const siblings = parent !== null ? (childrenOf[parent] ?? []) : []
         return (
-          <div key={i} className="space-y-3 border-b px-3 pb-3 last:border-b-0">
+          <div key={i}>
+          <div className="flex">
+          <GraphGutter hasParent={parent !== null} hasChildren={(childrenOf[i] ?? []).length > 0}
+                       isLastChild={siblings[siblings.length - 1] === i} />
+          <div className={`min-w-0 flex-1 space-y-3 border-b border-l-4 px-3 pb-3 last:border-b-0 ${ACCENT_BORDER[meta.tone]}`}>
             <div className="flex flex-wrap items-center gap-2">
               <Button size="icon" variant="ghost" className="h-7 w-7"
                       title={isMin ? "maximise this step" : "minimise this step"}
@@ -878,25 +1311,58 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                 {isMin ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               </Button>
               <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
-              <Select value={st.op} onValueChange={(v) => upd(i, { op: v, params: {} })}>
+              <Chip tone={meta.tone} className="shrink-0"><OpIcon className="h-3 w-3" /></Chip>
+              <Select value={st.op} onValueChange={(v) => setOp(i, v)}>
                 <SelectTrigger className="h-8 w-72 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>{ops.map((o) =>
-                  <SelectItem key={o.id} value={o.id} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
+                <SelectContent>{ops.map((o) => {
+                  const m = OP_META[o.id] ?? DEFAULT_META
+                  const Icon = m.icon
+                  return (
+                    <SelectItem key={o.id} value={o.id} className="text-xs">
+                      <span className="flex items-center gap-2">
+                        <Chip tone={m.tone}><Icon className="h-3 w-3" /></Chip>{o.label}
+                      </span>
+                    </SelectItem>)
+                })}</SelectContent>
               </Select>
               <Input className="h-8 w-40 font-mono text-xs" value={st.name} placeholder="output name"
+                     title="the name this step's output is known by everywhere else in the pipeline"
                      onChange={(e) => upd(i, { name: e.target.value })} />
               <div className="ml-auto flex gap-1">
                 <Button size="icon" variant="ghost" className="h-7 w-7" disabled={i === 0}
-                        onClick={() => setSteps((s) => { const n = [...s]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; return n })}>
+                        title="move this step up"
+                        onClick={() => updateSteps((s) => { const n = [...s]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; return n })}>
                   <ArrowUp className="h-3.5 w-3.5" /></Button>
                 <Button size="icon" variant="ghost" className="h-7 w-7" disabled={i === steps.length - 1}
-                        onClick={() => setSteps((s) => { const n = [...s]; [n[i + 1], n[i]] = [n[i], n[i + 1]]; return n })}>
+                        title="move this step down"
+                        onClick={() => updateSteps((s) => { const n = [...s]; [n[i + 1], n[i]] = [n[i], n[i + 1]]; return n })}>
                   <ArrowDown className="h-3.5 w-3.5" /></Button>
                 <Button size="icon" variant="ghost" className="h-7 w-7"
-                        onClick={() => setSteps((s) => s.filter((_, k) => k !== i))}>
+                        title="duplicate this step — everything is copied, so only the dataset/columns need changing"
+                        onClick={() => duplicateStepAt(i)}>
+                  <CopyPlus className="h-3.5 w-3.5" /></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7"
+                        title="remove this step (Ctrl+Z to undo)"
+                        onClick={() => updateSteps((s) => s.filter((_, k) => k !== i))}>
                   <Trash2 className="h-3.5 w-3.5" /></Button>
               </div>
             </div>
+
+            {(parent !== null || (childrenOf[i] ?? []).length > 0) && (
+              <p className="-mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-9 text-[11px] text-primary">
+                {parent !== null && (
+                  <span className="inline-flex items-center gap-1">
+                    <ArrowUp className="h-3 w-3 rotate-180" />reads <Mono>{stepName(steps, parent)}</Mono>
+                  </span>
+                )}
+                {(childrenOf[i] ?? []).length > 0 && (
+                  <span className="inline-flex flex-wrap items-center gap-1">
+                    <ArrowDown className="h-3 w-3" />feeds
+                    {(childrenOf[i] ?? []).map((k) => <Mono key={k}>{stepName(steps, k)}</Mono>)}
+                  </span>
+                )}
+              </p>
+            )}
 
             {!isMin && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {(FIELDS[st.op] ?? []).map((f) => {
@@ -904,7 +1370,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                 if (f.funcs && !f.funcs.includes(st.params.func as string)) return null
                 const v = st.params[f.k]
                 const wide = ["mergeinputs", "joinkeys", "conds", "rules", "branches",
-                              "renames", "datesources", "measures", "constants"].includes(f.t)
+                              "renames", "datesources", "measures", "constants", "elsevalues"].includes(f.t)
                 let control
                 if (f.t === "ds") {
                   control = (
@@ -915,16 +1381,9 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                         {datasetsFor(i).map((d) => <SelectItem key={d} value={d} className="text-xs">{datasetLabel(d)}</SelectItem>)}
                       </SelectContent></Select>)
                 } else if (f.t === "dslist") {
-                  const chosen = (v as string[]) ?? []
-                  control = (
-                    <div className="max-h-28 space-y-1 overflow-auto rounded-md border p-2">
-                      {datasetsFor(i).map((d) => (
-                        <label key={d} className="flex items-center gap-2 text-xs">
-                          <input type="checkbox" checked={chosen.includes(d)}
-                                 onChange={(e) => setParam(i, f.k, e.target.checked
-                                   ? [...chosen, d] : chosen.filter((x) => x !== d))} />{datasetLabel(d)}
-                        </label>))}
-                    </div>)
+                  control = <MaximizableCheckList title={f.label ?? "Datasets"} options={datasetsFor(i)}
+                                                  chosen={(v as string[]) ?? []} labelFor={datasetLabel}
+                                                  onChange={(list) => setParam(i, f.k, list)} />
                 } else if (f.t.startsWith("choice:")) {
                   const opts = f.t.slice(7).split(",")
                   control = (
@@ -963,8 +1422,20 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                   control = (
                     <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
                       {(columns) => <RulesEditor rules={(v as Rule[]) ?? []} columns={columns}
+                                                 targets={deriveTargets}
                                                  domain={detail.domain} dataset={st.params.dataset as string}
                                                  onChange={(r) => setParam(i, f.k, r)} />}
+                    </StepColumns>)
+                } else if (f.t === "targets") {
+                  control = <ListInput value={deriveTargets} placeholder={f.ph}
+                                      onChange={(list) => setParam(i, f.k, list)} />
+                } else if (f.t === "elsevalues") {
+                  const effective = (v as Record<string, string>)
+                    ?? (st.params.else_value ? { [deriveTargets[0]]: String(st.params.else_value) } : {})
+                  control = (
+                    <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
+                      {(columns) => <ElseValuesEditor targets={deriveTargets} columns={columns} value={effective}
+                                                      onChange={(vals) => setParam(i, f.k, vals)} />}
                     </StepColumns>)
                 } else if (f.t === "branches") {
                   control = (
@@ -1000,9 +1471,8 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                                                datasets={datasetsFor(i)} domain={detail.domain}
                                                onChange={(r) => setParam(i, f.k, r)} />
                 } else if (f.t === "list") {
-                  control = <Input className="h-8 text-xs" placeholder={f.ph ?? "comma separated"}
-                                   value={Array.isArray(v) ? v.join(", ") : ((v as string) ?? "")}
-                                   onChange={(e) => setParam(i, f.k, e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} />
+                  control = <ListInput value={Array.isArray(v) ? v as string[] : []} placeholder={f.ph}
+                                      onChange={(list) => setParam(i, f.k, list)} />
                 } else if (f.t === "collist") {
                   // a typed column name that doesn't exist in the dataset fails silently at
                   // build time (e.g. "needs at least one grouping column" for a key that just
@@ -1010,28 +1480,19 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                   // that mistake out entirely
                   control = (
                     <StepColumns domain={detail.domain} dataset={st.params.dataset as string}>
-                      {(columns) => {
-                        const chosen = (v as string[]) ?? []
-                        return (
-                          <div className="max-h-28 space-y-1 overflow-auto rounded-md border p-2">
-                            {columns.map((c) => (
-                              <label key={c} className="flex items-center gap-2 text-xs">
-                                <input type="checkbox" checked={chosen.includes(c)}
-                                       onChange={(e) => setParam(i, f.k, e.target.checked
-                                         ? [...chosen, c] : chosen.filter((x) => x !== c))} />{c}
-                              </label>))}
-                            {!columns.length && <p className="text-[11px] text-muted-foreground">no columns</p>}
-                          </div>
-                        )
-                      }}
+                      {(columns) => <MaximizableCheckList title={f.label ?? "Columns"} options={columns}
+                                                          chosen={(v as string[]) ?? []}
+                                                          onChange={(list) => setParam(i, f.k, list)} />}
                     </StepColumns>)
                 } else {
                   control = <Input className="h-8 text-xs" placeholder={f.ph ?? ""} value={(v as string) ?? ""}
-                                   onChange={(e) => setParam(i, f.k, e.target.value)} />
+                                   onChange={(e) => setParam(i, f.k, e.target.value, true)} />
                 }
                 return (
-                  <div key={f.k} className={wide ? "col-span-full space-y-1" : "space-y-1"}>
-                    <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <div key={f.k} className={cn(wide ? "col-span-full" : "", "space-y-1 rounded-md border p-2",
+                                                FIELD_TONE_BOX[FIELD_TONE[f.t] ?? "slate"])}>
+                    <Label className={cn("text-[11px] uppercase tracking-wide",
+                                         FIELD_TONE_TEXT[FIELD_TONE[f.t] ?? "slate"])}>
                       {f.label ?? f.k}</Label>
                     {control}
                   </div>)
@@ -1056,8 +1517,12 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                                                                cell: (r: string[]) => r[ci] }))} />
             )}
           </div>
+          </div>
+          <InsertRow onInsert={() => insertStepAt(i + 1)} />
+          </div>
         )
-      })}
+      })
+      })()}
 
       {error && <div className="px-3 pb-3"><Callout tone="bad">{error}</Callout></div>}
       {fullView && <FullDataDialog dataset={fullView} onClose={() => setFullView("")} />}

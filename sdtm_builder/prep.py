@@ -14,6 +14,7 @@ code, and the tool always says which step it applied and why.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -202,7 +203,12 @@ def apply_stack(step: PrepStep, store) -> pd.DataFrame:
         frames.append(df)
     if not frames:
         raise ValueError(f"none of the datasets to stack are available: {', '.join(names)}")
-    return pd.concat(frames, ignore_index=True, sort=False)
+    out = pd.concat(frames, ignore_index=True, sort=False)
+    # stacking forms with different columns can otherwise land a column only the SECOND
+    # frame introduces after __SOURCE_DATASET, even though it was assigned last in every
+    # individual frame — always put it back at the end, so it is a reliable landmark
+    cols = [c for c in out.columns if c != "__SOURCE_DATASET"] + ["__SOURCE_DATASET"]
+    return out[cols]
 
 
 def apply_transpose(step: PrepStep, store) -> pd.DataFrame:
@@ -350,6 +356,34 @@ def _ci_col(df: pd.DataFrame, name) -> str:
     return ""
 
 
+_DERIVE_REF = re.compile(r"^=\s*(?:([A-Za-z_]\w*)\s*\(\s*)?([A-Za-z_][\w.]*)\s*\)?\s*$")
+
+
+def _derive_value(out: pd.DataFrame, val: str):
+    """A derive rule's value is normally a literal — `_TRSTAT='NOT DONE'`. But SAS often sets
+    one variable FROM another instead — `_trstresc=_trorres`, `_trorres=upcase(LSSTATUS)` —
+    which a fixed string can never express. '=COLUMN' or '=FUNC(COLUMN)' (one function, one
+    column — what the Compute step already offers) reads the data instead of typing it;
+    anything else is taken as the literal text it looks like."""
+    txt = s(val)
+    m = _DERIVE_REF.match(txt) if txt.startswith("=") else None
+    if not m:
+        return txt
+    func, colname = m.group(1), m.group(2)
+    col = _ci_col(out, colname)
+    if not col:
+        raise PrepError(f"'{colname}' is not a column in this dataset")
+    if not func:
+        return out[col]
+    func = func.lower()
+    if func not in ops_module.SAS_FUNCTIONS:
+        raise PrepError(f"'{func}' is not a supported function")
+    try:
+        return ops_module.apply_sas_function(func, [str_series(out[col])], {}, raw=[out[col]])
+    except ops_module.OpError as exc:
+        raise PrepError(str(exc)) from exc
+
+
 def complete_partial_date(series: pd.Series) -> pd.Series:
     """ISO text with missing month/day filled with 01: 1962 -> 1962-01-01, 1962-05 ->
     1962-05-01. Full dates pass through; anything that is not a real date comes out blank
@@ -442,7 +476,11 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
             d = _load(n, store, ns).copy()
             d["__SOURCE_DATASET"] = norm_key(n)
             frames.append(d)
-        return pd.concat(frames, ignore_index=True, sort=False), extra
+        out = pd.concat(frames, ignore_index=True, sort=False)
+        # keep __SOURCE_DATASET as the last column even when the stacked datasets have
+        # different schemas — otherwise a column only a LATER frame introduces lands after it
+        cols = [c for c in out.columns if c != "__SOURCE_DATASET"] + ["__SOURCE_DATASET"]
+        return out[cols], extra
 
     if op == "merge":
         specs = p.get("inputs") or []
@@ -529,17 +567,36 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
         return out, extra
 
     if op == "derive":
+        # One condition often has to set SEVERAL columns at once — a SAS IF/DO/END block
+        # assigning _TRSTAT and _TRREASND together under the same IF is the same rule
+        # applying to both, not two unrelated rules that happen to share a condition.
+        # `targets` (a list) plus each rule's `values` (a {column: value} map) covers that;
+        # the older single-column shape (`target` + `rules[].value`) still works unchanged.
         src = _load(p.get("dataset"), store, ns)
         out = src.copy()
-        target = upper(p.get("target"))
-        if not target:
-            raise PrepError("name the column to set")
-        if s(p.get("else_value")):
-            out[target] = s(p.get("else_value"))
-        elif target not in out.columns:
-            out[target] = ""
+        targets = [upper(t) for t in (p.get("targets") or []) if s(t)]
+        if not targets and s(p.get("target")):
+            targets = [upper(p.get("target"))]
+        if not targets:
+            raise PrepError("name at least one column to set")
+        else_values = p.get("else_values") if isinstance(p.get("else_values"), dict) else {}
+        for t in targets:
+            raw_ev = s(else_values.get(t)) if t in else_values else (
+                s(p.get("else_value")) if len(targets) == 1 else "")
+            if raw_ev:
+                out[t] = _derive_value(out, raw_ev)
+            elif t not in out.columns:
+                out[t] = ""
         for rule in p.get("rules") or []:            # sequential if/then, first write wins last
-            out.loc[cond_mask(out, rule.get("conds")), target] = s(rule.get("value"))
+            mask = cond_mask(out, rule.get("conds"))
+            values = rule.get("values") if isinstance(rule.get("values"), dict) else None
+            if values is None:                        # legacy single-value rule
+                out.loc[mask, targets[0]] = _derive_value(out, s(rule.get("value")))
+                continue
+            for t in targets:
+                raw_val = s(values.get(t))
+                if raw_val:
+                    out.loc[mask, t] = _derive_value(out, raw_val)
         return out, extra
 
     if op == "compute":

@@ -14,5 +14,6 @@ fixture/
 *.egg-info/
 .DS_Store
 .session.pkl
+*.xlsx
 
 # app/static_dist IS committed: the built interface, so the app runs without Node.

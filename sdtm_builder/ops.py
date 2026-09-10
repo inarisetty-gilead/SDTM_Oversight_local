@@ -839,5 +839,12 @@ def execute(ctx, b: Block) -> pd.Series:
         fn = RECIPE_OPS.get(b.recipe)
         if fn is None:
             raise OpError(f"no deterministic rule for derivation '{b.recipe or 'unspecified'}'")
-        return fn(ctx, b)
+        ser = fn(ctx, b)
+        # 'ct' and 'copy_var' already normalise against b.codelist themselves — anything
+        # else (pipeline, fn, cond, ...) never touched it, so a variable whose SAS code
+        # needed a transform (strip(upcase(x)), a recode, ...) silently skipped its CT
+        # mapping entirely, manual overrides included
+        if b.codelist and b.recipe not in ("ct", "copy_var"):
+            ser = apply_codelist(ctx, ser, b.codelist, (b.args or {}).get("ct_overrides"))
+        return ser
     raise OpError(f"nothing to execute for mapping type '{b.mtype}'")

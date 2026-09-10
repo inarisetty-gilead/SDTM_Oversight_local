@@ -38,6 +38,22 @@ export interface SpecInfo {
   skipped: Array<{ sheet: string; why: string }>;
 }
 
+export interface SpecCheckIssue {
+  domain: string; variable: string; row: number; label: string
+  kind: "cross_domain_reference" | "duplicate_variable" | "missing_codelist"
+      | "type_mismatch" | "long_variable_name" | "missing_identifier" | "standards_mismatch"
+  field: string
+  found: string; expected: string; other_domain: string; message: string; snippet: string
+}
+
+export interface SpecCheckResult {
+  totals: { domains_checked: number; cross_domain_references: number
+    duplicate_variables: number; missing_codelists: number; type_mismatches: number
+    long_variable_names: number; missing_identifiers: number; standards_mismatches: number
+    issues: number };
+  issues: SpecCheckIssue[]
+}
+
 export interface SyntheticMarker {
   synthetic: boolean; studyid: string; subjects: number; visits: number; warning: string
 }
@@ -83,6 +99,15 @@ export interface DomainDetail {
   pipeline_draft?: Array<Record<string, unknown>> | null;
   datasets: string[]; prepared_datasets: string[]; unapplied_datasets: string[]
   built_domains: string[]; variables: VariableRow[]; codelists?: string[];
+  review?: DomainReview;
+}
+
+export type ReviewStatus = "not_reviewed" | "in_progress" | "reviewed" | "completed"
+
+export interface ReviewComment { variable: string; text: string }
+
+export interface DomainReview {
+  status?: ReviewStatus; comments?: ReviewComment[]; updated?: string
 }
 
 export interface DataColumn {
@@ -233,6 +258,10 @@ export const api = {
     "/api/spec/domains"),
   specRows: (d: string) => call<{ domain: string; active: boolean; rows: SpecSheetRow[] }>(
     `/api/spec/${d}/rows`),
+  specChecks: () => call<SpecCheckResult>("/api/spec/checks"),
+  specCheckReference: () => call<{ standards: string; ta: string }>("/api/spec/checks/reference"),
+  setSpecCheckReference: (b: { standards: string; ta: string }) =>
+    post<{ standards: string; ta: string }>("/api/spec/checks/reference", b),
   setRaw: (path: string) => post<RawInfo>("/api/raw", { path }),
   synth: (b: Record<string, unknown>) => post<{
     out_dir: string; studyid: string; rows: number; subjects: number
@@ -256,6 +285,9 @@ export const api = {
   domainSettings: (d: string, b: unknown) => post(`/api/domain/${d}/settings`, b),
   domainDedup: (d: string, b: unknown) => post(`/api/domain/${d}/dedup`, b),
   rebuild: (d: string) => post(`/api/domain/${d}/build`),
+  reviews: () => call<{ reviews: Record<string, DomainReview> }>("/api/reviews"),
+  saveReview: (d: string, b: { status: ReviewStatus; comments: ReviewComment[] }) =>
+    post<{ domain: string; review: DomainReview }>(`/api/domain/${d}/review`, b),
   getAcrf: () => call<{ acrf: string; standards: string; ta: string; ecrf?: string
     std_acrf?: string; std_ecrf?: string; report: AcrfReport | null; cmp?: CrfCmp | null }>("/api/acrf"),
   compareCrfs: (b: { vendor: string; standard: string; vendor_ecrf?: string

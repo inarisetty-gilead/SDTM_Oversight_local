@@ -1,5 +1,6 @@
+import { useEffect, useState } from "react"
 import { Database, Download, FileText, FolderOpen, Play } from "lucide-react"
-import type { BuildResults, DomainRow, JobState } from "@/api"
+import type { BuildResults, DomainRow, DomainReview, JobState } from "@/api"
 import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Chip, DataGrid, Mono, SegmentBar } from "@/components/grid"
 import { Callout, EmptyState, Metric, Metrics, PageHeader, Panel } from "@/components/shell"
+import { REVIEW_LABEL, REVIEW_TONE } from "@/views/DomainView"
 
 export function BuildView({
   build, job, err, busy, opts, setOpts, onBuild, onOpenDomain, ready,
@@ -27,6 +29,9 @@ export function BuildView({
   const guessed = ok.reduce((a, d) => a + d.name_matched, 0)
   const notBuilt = ok.reduce((a, d) => a + d.not_built, 0)
   const dropped = ok.reduce((a, d) => a + d.dropped, 0)
+
+  const [reviews, setReviews] = useState<Record<string, DomainReview>>({})
+  useEffect(() => { api.reviews().then((r) => setReviews(r.reviews)).catch(() => undefined) }, [build])
 
   return (
     <>
@@ -143,7 +148,7 @@ export function BuildView({
               <DataGrid rows={build.domains} height="30rem" rowKey={(d) => d.domain}
                 groupBy={(d) => d.ok ? "Built" : "Failed to build"}
                 onRowClick={(d) => onOpenDomain(d.domain)}
-                cols={domainCols()} />
+                cols={domainCols(reviews)} />
             </Panel>
 
             {build.not_built_reasons?.length > 0 && (
@@ -183,6 +188,10 @@ export function BuildView({
                   <a href="/api/report" target="_blank" rel="noreferrer">
                     <FileText className="mr-1.5 h-3.5 w-3.5" />Full report</a>
                 </Button>
+                <Button variant="outline" size="sm" asChild>
+                  <a href="/api/reviews/export">
+                    <Download className="mr-1.5 h-3.5 w-3.5" />Review comments (Excel)</a>
+                </Button>
               </div>
             </Panel>
           </>
@@ -192,11 +201,16 @@ export function BuildView({
   )
 }
 
-export function domainCols() {
+export function domainCols(reviews: Record<string, DomainReview> = {}) {
   const num = (v: number) => v ? v.toLocaleString() : "0"
   return [
     { id: "d", head: "Domain", kind: "key" as const, sticky: true, width: 96,
       cell: (d: DomainRow) => d.domain },
+    { id: "rv", head: "Review", kind: "tag" as const,
+      cell: (d: DomainRow) => {
+        const status = reviews[d.domain]?.status ?? "not_reviewed"
+        return <Chip tone={REVIEW_TONE[status]}>{REVIEW_LABEL[status]}</Chip>
+      } },
     { id: "r", head: "Records", kind: "number" as const, align: "right" as const,
       cell: (d: DomainRow) => d.ok ? d.rows.toLocaleString() : "—" },
     { id: "s", head: "SUPP", kind: "number" as const, align: "right" as const,

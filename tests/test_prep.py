@@ -115,6 +115,50 @@ def test_filter_derive_and_conditions():
             assert bool(mask.any()) is expect_any, f"{op} {val!r}"
 
 
+def test_derive_sets_several_columns_from_one_condition():
+    """A SAS IF/DO/END block assigning two variables under the same IF is one rule with two
+    outcomes, not two separate derive steps repeating the same condition."""
+    with tempfile.TemporaryDirectory() as td:
+        store = _store(Path(td))
+        out = run([
+            {"op": "stack", "name": "all_ds",
+             "params": {"datasets": ["consent", "enroll", "studcomp"]}},
+            {"op": "derive", "name": "typed", "params": {
+                "dataset": "all_ds", "targets": ["_TRSTAT", "_TRREASND"],
+                "else_values": {"_TRSTAT": "DONE"},
+                "rules": [
+                    {"conds": [{"column": "DSCAT", "operator": "==",
+                                "value": "PROTOCOL MILESTONE"}],
+                     "values": {"_TRSTAT": "NOT DONE", "_TRREASND": "NOT ASSESSED"}},
+                ]}},
+        ], store)["typed"]
+        hit = out["DSCAT"] == "PROTOCOL MILESTONE"
+        assert (out.loc[hit, "_TRSTAT"] == "NOT DONE").all()
+        assert (out.loc[hit, "_TRREASND"] == "NOT ASSESSED").all()
+        assert (out.loc[~hit, "_TRSTAT"] == "DONE").all()
+        assert (out.loc[~hit, "_TRREASND"] == "").all()          # no else for this one — left blank
+
+
+def test_derive_value_can_reference_another_column():
+    """SAS often sets a variable FROM another instead of a fixed string —
+    `_trstresc=_trorres`, `_trorres=upcase(LSSTATUS)` — which '=COLUMN' / '=FUNC(COLUMN)'
+    covers without a fixed literal being repeated on every matching row."""
+    with tempfile.TemporaryDirectory() as td:
+        store = _store(Path(td))
+        out = run([
+            {"op": "stack", "name": "all_ds",
+             "params": {"datasets": ["consent", "enroll", "studcomp"]}},
+            {"op": "derive", "name": "typed", "params": {
+                "dataset": "all_ds", "targets": ["_TRORRES", "_TRSTRESC"],
+                "rules": [
+                    {"conds": [{"column": "DSCAT", "operator": "notmissing"}],
+                     "values": {"_TRORRES": "=upcase(DSCAT)", "_TRSTRESC": "=_TRORRES"}},
+                ]}},
+        ], store)["typed"]
+        assert (out["_TRORRES"] == out["DSCAT"].str.upper()).all()
+        assert (out["_TRSTRESC"] == out["_TRORRES"]).all()
+
+
 def test_sort_dedup_aggregate_and_date_extreme():
     with tempfile.TemporaryDirectory() as td:
         store = _store(Path(td))

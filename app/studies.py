@@ -59,6 +59,9 @@ class Study:
     template_overrides: dict = field(default_factory=dict)
     dedups: dict = field(default_factory=dict)
     last_run: str = ""
+    # DOMAIN -> {"status": "not_reviewed"|"in_progress"|"reviewed"|"completed",
+    #            "comments": str, "updated": iso timestamp}
+    domain_reviews: dict = field(default_factory=dict)
 
     def counts(self) -> dict:
         return {

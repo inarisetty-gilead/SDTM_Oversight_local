@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .util import clean, norm_key, s, upper
+from .util import SDTM_DOMAINS, clean, norm_key, s, upper
 
 # non-domain sheets in the Designer workbook
 SKIP_SHEETS = {
@@ -389,3 +389,194 @@ def analyse(spec: "Spec") -> dict:
     totals["pct_actionable"] = (round(100 * totals["actionable"] / totals["variables"])
                                 if totals["variables"] else 0)
     return {"totals": totals, "domains": per_domain}
+
+
+# ── does the spec's own text say what it means? ─────────────────────────────
+_DOMAIN_PREFIXES = {d[:2] for d in SDTM_DOMAINS}
+# not subject-level — USUBJID is not expected here, unlike every other domain
+_NO_USUBJID_DOMAINS = {"TA", "TE", "TI", "TV", "TS"}
+
+
+def _reworded(found: str, dom: str) -> str:
+    """found's own domain prefix corrected to dom, same leading underscore and case —
+    '_trcat' against dom TU becomes '_tucat', 'TRCAT' becomes 'TUCAT'."""
+    lead, core = ("_", found[1:]) if found.startswith("_") else ("", found)
+    prefix = dom if core[:2].isupper() else dom.lower()
+    return lead + prefix + core[2:]
+
+
+def _find_ref_row(ref: "Spec", dom: str, var: str) -> "SpecRow | None":
+    for r in ref.rows(dom):
+        if upper(r.variable) == var:
+            return r
+    return None
+
+
+# structured columns worth comparing against a standard — free-text columns (Mapping Rule,
+# Implemented SAS Code) are not, since a study legitimately writes its own version of those
+_COMPARE_FIELDS = (("codelist", "Codelist"), ("type", "Type"), ("role", "Role"),
+                   ("origin", "Origin"), ("action", "Action"))
+
+
+def check_consistency(spec: "Spec", standards: "Spec | None" = None,
+                       ta: "Spec | None" = None) -> dict:
+    """Catch what a build never can, because the build for TU and the build for TR each run
+    correctly against their OWN domain — mistakes like these live only in the spec's own
+    text and metadata, never in a built dataset. Checks only the domains the TOC marks
+    Active = Y (a spec without a TOC treats every domain as active, as elsewhere in the app):
+
+    - a row's Mapping Rule / Implemented SAS Code names a variable that belongs to a
+      DIFFERENT domain (e.g. TU's TUCAT row mentions '_trcat' — TR's variable, not TU's)
+    - the same variable defined more than once in one domain's own rows
+    - a row names a Codelist the spec's own Codelist sheet never defines
+    - the same variable name declared with a different Type in two different domains
+    - a variable name longer than the 8-character SDTM limit
+    - an active subject-level domain with no STUDYID, DOMAIN or USUBJID row
+
+    When a company standards spec and/or TA spec (same workbook shape, loaded the same way)
+    are supplied, a variable's Codelist/Type/Role/Origin/Action is also compared against
+    whichever of the two names that same domain.variable — the TA spec first (it is the more
+    specific of the two), the standards spec otherwise.
+    """
+    issues: list[dict] = []
+    domains = spec.active_domains
+    var_types: dict[str, list[tuple[str, int, str]]] = {}   # VARIABLE -> [(domain, row, type)]
+
+    for dom in domains:
+        dom_u = upper(dom)
+        seen: dict[str, list[SpecRow]] = {}
+        present: set[str] = set()
+        for r in spec.rows(dom):
+            var = upper(r.variable)
+            present.add(var)
+            if not r.is_supp:
+                seen.setdefault(var, []).append(r)
+
+            if len(var) > 8:
+                issues.append({
+                    "domain": dom, "variable": var, "row": r.row_number, "label": r.label,
+                    "kind": "long_variable_name", "field": "", "found": var, "expected": "",
+                    "other_domain": "",
+                    "message": f"{var} is {len(var)} characters — SDTM variable "
+                               f"(and QNAM) names cannot be longer than 8.",
+                    "snippet": "",
+                })
+
+            if r.codelist and upper(r.codelist) not in spec.codelists:
+                issues.append({
+                    "domain": dom, "variable": var, "row": r.row_number, "label": r.label,
+                    "kind": "missing_codelist", "field": "codelist", "found": r.codelist,
+                    "expected": "", "other_domain": "",
+                    "message": f"{var} names codelist {r.codelist!r}, which the spec's own "
+                               f"Codelist sheet does not define.",
+                    "snippet": "",
+                })
+
+            if s(r.type):
+                var_types.setdefault(var, []).append((dom, r.row_number, r.type.strip()))
+
+            ref_row, ref_source = None, ""
+            if ta is not None:
+                ref_row = _find_ref_row(ta, dom, var)
+                ref_source = "TA spec" if ref_row is not None else ""
+            if ref_row is None and standards is not None:
+                ref_row = _find_ref_row(standards, dom, var)
+                ref_source = "standards spec" if ref_row is not None else ""
+            if ref_row is not None:
+                diffs = [f"{label} is {s(getattr(r, fld))!r} here vs "
+                         f"{s(getattr(ref_row, fld))!r} in the {ref_source}"
+                         for fld, label in _COMPARE_FIELDS
+                         if s(getattr(r, fld)) and s(getattr(ref_row, fld))
+                         and s(getattr(r, fld)).upper() != s(getattr(ref_row, fld)).upper()]
+                if diffs:
+                    issues.append({
+                        "domain": dom, "variable": var, "row": r.row_number, "label": r.label,
+                        "kind": "standards_mismatch", "field": ref_source,
+                        "found": "", "expected": "", "other_domain": "",
+                        "message": f"{var} differs from the {ref_source}: " + "; ".join(diffs),
+                        "snippet": "",
+                    })
+
+            if not var.startswith(dom_u):
+                continue
+            suffix = var[len(dom_u):]
+            if len(suffix) < 2:
+                continue           # too short (e.g. a domain code alone) — not specific enough
+            pattern = re.compile(
+                rf"(?<![A-Za-z0-9])(_?[A-Za-z]{{2}}{re.escape(suffix)})(?![A-Za-z0-9])",
+                re.IGNORECASE)
+            flagged_prefixes: set[str] = set()
+            for field_name in ("mapping_rule", "sas_code"):
+                text = getattr(r, field_name) or ""
+                if not text.strip():
+                    continue
+                for m in pattern.finditer(text):
+                    found = m.group(1)
+                    prefix = found.lstrip("_")[:2].upper()
+                    if prefix == dom_u or prefix not in _DOMAIN_PREFIXES or prefix in flagged_prefixes:
+                        continue
+                    flagged_prefixes.add(prefix)
+                    lo, hi = max(0, m.start() - 40), min(len(text), m.end() + 40)
+                    issues.append({
+                        "domain": dom, "variable": var, "row": r.row_number, "label": r.label,
+                        "kind": "cross_domain_reference", "field": field_name,
+                        "found": found, "expected": _reworded(found, dom_u),
+                        "other_domain": prefix,
+                        "message": (f"{field_name.replace('_', ' ')} references {found!r} — "
+                                    f"{prefix} is a different domain, and this row is "
+                                    f"{dom_u}.{var}. Likely copied from {prefix} without renaming."),
+                        "snippet": text[lo:hi].strip(),
+                    })
+        for var, rs in seen.items():
+            if len(rs) > 1:
+                rows_str = ", ".join(str(x.row_number) for x in rs if x.row_number)
+                issues.append({
+                    "domain": dom, "variable": var, "row": rs[0].row_number, "label": rs[0].label,
+                    "kind": "duplicate_variable", "field": "", "found": "", "expected": "",
+                    "other_domain": "",
+                    "message": f"{var} is defined {len(rs)} times in {dom}"
+                               + (f" (rows {rows_str})" if rows_str else ""),
+                    "snippet": "",
+                })
+
+        missing = [v for v in ("STUDYID", "DOMAIN") if v not in present]
+        if dom_u not in _NO_USUBJID_DOMAINS and "USUBJID" not in present:
+            missing.append("USUBJID")
+        if missing:
+            issues.append({
+                "domain": dom, "variable": ", ".join(missing), "row": 0, "label": "",
+                "kind": "missing_identifier", "field": "", "found": "", "expected": "",
+                "other_domain": "",
+                "message": f"{dom} has no row for {', '.join(missing)} — every subject-level "
+                           f"domain needs these.",
+                "snippet": "",
+            })
+
+    for var, entries in var_types.items():
+        types = {t.upper() for _, _, t in entries}
+        doms = {d for d, _, _ in entries}
+        if len(types) > 1 and len(doms) > 1:
+            detail = "; ".join(f"{d}.{var} row {row}: {t}" for d, row, t in entries)
+            issues.append({
+                "domain": "/".join(sorted(doms)), "variable": var, "row": entries[0][1],
+                "label": "", "kind": "type_mismatch", "field": "type", "found": "", "expected": "",
+                "other_domain": "",
+                "message": f"{var} is declared with different Types across domains: {detail}",
+                "snippet": "",
+            })
+
+    return {
+        "totals": {
+            "domains_checked": len(domains),
+            "cross_domain_references": sum(1 for i in issues if i["kind"] == "cross_domain_reference"),
+            "duplicate_variables": sum(1 for i in issues if i["kind"] == "duplicate_variable"),
+            "missing_codelists": sum(1 for i in issues if i["kind"] == "missing_codelist"),
+            "type_mismatches": sum(1 for i in issues if i["kind"] == "type_mismatch"),
+            "long_variable_names": sum(1 for i in issues if i["kind"] == "long_variable_name"),
+            "missing_identifiers": sum(1 for i in issues if i["kind"] == "missing_identifier"),
+            "standards_mismatches": sum(1 for i in issues if i["kind"] == "standards_mismatch"),
+            "issues": len(issues),
+        },
+        "issues": sorted(issues, key=lambda i: (i["domain"], i["row"] or 0, i["variable"])),
+    }
+

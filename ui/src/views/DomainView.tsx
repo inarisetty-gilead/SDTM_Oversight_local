@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { ArrowDown, ArrowLeft, ArrowUp, BookOpen, ExternalLink, Search } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ArrowDown, ArrowLeft, ArrowUp, BookOpen, ExternalLink, Plus, Search, Trash2 } from "lucide-react"
 import { api } from "@/api"
-import type { CtInspect, DomainDetail, JobState, VariableRow } from "@/api"
+import type { CtInspect, DomainDetail, DomainReview, JobState, ReviewComment, ReviewStatus, VariableRow } from "@/api"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { SpecRowsPanel } from "@/components/SpecPeek"
@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 import { Chip, DataGrid, Mono, STATUS_TONE, SegmentBar, type ChipTone } from "@/components/grid"
 import { Callout, Metric, Metrics, PageHeader, Panel } from "@/components/shell"
 import { DataView, RecordTable, VariableRecords, useDomainRecords } from "@/components/DataView"
@@ -26,6 +27,13 @@ type Filter = (typeof FILTERS)[number]
 export const ACTION_TONE: Record<string, ChipTone> = {
   ASSIGN: "green", CODE: "teal", DERIVED: "teal", DERIVE: "teal",
   DROP: "slate", SUPP: "violet", CONSTANT: "amber", HARDCODE: "amber",
+}
+
+export const REVIEW_TONE: Record<ReviewStatus, ChipTone> = {
+  not_reviewed: "slate", in_progress: "amber", reviewed: "blue", completed: "green",
+}
+export const REVIEW_LABEL: Record<ReviewStatus, string> = {
+  not_reviewed: "Not reviewed", in_progress: "In progress", reviewed: "Reviewed", completed: "Completed",
 }
 
 /** Designer-style CT inspector: the codelist as the spec states it, next to what the
@@ -207,6 +215,98 @@ function ProgramPane({ domain, refreshKey }: { domain: string; refreshKey: numbe
   )
 }
 
+/** The reviewer's own record: has this domain been looked at, and what did they notice —
+ *  kept with the study, not in a side spreadsheet that drifts out of sync. */
+function ReviewPane({ domain, review, variables, onSaved }: {
+  domain: string; review?: DomainReview; variables: string[]; onSaved: (r: DomainReview) => void
+}) {
+  const safeComments = (c?: ReviewComment[]) => Array.isArray(c) ? c : []
+  const [status, setStatus] = useState<ReviewStatus>(review?.status ?? 'not_reviewed')
+  const [comments, setComments] = useState<ReviewComment[]>(safeComments(review?.comments))
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const dirty = status !== (review?.status ?? 'not_reviewed')
+    || JSON.stringify(comments) !== JSON.stringify(safeComments(review?.comments))
+
+  useEffect(() => {
+    setStatus(review?.status ?? 'not_reviewed'); setComments(safeComments(review?.comments))
+  }, [domain, review])
+
+  const setRow = (i: number, patch: Partial<ReviewComment>) =>
+    setComments((rows) => rows.map((r, k) => k === i ? { ...r, ...patch } : r))
+  const addRow = () => setComments((rows) => [...rows, { variable: '', text: '' }])
+  const removeRow = (i: number) => setComments((rows) => rows.filter((_, k) => k !== i))
+
+  const save = async () => {
+    setBusy(true); setErr('')
+    try {
+      const cleaned = comments.filter((c) => c.variable.trim() || c.text.trim())
+      const res = await api.saveReview(domain, { status, comments: cleaned })
+      onSaved(res.review)
+    } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className='max-w-3xl space-y-4'>
+      <Panel title='Review status'
+             description='Your own record of whether this domain has been looked at, kept with the study.'>
+        <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+          <F label='Status'>
+            <Select value={status} onValueChange={(v) => setStatus(v as ReviewStatus)}>
+              <SelectTrigger className='h-8 text-xs'><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {(Object.keys(REVIEW_LABEL) as ReviewStatus[]).map((k) => (
+                  <SelectItem key={k} value={k} className='text-xs'>{REVIEW_LABEL[k]}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          </F>
+          {review?.updated && (
+            <F label='Last updated'>
+              <p className='pt-1.5 text-xs text-muted-foreground'>{review.updated}</p>
+            </F>
+          )}
+        </div>
+      </Panel>
+
+      <Panel title='Comments'
+             description='One row per note — pick the variable it is about, or leave it as a general comment on the domain.'>
+        <div className='space-y-2'>
+          {comments.length === 0 && (
+            <p className='text-xs text-muted-foreground'>No comments yet.</p>)}
+          {comments.map((c, i) => (
+            <div key={i} className='flex items-start gap-2'>
+              <Select value={c.variable || '__general'}
+                      onValueChange={(v) => setRow(i, { variable: v === '__general' ? '' : v })}>
+                <SelectTrigger className='h-8 w-48 shrink-0 text-xs'><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='__general' className='text-xs'>General (whole domain)</SelectItem>
+                  {variables.map((v) => (
+                    <SelectItem key={v} value={v} className='text-xs'>{v}</SelectItem>))}
+                </SelectContent>
+              </Select>
+              <Textarea className='min-h-16 flex-1 text-xs' value={c.text}
+                        placeholder='What did you notice…'
+                        onChange={(e) => setRow(i, { text: e.target.value })} />
+              <Button size='icon' variant='ghost' className='h-8 w-8 shrink-0 text-muted-foreground'
+                      title='remove this comment' onClick={() => removeRow(i)}>
+                <Trash2 className='h-3.5 w-3.5' /></Button>
+            </div>
+          ))}
+          <Button size='sm' variant='outline' className='h-7 text-xs' onClick={addRow}>
+            <Plus className='mr-1.5 h-3.5 w-3.5' />Add comment</Button>
+        </div>
+      </Panel>
+
+      {err && <Callout tone='bad'>{err}</Callout>}
+      <div className='flex items-center gap-3'>
+        <Button disabled={busy || !dirty} onClick={() => void save()}>
+          {busy ? 'Saving…' : 'Save review'}</Button>
+        {dirty && <span className='text-[11px] text-amber-600'>unsaved changes</span>}
+      </div>
+    </div>
+  )
+}
+
 export function DomainView({ domain, onBack, onChanged }: {
   domain: string; onBack: () => void; onChanged: () => void
 }) {
@@ -224,13 +324,37 @@ export function DomainView({ domain, onBack, onChanged }: {
   const [dataKey, setDataKey] = useState(0)
   const [recPart, setRecPart] = useState<"parent" | "supp">("parent")
   const records = useDomainRecords(domain, dataKey, recPart)
+  // reader-picked columns to see alongside the variable being edited — a prep step's own
+  // column (e.g. __SOURCE_DATASET) is not one of this domain's own variables, so it is
+  // never offered as a default, only added here on request
+  const [extraCols, setExtraCols] = useState<string[]>([])
+  const [availableCols, setAvailableCols] = useState<string[]>([])
 
   const load = useCallback(async (dom: string) => {
     setError("")
     try { setD(await api.domain(dom)) }
     catch (e) { setError((e as Error).message); setD(null) }
   }, [])
-  useEffect(() => { setEditing(null); setPane("data"); setRecPart("parent"); void load(domain) }, [domain, load])
+  useEffect(() => { setEditing(null); setPane("data"); setRecPart("parent"); setExtraCols([])
+                    void load(domain) }, [domain, load])
+  // every column the reader could ask to see alongside a variable — this domain's own
+  // built columns, plus its base/prepared dataset's columns (where __SOURCE_DATASET lives)
+  useEffect(() => {
+    if (!d) { setAvailableCols([]); return }
+    let live = true
+    const cols$: Promise<string[]> = d.base
+      ? api.columns(d.domain, d.base).then((r) => r.columns).catch(() => [])
+      : Promise.resolve([])
+    void cols$.then((cols) => { if (live) setAvailableCols([...new Set([...d.columns, ...cols])].sort()) })
+    return () => { live = false }
+  }, [d])
+  // stable reference unless the domain or the reader's extra columns actually change —
+  // VariableRecords refetches whenever this array changes, so a new one every render
+  // (from an inline literal) would refetch on every keystroke elsewhere in this view
+  const varRecordKeys = useMemo(() => {
+    const base = d ? ["USUBJID", `${d.domain}SEQ`, "VISIT", "VISITNUM"].filter((k) => d.columns.includes(k)) : []
+    return [...base, ...extraCols]
+  }, [d, extraCols])
 
   const afterRebuild = async () => {
     for (;;) {
@@ -344,6 +468,11 @@ export function DomainView({ domain, onBack, onChanged }: {
             <TabsTrigger value="settings">Settings</TabsTrigger>
             <TabsTrigger value="data">Data</TabsTrigger>
             <TabsTrigger value="program">Program</TabsTrigger>
+            <TabsTrigger value="review">Review
+              <Chip tone={REVIEW_TONE[(d.review?.status ?? "not_reviewed") as ReviewStatus]}
+                    className="ml-1.5">
+                {REVIEW_LABEL[(d.review?.status ?? "not_reviewed") as ReviewStatus]}</Chip>
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="variables" className="space-y-3 pt-4">
@@ -415,10 +544,29 @@ export function DomainView({ domain, onBack, onChanged }: {
                             onClick={() => { setEditing(null); setPane("data") }}>Close</Button>
                   </div>
                 </div>
-                {/* the variable's own records: the subject key and the value, nothing else */}
+                {/* the variable's own records: the subject key and the value by default —
+                    plus whatever else the reader adds, including a prep step's own column
+                    (e.g. __SOURCE_DATASET) that this domain does not itself build */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {extraCols.map((c) => (
+                    <Chip key={c} tone="blue" className="gap-1">
+                      {c}
+                      <button type="button" className="ml-0.5 opacity-70 hover:opacity-100"
+                              onClick={() => setExtraCols((cols) => cols.filter((x) => x !== c))}>
+                        ×</button>
+                    </Chip>
+                  ))}
+                  <Select value=""
+                          onValueChange={(c) => setExtraCols((cols) => cols.includes(c) ? cols : [...cols, c])}>
+                    <SelectTrigger className="h-7 w-56 text-xs"><SelectValue placeholder="add a column…" /></SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      {availableCols.filter((c) => !varRecordKeys.includes(c) && c !== editing.variable)
+                        .map((c) => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <VariableRecords domain={d.domain} variable={editing.variable} refreshKey={dataKey}
-                                 keys={["USUBJID", `${d.domain}SEQ`, "VISIT", "VISITNUM"]
-                                   .filter((k) => d.columns.includes(k))} />
+                                 keys={varRecordKeys} />
                 {pane === "edit" && (
                   <VariableEditor detail={d} variable={editing}
                                   onDone={() => void afterRebuild()}
@@ -537,6 +685,12 @@ export function DomainView({ domain, onBack, onChanged }: {
 
           <TabsContent value="program" className="pt-4">
             <ProgramPane domain={d.domain} refreshKey={dataKey} />
+          </TabsContent>
+
+          <TabsContent value="review" className="pt-4">
+            <ReviewPane domain={d.domain} review={d.review}
+                        variables={d.variables.map((v) => v.variable)}
+                        onSaved={(r) => setD((prev) => prev ? { ...prev, review: r } : prev)} />
           </TabsContent>
 
           <Sheet open={specOpen} onOpenChange={setSpecOpen}>

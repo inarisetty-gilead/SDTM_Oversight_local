@@ -260,7 +260,12 @@ export function VariableRecords({ domain, variable, keys, refreshKey }: {
   useEffect(() => { void load() }, [load, refreshKey])
 
   if (error) return <Callout tone="bad">{error}</Callout>
-  return <RecordTable page={page} busy={busy} height="22rem" onRefresh={() => void load()} />
+  return (
+    <div className="space-y-2">
+      {page?.notes?.map((n, i) => <Callout key={i} tone="warn">{n}</Callout>)}
+      <RecordTable page={page} busy={busy} height="22rem" onRefresh={() => void load()} />
+    </div>
+  )
 }
 
 export function DataView({ domain, datasets, refreshKey, hasSuppVars }: {

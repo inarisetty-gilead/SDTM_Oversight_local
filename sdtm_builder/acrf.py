@@ -13,7 +13,7 @@ from difflib import get_close_matches
 from pathlib import Path
 
 from .spec import load_spec
-from .util import s, upper
+from .util import SDTM_DOMAINS, s, upper
 
 
 class AcrfError(Exception):
@@ -522,13 +522,6 @@ def check(pdf_path: str | Path, standards_path: str | Path,
 # the vendor's delivery against the company's own standard CRF — question by question:
 # the same (or related) question mapped to a different domain or variable is exactly the
 # finding an oversight review is after.
-
-# SDTMIG domain codes, so extraction works even before any spec is loaded
-SDTM_DOMAINS = frozenset("""
-    AE AG AP BE BS CE CM CO CP CV DA DD DM DS DV EC EG EX FA FT GF HO IE IS LB MB MH MI
-    MK ML MS NV OE PC PE PP PR QS RE RELREC RP RS SC SE SM SR SS SU SV TA TD TE TI TM TR
-    TS TU TV UR VS
-""".split())
 
 _QSTOP = frozenset({"the", "a", "an", "of", "is", "was", "were", "what", "which", "for",
                     "to", "in", "on", "at", "and", "or", "t", "any", "please", "specify",

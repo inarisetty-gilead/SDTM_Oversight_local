@@ -9,6 +9,14 @@ import pandas as pd
 # the many spellings of "no value" that survive a trip through Excel + pandas
 NULLISH = {"", "nan", "none", "null", "na", "n/a", "<na>", "nat", "."}
 
+# SDTMIG domain codes — shared so a check can recognise a domain reference even before
+# any spec is loaded, or without importing the acrf module.
+SDTM_DOMAINS = frozenset("""
+    AE AG AP BE BS CE CM CO CP CV DA DD DM DS DV EC EG EX FA FT GF HO IE IS LB MB MH MI
+    MK ML MS NV OE PC PE PP PR QS RE RELREC RP RS SC SE SM SR SS SU SV TA TD TE TI TM TR
+    TS TU TV UR VS
+""".split())
+
 
 def clean(val):
     """Excel/pandas value -> plain Python value, with missings collapsed to None.

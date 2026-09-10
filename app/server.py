@@ -22,7 +22,7 @@ from sdtm_builder import __version__, acrf as acrf_module, prep as prep_module, 
 from sdtm_builder.build import build_domain, build_study
 from sdtm_builder.compare import compare_study, discover_vendor
 from sdtm_builder.rawio import RawStore
-from sdtm_builder.spec import analyse as analyse_spec, load_spec
+from sdtm_builder.spec import analyse as analyse_spec, check_consistency, load_spec
 from sdtm_builder import templates as templates_registry
 from sdtm_builder.translate import raw_refs
 from sdtm_builder.ops import SAS_FUNCTIONS
@@ -58,6 +58,7 @@ class Session:
     overrides: dict = field(default_factory=dict)    # DOMAIN -> {base, sort, prep_mode, prep, keys}
     edits: dict = field(default_factory=dict)        # DOMAIN -> {VARIABLE -> block override}
     dedups: dict = field(default_factory=dict)       # DOMAIN -> {enabled, keys, keep}
+    domain_reviews: dict = field(default_factory=dict)  # DOMAIN -> {status, comments, updated}
     pipelines: dict = field(default_factory=dict)    # DOMAIN -> [prep step, ...]
     draft_pipelines: dict = field(default_factory=dict)  # DOMAIN -> steps being edited, not yet applied
     custom_fns: dict = field(default_factory=dict)       # name -> user-defined derivation
@@ -134,6 +135,16 @@ class DedupIn(BaseModel):
     enabled: bool = False
     keys: list[str] = []
     keep: str = "first"
+
+
+class ReviewCommentIn(BaseModel):
+    variable: str = ""     # blank = a general, domain-level comment
+    text: str = ""
+
+
+class DomainReviewIn(BaseModel):
+    status: str = "not_reviewed"     # not_reviewed | in_progress | reviewed | completed
+    comments: list[ReviewCommentIn] = []
 
 
 class OverrideIn(BaseModel):
@@ -326,9 +337,23 @@ def _autosave() -> None:
     study.crf_cmp = SESSION.crf_cmp
     study.acrf_report = SESSION.acrf_report
     study.dedups = SESSION.dedups
+    study.domain_reviews = SESSION.domain_reviews
     if SESSION.out_dir:
         study.last_run = SESSION.out_dir
     STUDIES.save(study)
+
+
+def _normalize_review(rev: dict) -> dict:
+    """A review saved before 'comments' became a list of {variable, text} rows carries a
+    bare string instead — migrate it into one general comment, so every reader (the UI, the
+    Excel export) can always rely on comments being a list."""
+    rev = dict(rev or {})
+    c = rev.get("comments")
+    if isinstance(c, str):
+        rev["comments"] = [{"variable": "", "text": c}] if c.strip() else []
+    elif not isinstance(c, list):
+        rev["comments"] = []
+    return rev
 
 
 def _apply_study(study: Study) -> None:
@@ -353,6 +378,7 @@ def _apply_study(study: Study) -> None:
     SESSION.crf_cmp = study.crf_cmp or None
     SESSION.acrf_report = study.acrf_report or None
     SESSION.dedups = dict(study.dedups)
+    SESSION.domain_reviews = {d: _normalize_review(r) for d, r in study.domain_reviews.items()}
     # reopen the inputs so the reader lands where they left off, not on an empty form
     SESSION.open_problems = []
     if study.spec_path:
@@ -618,6 +644,76 @@ def spec_rows(domain: str):
                 "origin": r.origin, "dataset": r.dataset, "type": r.type,
                 "length": r.length, "supp": r.is_supp, "sheet_row": r.row_number,
             } for r in rows]}
+
+
+@app.get("/api/spec/checks")
+def spec_checks():
+    """Static checks on the spec's own text — no raw data or build needed. Catches a row
+    copied from a similar domain and never renamed (its Mapping Rule / Implemented SAS Code
+    still names the OTHER domain's variable), a variable defined twice in one domain, and
+    (when a standards and/or TA spec is pointed at) a Codelist/Type/Role/Origin/Action that
+    disagrees with what that reference spec states for the same variable."""
+    if SESSION.spec is None:
+        raise HTTPException(400, "load the mapping spec first")
+    return check_consistency(SESSION.spec, standards=_load_ref_spec(SESSION.standards_path),
+                             ta=_load_ref_spec(SESSION.ta_path))
+
+
+class SpecCheckRefIn(BaseModel):
+    standards: str = ""
+    ta: str = ""
+
+
+def _load_ref_spec(path: str):
+    """A reference spec for the compliance check — the same workbook shape as the study's
+    own mapping spec. Best-effort: a reference the reader has not set, or cannot be parsed,
+    simply means that comparison is skipped, not that the whole check fails."""
+    if not s(path) or not Path(path).expanduser().exists():
+        return None
+    try:
+        return load_spec(path)
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+@app.get("/api/spec/checks/reference")
+def get_spec_checks_reference():
+    """The standards / TA spec paths used for the compliance comparison — shared with the
+    aCRF check, which points at the same two workbooks."""
+    return {"standards": SESSION.standards_path, "ta": SESSION.ta_path}
+
+
+@app.post("/api/spec/checks/reference")
+def set_spec_checks_reference(body: SpecCheckRefIn):
+    for label, path in (("standards spec", body.standards), ("TA spec", body.ta)):
+        if s(path) and not Path(path).expanduser().exists():
+            raise HTTPException(400, _fs_hint(f"the {label} was not found at {path}"))
+    SESSION.standards_path, SESSION.ta_path = body.standards, body.ta
+    _autosave()
+    return {"standards": SESSION.standards_path, "ta": SESSION.ta_path}
+
+
+@app.get("/api/spec/checks/export")
+def export_spec_checks():
+    """The spec check findings as one Excel workbook — to hand to the programmer who owns
+    the mapping spec, one row per finding, with the exact text to fix."""
+    if SESSION.spec is None:
+        raise HTTPException(400, "load the mapping spec first")
+    import tempfile
+    result = check_consistency(SESSION.spec, standards=_load_ref_spec(SESSION.standards_path),
+                               ta=_load_ref_spec(SESSION.ta_path))
+    rows_out = [{
+        "Domain": i["domain"], "Variable": i["variable"], "Row": i["row"], "Label": i["label"],
+        "Issue": i["kind"].replace("_", " ").title(), "Field": i["field"].replace("_", " "),
+        "Found": i["found"], "Expected": i["expected"], "Details": i["message"],
+        "Context": i["snippet"],
+    } for i in result["issues"]]
+    out = Path(tempfile.mkdtemp(prefix="specchecks_")) / "spec_checks.xlsx"
+    with pd.ExcelWriter(out, engine="openpyxl") as xw:
+        (pd.DataFrame(rows_out) if rows_out else pd.DataFrame({"note": ["no issues found"]})
+         ).to_excel(xw, sheet_name="Spec checks", index=False)
+    return FileResponse(out, filename="spec_checks.xlsx")
+
 
 
 # ── step 2: the raw data ────────────────────────────────────────────────────
@@ -890,15 +986,39 @@ def domain_data(domain: str, offset: int = 0, limit: int = 50, part: str = "pare
         raise HTTPException(404, f"{dom} has no SUPP{dom} dataset")
 
     # `only` narrows the table to a few columns — the record keys plus one variable, so a
-    # single mapping can be read row by row in the same table as everything else
+    # single mapping can be read row by row in the same table as everything else. A name
+    # this domain does not itself build (e.g. a prep step's own '__SOURCE_DATASET') is
+    # pulled from the domain's base/prepared dataset instead, by row position — which only
+    # holds when this domain kept one row per base record (no dedup/aggregate reduced it).
+    extra_notes: list[str] = []
     if only:
         wanted = [upper(c) for c in only.split(",") if s(c)]
-        keep = [c for c in frame.columns if upper(c) in wanted]
-        if keep:
-            frame = frame[keep]
+        have = {upper(str(c)): c for c in frame.columns}
+        keep = [have[w] for w in wanted if w in have]
+        missing = [w for w in wanted if w not in have]
+        frame = frame[keep].copy()
+        if missing and SESSION.store is not None and res.base_dataset:
+            try:
+                base = SESSION.store.get(res.base_dataset)
+            except KeyError:
+                base = None
+            base_have = {upper(str(c)): c for c in base.columns} if base is not None else {}
+            if base is not None and len(base) == len(frame):
+                for w in missing:
+                    if w in base_have:
+                        frame[base_have[w]] = base[base_have[w]].to_numpy()
+                    else:
+                        extra_notes.append(f"'{w}' is not a column of {dom} or of its base dataset")
+            elif base is not None:
+                extra_notes.append(
+                    f"'{', '.join(missing)}' could not be added — {dom} has {len(frame)} record(s), "
+                    f"its base dataset has {len(base)}, so they cannot be lined up row for row")
+            else:
+                extra_notes.append(f"'{', '.join(missing)}' is not a column of {dom}")
 
     by_var = {b.variable: b for b in res.blocks}
     shaped, notes = _shape(frame, sort, dir, filters)
+    notes = notes + extra_notes
     columns = []
     for c in frame.columns:
         b = by_var.get(str(c))
@@ -1131,6 +1251,7 @@ def _domain_payload(dom: str) -> dict:
         "prep_reports": res.prep_reports,
         "prep_outputs": res.prep_outputs,
         "edits": SESSION.edits.get(dom, {}),
+        "review": _normalize_review(SESSION.domain_reviews.get(dom, {})),
         "datasets": _raw_dataset_names(dom),
         "prepared_datasets": _domain_prepared(dom),
         "unapplied_datasets": sorted(SESSION.preview_outputs.get(dom, set())),
@@ -1769,6 +1890,57 @@ def set_dedup(domain: str, body: DedupIn):
     SESSION.dedups[dom] = body.model_dump()
     _autosave()
     return {"domain": dom, "dedup": SESSION.dedups[dom]}
+
+
+@app.get("/api/reviews")
+def list_reviews():
+    """Every domain's review status and comments, in one place — for the reviewer
+    working through a study rather than one domain at a time."""
+    return {"reviews": {d: _normalize_review(r) for d, r in SESSION.domain_reviews.items()}}
+
+
+@app.post("/api/domain/{domain}/review")
+def set_review(domain: str, body: DomainReviewIn):
+    dom = upper(domain)
+    valid = {"not_reviewed", "in_progress", "reviewed", "completed"}
+    if body.status not in valid:
+        raise HTTPException(400, f"status must be one of {sorted(valid)}")
+    comments = [{"variable": upper(c.variable), "text": c.text}
+                for c in body.comments if s(c.text) or s(c.variable)]
+    SESSION.domain_reviews[dom] = {
+        "status": body.status, "comments": comments,
+        "updated": datetime.now().isoformat(timespec="seconds"),
+    }
+    _autosave()
+    return {"domain": dom, "review": SESSION.domain_reviews[dom]}
+
+
+@app.get("/api/reviews/export")
+def export_reviews():
+    """Every domain's review status and comments as one Excel workbook — so a reviewer's
+    notes live in one file instead of being scattered across screenshots and emails."""
+    if not SESSION.domain_reviews and not SESSION.results:
+        raise HTTPException(400, "nothing to export yet — build or review at least one domain first")
+    import tempfile
+    domains = sorted(set(SESSION.results) | set(SESSION.domain_reviews))
+    rows = []
+    for dom in domains:
+        rev = _normalize_review(SESSION.domain_reviews.get(dom, {}))
+        status = (rev.get("status") or "not_reviewed").replace("_", " ").title()
+        comments = rev.get("comments") or []
+        if not comments:
+            rows.append({"Domain": dom, "Status": status, "Variable": "",
+                        "Comment": "", "Last updated": rev.get("updated", "")})
+        for c in comments:
+            rows.append({
+                "Domain": dom, "Status": status,
+                "Variable": c.get("variable", ""), "Comment": c.get("text", ""),
+                "Last updated": rev.get("updated", ""),
+            })
+    out = Path(tempfile.mkdtemp(prefix="reviews_")) / "domain_reviews.xlsx"
+    with pd.ExcelWriter(out, engine="openpyxl") as xw:
+        pd.DataFrame(rows).to_excel(xw, sheet_name="Domain reviews", index=False)
+    return FileResponse(out, filename="domain_reviews.xlsx")
 
 
 @app.get("/api/domain/{domain}/columns/{dataset}")
