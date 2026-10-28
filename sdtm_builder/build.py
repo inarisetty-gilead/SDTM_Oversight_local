@@ -270,7 +270,10 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
         result.warnings.append(
             f"{repointed} variable(s) were repointed to a better-matching source the spec also lists")
 
-    passes.run_all(blocks, store, base_name, dom)
+    # a --DTC the spec-rule transpose already dated record by record is not re-derived
+    # from the raw form, which would give every test of a visit the first date of the subject
+    passes.run_all(blocks, store, base_name, dom,
+                   skip={step.name} if step is not None and step.op == "transpose_rule" else None)
 
     # The reader's own pipeline overrides the spec's sources: wherever the final prepared
     # dataset carries a mapping's column, the mapping reads from it. Done after the automatic

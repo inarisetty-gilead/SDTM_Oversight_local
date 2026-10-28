@@ -193,6 +193,10 @@ def detect(blocks: list[Block], store, domain: str) -> PrepStep | None:
     the spec often references `raw.eg.*` while the study collected the form as `egperf`, so
     the wide form is found by which dataset actually holds the measurement columns. Stacking
     is only considered when the domain has no dataset of its own."""
+    from . import spec_transpose
+    step = spec_transpose.detect(blocks, store, domain)   # the spec's own rule wins
+    if step is not None:
+        return step
     step = detect_transpose(blocks, store, domain)
     if step is not None:
         return step
@@ -261,6 +265,9 @@ def apply_step(step: PrepStep, store) -> pd.DataFrame:
         return apply_stack(step, store)
     if step.op == "transpose_findings":
         return apply_transpose(step, store)
+    if step.op == "transpose_rule":
+        from . import spec_transpose
+        return spec_transpose.apply(step, store)
     raise ValueError(f"unknown preparation step '{step.op}'")
 
 
@@ -282,23 +289,30 @@ def retarget(step: PrepStep, blocks: list[Block], store, out_cols: list[str]) ->
         return
 
     p = step.params
-    src = store.resolve(p["dataset"]) or p["dataset"]
-    testcd, test = p["testcd_col"], p["test_col"]
+    if step.op == "transpose_rule":
+        from . import spec_transpose
+        srcs = {store.resolve(x) or x for x in spec_transpose.sources(step)}
+        made = [c for c in spec_transpose.produced(step) if c in upper_cols]
+        why = f"produced by the transpose the {p['testcd_col']} Mapping Rule describes"
+    else:
+        srcs = {store.resolve(p["dataset"]) or p["dataset"]}
+        made = [p["testcd_col"], p["test_col"], p["orres_col"], p["orresu_col"]]
+        why = f"produced by the wide-to-long transpose of '{next(iter(srcs))}'"
     orres, orresu = p["orres_col"], p["orresu_col"]
-    handled = {testcd, test, orres, orresu}
+    handled = set(made)
 
-    for var, col in ((testcd, testcd), (test, test), (orres, orres), (orresu, orresu)):
+    for var in made:
         b = next((x for x in blocks if x.variable == var), None)
         if b is None:
             continue
-        b.mtype, b.dataset, b.column, b.recipe, b.args = "assign", out_name, col, "", {}
-        b.reason = f"produced by the wide-to-long transpose of '{src}'"
+        b.mtype, b.dataset, b.column, b.recipe, b.args = "assign", out_name, var, "", {}
+        b.reason = why
 
     for b in blocks:
         if b.variable in handled:
             continue
-        reads_src = (store.resolve(b.dataset) or b.dataset) == src or any(
-            (store.resolve(ds) or ds) == src for ds, _c in raw_refs(b.input_variables))
+        reads_src = (store.resolve(b.dataset) or b.dataset) in srcs or any(
+            (store.resolve(ds) or ds) in srcs for ds, _c in raw_refs(b.input_variables))
         if not reads_src:
             continue
         v = b.variable
@@ -824,6 +838,10 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
 
     if op == "transpose_findings":
         return apply_transpose(PrepStep(op=op, name=step.get("name", ""), params=p), store), extra
+
+    if op == "transpose_rule":
+        from . import spec_transpose
+        return spec_transpose.apply(PrepStep(op=op, name=step.get("name", ""), params=p), store), extra
 
     raise PrepError(f"unknown preparation step '{op}'")
 

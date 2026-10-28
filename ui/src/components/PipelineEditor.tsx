@@ -38,6 +38,7 @@ const OP_META: Record<string, { icon: LucideIcon; tone: ChipTone }> = {
   split: { icon: Split, tone: "green" },
   transpose_long: { icon: Rows3, tone: "teal" },
   transpose_findings: { icon: Table2, tone: "teal" },
+  transpose_rule: { icon: Table2, tone: "teal" },
 }
 const DEFAULT_META = { icon: SplitSquareHorizontal, tone: "slate" as ChipTone }
 
@@ -120,6 +121,12 @@ function stepSummary(st: Step): string {
       return `pivot ${names("value_vars").length || "…"} column(s) of ${str("dataset") || "…"} into rows`
     case "transpose_findings":
       return `reshape ${str("dataset") || "…"} into findings (${arr("measures").length || "…"} measurement(s))`
+    case "transpose_rule": {
+      const forms = arr("forms") as Array<{ dataset?: string; measures?: unknown[]; not_done?: unknown[] }>
+      const tests = forms.reduce((n, f) => n + (f.measures?.length ?? 0), 0)
+      const nd = forms.some((f) => (f.not_done?.length ?? 0) > 0)
+      return `transpose ${forms.map((f) => f.dataset).join(", ") || "…"} as the spec's ${str("testcd_col") || "--TESTCD"} rule says (${tests} test(s)${nd ? `, one ${str("all_code")} record per visit not done` : ""})`
+    }
     default: return str("dataset") ? `on ${str("dataset")}` : ""
   }
 }

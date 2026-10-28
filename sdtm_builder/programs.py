@@ -72,6 +72,10 @@ def _step_datasets(step: dict) -> set[str]:
             out.add(norm_key(spec["dataset"]))
     if p.get("dataset"):
         out.add(norm_key(p["dataset"]))
+    for f in p.get("forms") or []:                       # the spec-rule transpose
+        out.add(norm_key(f.get("dataset")))
+        if (f.get("date_from") or {}).get("dataset"):
+            out.add(norm_key(f["date_from"]["dataset"]))
     return out
 
 
@@ -169,6 +173,88 @@ def iso_text(ser):
     parsed = pd.to_datetime(ser, errors="coerce", format="mixed")
     return parsed.dt.strftime("%Y-%m-%d").astype("string").fillna("")
 '''.rstrip()
+
+
+_PY_TRANSPOSE_RULE = '''
+def iso_keep_partial(ser):
+    """A full date as ISO 8601; a partial one (2024, 2024-05) or unparseable text as written."""
+    t = TXT(ser).str.strip().fillna("")
+    partial = t.str.fullmatch(r"\\d{4}(-\\d{2})?") | (t == "")
+    iso = pd.to_datetime(t.where(~partial), errors="coerce", format="mixed").dt.strftime("%Y-%m-%d")
+    return iso.astype("string").where(iso.notna() & ~partial, t).fillna("")
+
+def transpose_rule(frames, p):
+    """The --TESTCD Mapping Rule's transpose: one record per test collected, and ONE <DOM>ALL
+    record for a visit marked not done (TEST, STAT, REASND and date from the spec)."""
+    tc, tn, orres, orresu = p["testcd_col"], p["test_col"], p["orres_col"], p["orresu_col"]
+    parts = []
+    for fi, f in enumerate(p["forms"]):
+        src = frames[f["dataset"]].copy().reset_index(drop=True)
+        date = src[f["date_col"]] if f.get("date_col") in src.columns else None
+        lk = f.get("date_from")
+        if date is None and lk:                    # the date's own form, by subject AND visit
+            o = frames[lk["dataset"]]
+            look = o[lk["keys"] + [lk["column"]]]
+            look = look[TXT(look[lk["column"]]).str.strip().fillna("") != ""].drop_duplicates(lk["keys"])
+            src = src.merge(look.rename(columns={lk["column"]: "__DATE"}), on=lk["keys"], how="left")
+            date = src["__DATE"]
+        if date is not None:
+            day = iso_keep_partial(date)
+            if f.get("time_col") in src.columns:
+                tm = TXT(src[f["time_col"]]).str.strip().fillna("")
+                day = day.where(~((day.str.len() == 10) & (tm != "")), day + "T" + tm)
+            src["__DTC"] = day
+        measured = {m["value_col"] for m in f["measures"]} | {m["unit_col"] for m in f["measures"] if m["unit_col"]}
+        ids = [c for c in src.columns if c not in measured and c not in ("__DATE", "__DTC")]
+        nd = pd.Series(False, index=src.index)
+        for c in f["not_done"]:
+            alts = {"N": ["N", "NO"], "Y": ["Y", "YES"]}.get(c["value"].upper(), [c["value"].upper()])
+            nd |= TXT(src[c["column"]]).str.strip().str.upper().isin(alts).fillna(False)
+        src["__ROW"] = range(len(src))
+        done = src[~nd]
+        for mi, m in enumerate(f["measures"]):
+            r = done[ids + ["__ROW"]].copy()
+            r["__F"], r["__M"], r[tc], r[tn] = fi, mi, m["testcd"], m["test"]
+            r[orres] = TXT(done[m["value_col"]]).str.strip()
+            if m.get("iso"):
+                r[orres] = iso_keep_partial(r[orres])
+            r[orresu] = TXT(done[m["unit_col"]]).str.strip() if m["unit_col"] else ""
+            for key, col in (("stresc", p["stresc_col"]), ("stresu", p["stresu_col"])):
+                if m["testcd"] in p[key]:
+                    r[col] = TXT(done[p[key][m["testcd"]]]).str.strip()
+            if "__DTC" in done.columns:
+                r[p["dtc_col"]] = done["__DTC"]
+            parts.append(r[r[orres].fillna("") != ""])     # a test not taken is not a record
+        if nd.any():
+            r = src[nd][ids + ["__ROW"]].copy()
+            r["__F"], r["__M"], r[tc], r[tn], r[orres], r[orresu] = fi, -1, p["all_code"], p["all_test"], "", ""
+            r[p["stat_col"]] = p["stat_value"]
+            if f.get("reasnd_col"):
+                r[p["reasnd_target"]] = TXT(src.loc[nd, f["reasnd_col"]]).str.strip().str.upper()
+            if "__DTC" in src.columns:
+                r[p["dtc_col"]] = src.loc[nd, "__DTC"]
+            parts.append(r)
+    out = pd.concat(parts, ignore_index=True, sort=False)
+    out = out.sort_values(["__F", "__ROW", "__M"], kind="stable").drop(columns=["__F", "__ROW", "__M"])
+    return out.reset_index(drop=True)
+'''.rstrip()
+
+
+def _upper_rule_params(p: dict) -> dict:
+    """The rule transpose's parameters with every column name upper-cased, as the program's
+    read_raw gives them; dataset names keyed as the program's frames are."""
+    def fm(f):
+        lk = f.get("date_from")
+        return {**f, "dataset": norm_key(f["dataset"]), "date_col": upper(f.get("date_col")),
+                "time_col": upper(f.get("time_col")), "reasnd_col": upper(f.get("reasnd_col")),
+                "date_from": ({"dataset": norm_key(lk["dataset"]), "column": upper(lk["column"]),
+                               "keys": [upper(k) for k in lk["keys"]]} if lk else None),
+                "not_done": [{"column": upper(c["column"]), "value": s(c["value"])} for c in f.get("not_done") or []],
+                "measures": [{**m, "value_col": upper(m["value_col"]), "unit_col": upper(m.get("unit_col")),
+                              "testcd": upper(m["testcd"])} for m in f.get("measures") or []]}
+    return {**p, "forms": [fm(f) for f in p.get("forms") or []],
+            "stresc": {upper(k): upper(v) for k, v in (p.get("stresc") or {}).items()},
+            "stresu": {upper(k): upper(v) for k, v in (p.get("stresu") or {}).items()}}
 
 
 class _Py:
@@ -588,6 +674,13 @@ def _py_prep_lines(g: _Py, step: dict) -> list[str]:
         L.append(f'{name} = {g.frame(p.get("dataset"))}.drop_duplicates(subset={keys!r}, '
                  f'keep="{keep}").reset_index(drop=True)')
         return L
+    if op == "transpose_rule":
+        q = _upper_rule_params(p)
+        frames = sorted(_step_datasets(step))
+        from pprint import pformat
+        L.append(f"_rule = {pformat(q, width=100, sort_dicts=False)}")
+        L.append(f"{name} = transpose_rule({{{', '.join(f'{d!r}: {g.frame(d)}' for d in frames)}}}, _rule)")
+        return L
     if op == "transpose_findings":
         src = g.frame(p.get("dataset"))
         idv = [upper(c) for c in p.get("id_vars") or []]
@@ -671,6 +764,8 @@ def python_program(domain: str, blocks: list[Block], base_dataset: str,
     L.append(f'SUBJECT_KEYS = {list(SUBJECT_KEYS)!r}')
     L.append('')
     L.append(_PY_HELPERS)
+    if any(str(st.get("op")).lower() == "transpose_rule" for st in steps):
+        L.append(_PY_TRANSPOSE_RULE)
     L.append('')
     L.append('# ── raw datasets this domain reads ──────────────────────────────────────────')
     for ds in raw_used:
@@ -1211,6 +1306,76 @@ def _rename_pairs(renames) -> tuple[dict, list]:
     return mapping, copies
 
 
+def _sas_iso(src: str) -> str:
+    """SAS: a full date as ISO 8601, a partial one (2024, 2024-05) or unparseable text kept."""
+    iso = f"put(input(strip({src}), ?? anydtdte32.), e8601da10.)"
+    return (f"ifc(prxmatch('/^\\d{{4}}(-\\d{{2}})?$/', strip({src})) or missing({iso}), "
+            f"strip({src}), {iso})")
+
+
+def _sas_transpose_rule(name: str, p: dict) -> list[str]:
+    """SAS for the --TESTCD Mapping Rule's transpose: one OUTPUT per collected test, and one
+    <DOM>ALL record for a visit marked not done."""
+    tc, tn, orres, orresu = p["testcd_col"], p["test_col"], p["orres_col"], p["orresu_col"]
+    dtc, stat, reas = p["dtc_col"], p["stat_col"], p["reasnd_target"]
+    L = [f"/* {tc} Mapping Rule: transpose -> {name} */"]
+    parts = []
+    for i, f in enumerate(p.get("forms") or [], start=1):
+        ds, out = f["dataset"], f"__tr{i}"
+        lk = f.get("date_from")
+        date = f.get("date_col") or ""
+        if lk:                     # the date is on another form: merged by subject AND visit
+            keys = " ".join(lk["keys"])
+            L += [f"proc sort data={lk['dataset']}(keep={keys} {lk['column']} "
+                  f"where=(not missing({lk['column']}))) out=__dt{i} nodupkey; by {keys}; run;",
+                  f"proc sort data={ds} out=__src{i}; by {keys}; run;",
+                  f"data {out};",
+                  f"  merge __src{i}(in=__a) __dt{i}(rename=({lk['column']}=__DATE)); by {keys};",
+                  "  if __a;"]
+            date = "__DATE"
+        else:
+            L += [f"data {out};", f"  set {ds};"]
+        stres = [c for c in (p["stresc_col"], p["stresu_col"])
+                 if any(m["testcd"] in p[k] for m in f["measures"] for k in ("stresc", "stresu"))]
+        L.append(f"  length {tc} $40 {tn} $200 {orres} $200 {orresu} $40"
+                 + (f" {dtc} $19" if date else "")
+                 + (f" {stat} $8 {reas} $200" if f.get("not_done") else "")
+                 + "".join(f" {c} $200" for c in stres) + ";")
+        if date:
+            L.append(f"  {dtc} = {_sas_iso(date)};")
+            if f.get("time_col"):
+                L.append(f"  if length({dtc}) = 10 and not missing({f['time_col']}) then "
+                         f"{dtc} = catx('T', {dtc}, {f['time_col']});")
+        body = []
+        for m in f["measures"]:
+            val = f"strip(vvalue({m['value_col']}))"
+            sets = [f"{tc} = {_sas_quote(m['testcd'])};", f"{tn} = {_sas_quote(m['test'])};",
+                    f"{orres} = {_sas_iso(m['value_col']) if m.get('iso') else val};",
+                    f"{orresu} = " + (f"strip({m['unit_col']});" if m.get("unit_col") else "'';")]
+            for k, col in (("stresc", p["stresc_col"]), ("stresu", p["stresu_col"])):
+                if m["testcd"] in p[k]:
+                    sets.append(f"{col} = strip(vvalue({p[k][m['testcd']]}));")
+            body.append("    " + " ".join(sets) + f" if not missing({orres}) then output;")
+        nd = f.get("not_done") or []
+        if nd:
+            alts = lambda v: {"N": "'N', 'NO'", "Y": "'Y', 'YES'"}.get(v.upper(), _sas_quote(v.upper()))  # noqa: E731
+            cond = " or ".join(f"upcase(strip({c['column']})) in ({alts(c['value'])})" for c in nd)
+            L += [f"  if {cond} then do;   /* the visit was not done: one {p['all_code']} record */",
+                  f"    {tc} = {_sas_quote(p['all_code'])}; {tn} = {_sas_quote(p['all_test'])}; "
+                  f"{orres} = ''; {orresu} = ''; {stat} = {_sas_quote(p['stat_value'])};"
+                  + (f" {reas} = upcase(strip({f['reasnd_col']}));" if f.get("reasnd_col") else "")
+                  + " output;",
+                  "  end;", "  else do;", *body, "  end;"]
+        else:
+            L += [b[2:] for b in body]
+        targets = {tc, tn, orres, orresu, dtc, stat, reas}
+        drops = [c for m in f["measures"] for c in (m["value_col"], m.get("unit_col")) if c and c not in targets]
+        L += [f"  drop {' '.join(dict.fromkeys(drops))} __:;" if drops else "  drop __:;", "run;"]
+        parts.append(out)
+    L.append(f"data {name}; set {' '.join(parts)}; run;")
+    return L
+
+
 def _sas_prep(step: dict) -> list[str]:
     """Program-level SAS for one prep step (a data/proc step producing its output)."""
     op = str(step.get("op") or "").lower()
@@ -1283,6 +1448,8 @@ def _sas_prep(step: dict) -> list[str]:
         return [f"proc sort data={norm_key(p.get('dataset'))} out={name}; by {' '.join(keys)}; run;",
                 f"data {name}; set {name}; by {' '.join(keys)};",
                 f"  if {keep}.{keys[-1]};", "run;"]
+    if op == "transpose_rule":
+        return _sas_transpose_rule(name, _upper_rule_params(p))
     if op == "transpose_findings":
         src = norm_key(p.get("dataset"))
         idv = " ".join(upper(c) for c in p.get("id_vars") or [])
