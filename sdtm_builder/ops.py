@@ -870,6 +870,15 @@ RECIPE_OPS = {
 }
 
 
+def _register_sas_recipes() -> None:
+    from . import sas_recipe
+    RECIPE_OPS.update({"sas": sas_recipe.op_sas, "retain": sas_recipe.op_retain,
+                       "lag": sas_recipe.op_lag})
+
+
+_register_sas_recipes()
+
+
 def execute(ctx, b: Block) -> pd.Series:
     """Run one block and return its column. Raises OpError with an actionable message."""
     if b.mtype == "constant":

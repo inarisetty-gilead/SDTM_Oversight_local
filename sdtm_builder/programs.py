@@ -240,6 +240,21 @@ def transpose_rule(frames, p):
 '''.rstrip()
 
 
+def _py_sas_runtime() -> str:
+    """The SAS runtime's own source, inlined so the program stands alone and computes exactly
+    what the build computed."""
+    import inspect
+    from .sas import runtime
+    return ("\n# ── SAS DATA-step runtime (functions, operators, formats, dates) ─────────────\n"
+            + inspect.getsource(runtime) + "\n\n"
+            "def _sx_column(out):\n"
+            '    """A numeric result stays numeric; text is stripped, with missing as <NA>."""\n'
+            "    if pd.api.types.is_numeric_dtype(out):\n"
+            "        return out\n"
+            '    t = out.astype("string").str.strip()\n'
+            '    return t.where(t != "", pd.NA)\n')
+
+
 def _upper_rule_params(p: dict) -> dict:
     """The rule transpose's parameters with every column name upper-cased, as the program's
     read_raw gives them; dataset names keyed as the program's frames are."""
@@ -262,6 +277,7 @@ class _Py:
 
     def __init__(self, domain: str, base_name: str, codelists: dict,
                  observed: dict[str, list[str]] | None = None):
+        self.done: set[str] = set()          # variables already set, in program order
         self.dom = domain
         self.base = norm_key(base_name)
         self.codelists = codelists
@@ -292,6 +308,18 @@ class _Py:
         if ds and col:
             return self.col(ds, col)
         return 'pd.Series(pd.NA, index=df.index, dtype="string")'
+
+    def sx_ref(self, name: str, spec: dict | None, selfvar: str) -> str:
+        """A name a SAS expression reads, resolved as the build resolves it: its named source,
+        else a variable built before this one, else the base records' column."""
+        if spec:
+            if spec.get("var") or spec.get("kind") == "var":
+                return f'df["{upper(spec.get("var"))}"]'
+            if spec.get("dataset") and spec.get("column"):
+                return self.col(norm_key(spec["dataset"]), upper(spec["column"]))
+        if name != upper(selfvar) and name in self.done:
+            return f'df["{name}"]'
+        return f'{self.frame(self.base)}["{name}"]'
 
     def col(self, ds: str, col: str) -> str:
         """A raw column aligned to the base records (same semantics as the build)."""
@@ -442,6 +470,28 @@ def _py_block_lines(g: _Py, b: Block, var: str | None = None) -> list[str]:
     if rc == "fn":
         expr = _py_fn_expr(g, b, a, v)
         return [f'df["{v}"] = {expr}'] if expr else [g.todo(b, f"function '{a.get('fn')}' has no translation")]
+    if rc == "sas":
+        from . import sas_recipe
+        try:
+            compiled = sas_recipe.compile_code(a.get("code"), v)
+        except sas_recipe.SasCodeError as exc:
+            return [g.todo(b, f"SAS code not understood: {exc}")]
+        srcs = {upper(k): x for k, x in (a.get("sources") or {}).items()}
+        return [f'df["{v}"] = _sx_column({sas_recipe.to_py(compiled, lambda n: g.sx_ref(n, srcs.get(n), v))})']
+    if rc in ("retain", "lag"):
+        by, order = [upper(c) for c in a.get("by") or []], [upper(c) for c in a.get("order") or []]
+        src = a.get("source") or {}
+        src_expr = (f'df["{upper(src.get("var"))}"]' if src.get("var")
+                    else g.col(norm_key(src.get("dataset")), upper(src.get("column"))))
+        cols = ", ".join(f'"{c}": {g.sx_ref(c, None, v)}' for c in by + order)
+        frame = f"pd.DataFrame({{{cols}}}, index=df.index)"
+        if rc == "retain":
+            mode = "first" if s(a.get("mode")) == "first" else "locf"
+            call = f"_sx_retain({frame}, {src_expr}, {by!r}, {order!r}, {mode!r})"
+        else:
+            n = max(int(float(a.get("n") or 1)), 1)
+            call = f"_sx_lag({frame}, {src_expr}, {by!r}, {order!r}, {n}, {bool(a.get('dif'))})"
+        return [f'df["{v}"] = _sx_column({call})']
     if rc == "cond":
         lines = [f'df["{v}"] = {_py_result(g, a.get("else") or {"kind": "missing"}, v)}']
         for rule in reversed(a.get("rules") or []):       # reverse so the FIRST rule wins
@@ -612,6 +662,20 @@ def _py_prep_lines(g: _Py, step: dict) -> list[str]:
             if col:
                 L.append(f'{name}["{col}"] = {s(item.get("value"))!r}')
         return L
+    if op in ("filter", "compute") and s(p.get("expression")):
+        from .sas import expr as sx
+        fr = g.frame(p.get("dataset"))
+        try:
+            py = sx.to_py(sx.parse(s(p["expression"]).strip().rstrip(";")), lambda n: f'{fr}["{n}"]')
+        except sx.SasExprError as exc:
+            return L + [f"# TODO (hand-code): {op} -> {name} — SAS expression not understood: {exc}"]
+        L.append(f"_ix = {fr}.index")
+        if op == "filter":
+            L.append(f"{name} = {fr}[_sx_n(_ix, {py}).fillna(0).ne(0)].reset_index(drop=True)")
+        else:
+            tgt = upper(p.get("target") or p.get("out_col"))
+            L += [f"{name} = {fr}.copy()", f'{name}["{tgt}"] = _sx_column({py})']
+        return L
     if op == "filter":
         conds = p.get("conds") or [{"column": p.get("column"),
                                     "operator": p.get("operator", "=="), "value": p.get("value", "")}]
@@ -766,6 +830,9 @@ def python_program(domain: str, blocks: list[Block], base_dataset: str,
     L.append(_PY_HELPERS)
     if any(str(st.get("op")).lower() == "transpose_rule" for st in steps):
         L.append(_PY_TRANSPOSE_RULE)
+    if any(b.recipe in ("sas", "retain", "lag") for b in live) or any(
+            (st.get("params") or {}).get("expression") for st in steps):
+        L.append(_py_sas_runtime())
     L.append('')
     L.append('# ── raw datasets this domain reads ──────────────────────────────────────────')
     for ds in raw_used:
@@ -787,6 +854,7 @@ def python_program(domain: str, blocks: list[Block], base_dataset: str,
     L.append('# ── the domain frame, one record per base-dataset record ────────────────────')
     L.append(f'base = {g.frame(norm_key(base_dataset))}')
     L.append('df = pd.DataFrame(index=base.index)')
+    L.append('_ix = df.index          # the SAS runtime evaluates over these records')
     L.append('')
     L.append('# ── variables, in spec order ────────────────────────────────────────────────')
     for b in main + late:
@@ -795,6 +863,7 @@ def python_program(domain: str, blocks: list[Block], base_dataset: str,
             head += '   [hand edit — deviates from the spec]'
         L.append(head)
         L += _py_block_lines(g, b)
+        g.done.add(upper(b.variable))
         L.append('')
     L.append('# ── finalize: sort, de-duplicate, then number --SEQ on the final order ──────')
     srt = [upper(x) for x in (sort_by or [])]
@@ -1052,6 +1121,29 @@ def _sas_stmts(g: _Sas, b: Block, observed_vals: set | None,
         if tok is None:
             return g.todo(b, f"assign_ct input could not be aligned; codelist {cl}")
         return with_ct([f"  {v} = strip({tok});"], cl, a.get("ct_overrides"))
+    if rc == "sas":
+        from . import sas_recipe
+        try:
+            compiled = sas_recipe.compile_code(a.get("code"), v)
+        except sas_recipe.SasCodeError as exc:
+            return g.todo(b, f"SAS code not understood: {exc}")
+        srcs = {upper(k): x for k, x in (a.get("sources") or {}).items()}
+        missing = []
+
+        def ref(name):
+            spec = srcs.get(name)
+            tok = g.src(spec, v) if spec else name
+            if tok is None:
+                missing.append(name)
+                return name
+            return tok
+        lines = ["  " + x for x in sas_recipe.to_sas(compiled, v, ref)]
+        if missing:
+            return g.todo(b, f"{', '.join(missing)} cannot be aligned to the base records")
+        return with_ct(lines, b.codelist, a.get("ct_overrides"))
+    if rc in ("retain", "lag"):
+        from . import sas_recipe
+        return [f"  /* {v}: {sas_recipe.describe(b)} — a BY-group step after this one */"]
     if rc == "fn":
         stmt = _sas_fn_stmt(g, v, a, v)
         return [stmt] if stmt else g.todo(b, f"function '{a.get('fn')}' has no SAS translation here")
@@ -1427,6 +1519,15 @@ def _sas_prep(step: dict) -> list[str]:
         sets = "; ".join(f"{upper(s(item.get('name')))} = {_sas_quote(s(item.get('value')))}"
                          for item in p.get("columns") or [] if s(item.get("name")))
         return [f"data {name}; set {norm_key(p.get('dataset'))};", f"  {sets};", "run;"]
+    if op in ("filter", "compute") and s(p.get("expression")):
+        from .sas import expr as sx
+        try:
+            code = sx.to_sas(sx.parse(s(p["expression"]).strip().rstrip(";")))
+        except sx.SasExprError as exc:
+            return [f"/* TODO (hand-code): {op} -> {name} — SAS expression not understood: {exc} */"]
+        stmt = f"if {code};" if op == "filter" else \
+            f"{upper(p.get('target') or p.get('out_col'))} = {code};"
+        return [f"data {name}; set {norm_key(p.get('dataset'))};", f"  {stmt}", "run;"]
     if op == "filter":
         conds = p.get("conds") or [{"column": p.get("column"),
                                     "operator": p.get("operator", "=="),
@@ -1589,6 +1690,22 @@ def sas_program(domain: str, blocks: list[Block], base_dataset: str,
         L.append("  drop __ev __rf;")
     L.append("run;")
     L.append("")
+    carry = [b for b in main if b.recipe in ("retain", "lag")]
+    if carry:
+        from . import sas_recipe
+        L.append("/* ── RETAIN / LAG: a BY-group DATA step each, in BY + ORDER order; the record")
+        L.append("   order is restored afterwards, as the build does ─────────────────────── */")
+        for b in carry:
+            a = b.args or {}
+            src = a.get("source") or {}
+            col = g.src(src, b.variable) or upper(src.get("var") or src.get("column"))
+            n = max(int(float(a.get("n") or 1)), 1)
+            L.append(f"/* {b.variable}: {sas_recipe.describe(b)} */")
+            L += sas_recipe.sas_carry_step(f"{dom.lower()}_work", upper(b.variable), col,
+                                           [upper(c) for c in a.get("by") or []],
+                                           [upper(c) for c in a.get("order") or []],
+                                           sas_recipe.carry_mode(b), n)
+        L.append("")
     srt = [upper(x) for x in (sort_by or [])] or ["USUBJID"]
     L.append(f"proc sort data={dom.lower()}_work; by {' '.join(srt)}; run;")
     dd = dedup or {}

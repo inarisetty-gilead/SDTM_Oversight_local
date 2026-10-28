@@ -341,13 +341,14 @@ PREP_OPS = {
     "stack": "Stack — append the records of several datasets",
     "merge": "Merge — join datasets on key columns (a colliding column keeps ONE name; "
              "the later dataset's value wins, as in a SAS MERGE)",
-    "filter": "Filter — keep only the records that match",
+    "filter": "Filter — keep only the records that match (conditions, or a SAS expression)",
     "select": "Select — keep only these columns",
     "drop": "Drop — remove these columns",
     "rename": "Rename — change column names",
     "constant": "Add columns — set one or more new columns to a fixed value, no condition needed",
     "derive": "Derive — set a column with if/then rules",
-    "compute": "Compute — make a column from other columns (fix a partial date, year, join text)",
+    "compute": "Compute — make a column from other columns: any SAS expression, or a "
+               "ready-made fix (partial date, year, join text)",
     "aggregate": "Aggregate — group and summarise",
     "date_extreme": "Earliest / latest date per group across datasets",
     "sort": "Sort — order the records",
@@ -569,6 +570,25 @@ def apply_renames(df: pd.DataFrame, renames) -> pd.DataFrame:
     return out
 
 
+def sas_eval(df: pd.DataFrame, code: str) -> pd.Series:
+    """A SAS expression over a dataset's columns, record by record, with SAS semantics. A name
+    the dataset does not have is an error — SAS would make it a new, all-missing variable and
+    quietly compare against nothing."""
+    from .sas import expr as sx
+    try:
+        tree = sx.parse(s(code).strip().rstrip(";"))
+    except sx.SasExprError as exc:
+        raise PrepError(f"the SAS expression is not understood: {exc}") from exc
+    cols = {}
+    for n in sx.names(tree):
+        c = _ci_col(df, n)
+        if not c:
+            raise PrepError(f"{n} is not a column of the dataset "
+                            f"(it has: {', '.join(str(x) for x in list(df.columns)[:8])}…)")
+        cols[n] = df[c]
+    return sx.evaluate(tree, cols, df.index)
+
+
 def _load(name: str, store, ns: dict) -> pd.DataFrame:
     """A dataset by name — an earlier step's output first, then the raw folder."""
     key = norm_key(name)
@@ -659,6 +679,10 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
 
     if op == "filter":
         src = _load(p.get("dataset"), store, ns)
+        if s(p.get("expression")):           # a SAS condition, as in a WHERE / subsetting IF
+            keep = sas_eval(src, p["expression"])
+            from .sas import runtime as _rt
+            return src[_rt._sx_n(src.index, keep).fillna(0).ne(0)].reset_index(drop=True), extra
         conds = p.get("conds") or [{"column": p.get("column"),
                                     "operator": p.get("operator", "=="),
                                     "value": p.get("value", "")}]
@@ -725,6 +749,14 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
     if op == "compute":
         src = _load(p.get("dataset"), store, ns)
         out = src.copy()
+        if s(p.get("expression")):           # any SAS expression, on the SAS runtime
+            target = upper(p.get("target") or p.get("out_col"))
+            if not target:
+                raise PrepError("name the column the expression sets")
+            res = sas_eval(src, p["expression"])
+            out[target] = res if pd.api.types.is_numeric_dtype(res) else \
+                res.astype("string").str.strip().fillna("")
+            return out, extra
         # the first Compute release used its own names for three of these
         func = {"concat": "catx", "trim": "strip", "upcase": "upcase"}.get(
             str(p.get("func", "")).strip().lower(), str(p.get("func", "")).strip().lower())

@@ -189,6 +189,26 @@ def translate_domain(rows: list[SpecRow], studyid: str = "") -> list[Block]:
     return [translate_row(r, order=i, studyid=studyid) for i, r in enumerate(rows)]
 
 
+def _sas_recipe_args(sas: str, variable: str, resolve) -> dict | None:
+    """{'mtype': 'derived', 'recipe': 'sas', 'args': {code, sources}} when the code is SAS the
+    runtime runs and every name in it resolves; else None."""
+    from . import sas_recipe, sasexpr
+    try:
+        compiled = sas_recipe.compile_code(sas, variable)
+    except sas_recipe.SasCodeError:
+        return None
+    sources = {}
+    for name in sas_recipe.names(compiled):
+        try:
+            src = resolve(name)
+        except sasexpr.Unresolved:
+            return None
+        if src.get("kind") == "var":
+            src = {"var": src["var"]}
+        sources[name] = src
+    return {"mtype": "derived", "recipe": "sas", "args": {"code": s(sas).strip(), "sources": sources}}
+
+
 def apply_sas_code(blocks: list[Block], store, base_dataset: str) -> tuple[int, int]:
     """Use the spec's `Implemented SAS Code` as the mapping when it is a supported expression.
 
@@ -232,10 +252,17 @@ def apply_sas_code(blocks: list[Block], store, base_dataset: str) -> tuple[int, 
                 return {"dataset": _self.dataset, "column": _self.column}
             raise sasexpr.Unresolved(name)
 
-        try:
-            got = sasexpr.to_block_args(sas, resolve)
-        except (ValueError, TypeError, IndexError):
-            got = None
+        # The full SAS grammar first — operators, PUT/INPUT formats, dates, ~120 functions,
+        # IF/ELSE chains with any expression — on the SAS runtime, provided every name it
+        # reads resolves to a variable or a raw column. A bare identifier is left to the
+        # plain assign below; the older, narrower parser remains for what the runtime refuses.
+        got = None if re.fullmatch(r"[A-Za-z_][\w.]*", sas.strip().rstrip(";").strip()) \
+            else _sas_recipe_args(sas, b.variable, resolve)
+        if got is None:
+            try:
+                got = sasexpr.to_block_args(sas, resolve)
+            except (ValueError, TypeError, IndexError):
+                got = None
 
         # A recode written as IF ... THEN ... ELSE ... is a different grammar from the
         # function/concatenation expressions above, and needs its own parser.

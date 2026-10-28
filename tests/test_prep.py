@@ -414,6 +414,42 @@ def test_usubjid_carries_a_full_x_subjid():
     assert ops.op_usubjid(ctx2, Block(variable="USUBJID", domain="DM")).tolist() == ["S1-001", "S1-002"]
 
 
+def test_sas_expression_compute_and_filter():
+    """Compute sets a column from any SAS expression and Filter keeps the records a SAS
+    condition is true for — on the SAS runtime, in the tool and in both programs."""
+    from sdtm_builder import programs
+    df = pd.DataFrame({"USUBJID": ["1", "2", "3"], "BRTHDAT": ["14MAY1960", "01JAN1990", ""],
+                       "SEX": ["M", "F", "F"]})
+
+    class _S:
+        refs = {}
+        def resolve(self, n): return n if n == "dm" else None
+        def get(self, n): return df
+    steps = [{"op": "compute", "name": "c", "params": {"dataset": "dm", "target": "BRTHDTC",
+              "expression": "put(input(brthdat, date9.), yymmdd10.)"}},
+             {"op": "filter", "name": "f", "params": {"dataset": "c",
+              "expression": "sex = 'F' and not missing(brthdat)"}}]
+    out = prep.run_pipeline(steps, _S())[0]
+    assert out["c"]["BRTHDTC"].tolist() == ["1960-05-14", "1990-01-01", "."]
+    assert out["f"]["USUBJID"].tolist() == ["2"]
+    try:
+        prep.run_pipeline([{"op": "filter", "name": "x", "params": {"dataset": "dm",
+                                                                   "expression": "agex > 5"}}], _S())
+        raise AssertionError("a name the dataset lacks must be refused")
+    except prep.PrepError as exc:
+        assert "AGEX" in str(exc)
+    g = programs._Py("DM", "dm", {})
+    ns = {"pd": pd, "raw_dm": df.copy()}
+    exec(programs._py_sas_runtime(), ns)
+    for st in steps:
+        exec("\n".join(programs._py_prep_lines(g, st)), ns)
+        ns["raw_" + st["name"]] = ns[st["name"]]
+    assert ns["c"]["BRTHDTC"].tolist() == out["c"]["BRTHDTC"].tolist()
+    assert ns["f"]["USUBJID"].tolist() == ["2"]
+    sas = programs._sas_prep(steps[1])
+    assert sas[1] == "  if (SEX = 'F') and not missing(BRTHDAT);", sas
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
