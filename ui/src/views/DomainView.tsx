@@ -307,8 +307,8 @@ function ReviewPane({ domain, review, variables, onSaved }: {
   )
 }
 
-export function DomainView({ domain, onBack, onChanged }: {
-  domain: string; onBack: () => void; onChanged: () => void
+export function DomainView({ domain, variable, onBack, onChanged }: {
+  domain: string; variable?: string; onBack: () => void; onChanged: () => void
 }) {
   const [d, setD] = useState<DomainDetail | null>(null)
   const [filter, setFilter] = useState<Filter>("all")
@@ -337,6 +337,13 @@ export function DomainView({ domain, onBack, onChanged }: {
   }, [])
   useEffect(() => { setEditing(null); setPane("data"); setRecPart("parent"); setExtraCols([])
                     void load(domain) }, [domain, load])
+  // arriving from the action list: open the variable it is about, once the domain is loaded
+  const [opened, setOpened] = useState("")
+  useEffect(() => {
+    if (!d || !variable || opened === variable) return
+    const v = d.variables.find((x) => x.variable === variable)
+    if (v) { setEditing(v); setOpened(variable) }
+  }, [d, variable, opened])
   // every column the reader could ask to see alongside a variable — this domain's own
   // built columns, plus its base/prepared dataset's columns (where __SOURCE_DATASET lives)
   useEffect(() => {

@@ -180,6 +180,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+/** One thing a build leaves for a person: a guess to confirm, a variable that did not
+ *  build, a domain with no records. `decision` is set on decided items. */
+export interface ActionItem {
+  id: string; kind: "guess" | "blocked" | "empty"; domain: string; variable: string
+  title: string; detail: string; fix: string; decision?: string; at?: string
+}
+
 export interface TemplateResolved {
   domain: string; mtype: string; dataset: string; column: string; value: string
   recipe: string; args: Record<string, unknown>; reason: string
@@ -286,6 +293,9 @@ export const api = {
   domainDedup: (d: string, b: unknown) => post(`/api/domain/${d}/dedup`, b),
   rebuild: (d: string) => post(`/api/domain/${d}/build`),
   reviews: () => call<{ reviews: Record<string, DomainReview> }>("/api/reviews"),
+  actions: () => call<{ open: ActionItem[]; decided: ActionItem[] }>("/api/build/actions"),
+  decideAction: (id: string, decision: "confirmed" | "dismissed" | "reopen", title = "") =>
+    post<{ ok: boolean }>("/api/build/actions/decide", { id, decision, title }),
   saveReview: (d: string, b: { status: ReviewStatus; comments: ReviewComment[] }) =>
     post<{ domain: string; review: DomainReview }>(`/api/domain/${d}/review`, b),
   getAcrf: () => call<{ acrf: string; standards: string; ta: string; ecrf?: string

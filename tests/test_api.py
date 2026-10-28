@@ -976,6 +976,41 @@ def test_a_shared_function_travels_between_studies_as_an_editable_copy():
         assert pv["ok"], pv
 
 
+def test_action_decisions_survive_a_rebuild_and_a_reopen():
+    """The post-build action list: a decided item never comes back — not after a rebuild,
+    not after the study is closed and reopened. A new problem is a new item."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, srv = _client(Path(td) / "runs")
+        srv.STUDIES = srv.StudyStore(Path(td) / "studies")
+        client.post("/api/studies", json={"name": "Actions Test"})
+        sid = client.get("/api/studies").json()["studies"][0]["id"]
+        _load_and_build(client, tmp)
+        first = client.get("/api/build/actions").json()
+        assert first["open"], "the fixture build should leave something to look at"
+        item = first["open"][0]
+        assert {"id", "kind", "domain", "variable", "title", "detail", "fix"} <= set(item)
+        r = client.post("/api/build/actions/decide",
+                        json={"id": item["id"], "decision": "dismissed", "title": item["title"]})
+        assert r.status_code == 200, r.text
+        after = client.get("/api/build/actions").json()
+        assert item["id"] not in {i["id"] for i in after["open"]}
+        assert [d["decision"] for d in after["decided"] if d["id"] == item["id"]] == ["dismissed"]
+
+        assert client.post("/api/build", json={"fmt": "csv"}).status_code == 200
+        _wait(client)                                           # rebuild: same item, still decided
+        assert item["id"] not in {i["id"] for i in client.get("/api/build/actions").json()["open"]}
+
+        client.post(f"/api/studies/{sid}/close")
+        client.post(f"/api/studies/{sid}/open")
+        again = client.get("/api/build/actions").json()
+        assert item["id"] not in {i["id"] for i in again["open"]}
+        assert client.post("/api/build/actions/decide",
+                           json={"id": item["id"], "decision": "maybe"}).status_code == 400
+        client.post("/api/build/actions/decide", json={"id": item["id"], "decision": "reopen"})
+        assert item["id"] in {i["id"] for i in client.get("/api/build/actions").json()["open"]}
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

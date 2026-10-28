@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
-import { Database, Download, FileText, FolderOpen, Layers, Play, Settings2, Table2 } from "lucide-react"
-import type { BuildResults, DomainRow, DomainReview, JobState } from "@/api"
+import { Check, ClipboardList, Database, Download, FileText, FolderOpen, Layers, Play, Settings2, Table2, Undo2, X } from "lucide-react"
+import type { ActionItem, BuildResults, DomainRow, DomainReview, JobState } from "@/api"
 import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,7 +19,7 @@ export function BuildView({
   build: BuildResults | null; job: JobState | null; err: string; busy: boolean
   opts: { fmt: string; studyid: string; nameMatch: string; structure: string }
   setOpts: (o: Partial<{ fmt: string; studyid: string; nameMatch: string; structure: string }>) => void
-  onBuild: () => void; onOpenDomain: (d: string) => void; ready: boolean
+  onBuild: () => void; onOpenDomain: (d: string, variable?: string) => void; ready: boolean
   specDomains: string[]; inactive: string[]
   selected: string[]; setSelected: (d: string[]) => void
 }) {
@@ -144,6 +144,8 @@ export function BuildView({
               { value: notBuilt, tone: "red", label: "not built" },
             ]} />
 
+            <ActionList build={build} onOpen={onOpenDomain} />
+
             <Panel icon={<Table2 className="h-4 w-4" />} tone="blue" title="Domains" description="Click a domain to inspect its variables and edit its mapping.">
               <DataGrid rows={build.domains} height="30rem" rowKey={(d) => d.domain}
                 groupBy={(d) => d.ok ? "Built" : "Failed to build"}
@@ -255,5 +257,69 @@ function Pick({ value, onChange, options, width }: {
         {options.map(([v, l]) => <SelectItem key={v} value={v} className="text-xs">{l}</SelectItem>)}
       </SelectContent>
     </Select>
+  )
+}
+
+
+const KIND: Record<ActionItem["kind"], { label: string; tone: "amber" | "red" | "slate" }> = {
+  guess: { label: "confirm", tone: "amber" },
+  blocked: { label: "not built", tone: "red" },
+  empty: { label: "no records", tone: "slate" },
+}
+
+/** What the build leaves for a person, kept with the study. A decision (confirm / dismiss)
+ *  is saved as it is made, so the item stays decided across rebuilds, page changes and
+ *  reopening the study — it comes back only if the build starts saying something new. */
+function ActionList({ build, onOpen }: {
+  build: BuildResults; onOpen: (d: string, variable?: string) => void
+}) {
+  const [items, setItems] = useState<{ open: ActionItem[]; decided: ActionItem[] } | null>(null)
+  const [showDecided, setShowDecided] = useState(false)
+  const [err, setErr] = useState("")
+  const load = () => api.actions().then(setItems).catch((e: Error) => setErr(e.message))
+  useEffect(() => { void load() }, [build])
+  const decide = async (a: ActionItem, decision: "confirmed" | "dismissed" | "reopen") => {
+    try { await api.decideAction(a.id, decision, a.title); await load() }
+    catch (e) { setErr((e as Error).message) }
+  }
+  if (!items) return null
+  const rows = showDecided ? items.decided : items.open
+  return (
+    <Panel icon={<ClipboardList className="h-4 w-4" />} tone="amber"
+      title={`Needs a decision (${items.open.length})`}
+      description="Guesses to confirm, variables that did not build and domains with no records. A decision is saved with the study and is not asked again."
+      actions={items.decided.length > 0 && (
+        <Button variant="ghost" size="sm" onClick={() => setShowDecided((x) => !x)}>
+          {showDecided ? "Show open" : `Show decided (${items.decided.length})`}</Button>)}>
+      {err && <Callout tone="bad" title="Could not update the list">{err}</Callout>}
+      {rows.length === 0 ? (
+        <p className="text-[13px] text-muted-foreground">
+          {showDecided ? "Nothing decided yet." : "Nothing left to decide for this build."}</p>
+      ) : (
+        <DataGrid rows={rows} height="20rem" rowKey={(a) => a.id}
+          groupBy={(a) => a.domain}
+          onRowClick={(a) => onOpen(a.domain, a.variable || undefined)}
+          cols={[
+            { id: "k", head: "", kind: "tag", width: 96, cell: (a) => (
+                <Chip tone={KIND[a.kind].tone}>{showDecided ? a.decision : KIND[a.kind].label}</Chip>) },
+            { id: "t", head: "Item", kind: "text", width: 300, cell: (a) => a.title },
+            { id: "d", head: "Why", kind: "text", width: 380, cell: (a) => a.detail },
+            { id: "f", head: "What to do", kind: "text", width: 320, cell: (a) => a.fix },
+            { id: "a", head: "", kind: "tag", width: 170, cell: (a) => (
+                <span className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                  {showDecided ? (
+                    <Button size="sm" variant="outline" onClick={() => void decide(a, "reopen")}>
+                      <Undo2 className="mr-1 h-3.5 w-3.5" />Reopen</Button>
+                  ) : (<>
+                    {a.kind === "guess" && (
+                      <Button size="sm" variant="outline" onClick={() => void decide(a, "confirmed")}>
+                        <Check className="mr-1 h-3.5 w-3.5" />Confirm</Button>)}
+                    <Button size="sm" variant="ghost" onClick={() => void decide(a, "dismissed")}>
+                      <X className="mr-1 h-3.5 w-3.5" />Dismiss</Button>
+                  </>)}
+                </span>) },
+          ]} />
+      )}
+    </Panel>
   )
 }

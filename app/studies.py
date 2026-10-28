@@ -62,6 +62,8 @@ class Study:
     # DOMAIN -> {"status": "not_reviewed"|"in_progress"|"reviewed"|"completed",
     #            "comments": str, "updated": iso timestamp}
     domain_reviews: dict = field(default_factory=dict)
+    # action-list item id -> {"decision": "confirmed"|"dismissed", "title", "at"}
+    action_decisions: dict = field(default_factory=dict)
 
     def counts(self) -> dict:
         return {

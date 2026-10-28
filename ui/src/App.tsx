@@ -23,7 +23,7 @@ import { VendorDataView } from "@/views/VendorDataView"
 import { VendorWindow } from "@/views/VendorWindow"
 import { VarsWindow } from "@/views/VarsWindow"
 
-type View = "studies" | "setup" | "spec" | "rawdata" | "vendordata" | "build" | "functions" | "compare" | "acrf" | { domain: string }
+type View = "studies" | "setup" | "spec" | "rawdata" | "vendordata" | "build" | "functions" | "compare" | "acrf" | { domain: string; variable?: string }
 
 export default function App() {
   // #spec/DM opens a standalone read-only spec window — a reference the reader can put
@@ -328,7 +328,7 @@ function MainApp() {
                          opts={opts} setOpts={setOpts} onBuild={() => void onBuild()}
                          specDomains={spec?.domains ?? []} inactive={spec?.inactive ?? []}
                          selected={buildSel} setSelected={setBuildSel}
-                         onOpenDomain={(d) => setView({ domain: d })} />
+                         onOpenDomain={(d, v) => setView({ domain: d, variable: v })} />
             )}
             {view === "functions" && (
               <FunctionsView specDomains={spec?.domains ?? []} ready={!!spec && !!raw} />
@@ -347,7 +347,9 @@ function MainApp() {
                            onBrowse={() => setPicker({ mode: "dir", target: "vendor" })} />
             )}
             {current && (
-              <DomainView key={current} domain={current} onBack={() => setView("build")}
+              <DomainView key={current} domain={current}
+                          variable={typeof view === "object" ? view.variable : undefined}
+                          onBack={() => setView("build")}
                           onChanged={() => { void loadBuild(); setCompare(null) }} />
             )}
           </div>

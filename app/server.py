@@ -59,6 +59,7 @@ class Session:
     edits: dict = field(default_factory=dict)        # DOMAIN -> {VARIABLE -> block override}
     dedups: dict = field(default_factory=dict)       # DOMAIN -> {enabled, keys, keep}
     domain_reviews: dict = field(default_factory=dict)  # DOMAIN -> {status, comments, updated}
+    action_decisions: dict = field(default_factory=dict)  # action id -> {decision, title, at}
     pipelines: dict = field(default_factory=dict)    # DOMAIN -> [prep step, ...]
     draft_pipelines: dict = field(default_factory=dict)  # DOMAIN -> steps being edited, not yet applied
     custom_fns: dict = field(default_factory=dict)       # name -> user-defined derivation
@@ -338,6 +339,7 @@ def _autosave() -> None:
     study.acrf_report = SESSION.acrf_report
     study.dedups = SESSION.dedups
     study.domain_reviews = SESSION.domain_reviews
+    study.action_decisions = SESSION.action_decisions
     if SESSION.out_dir:
         study.last_run = SESSION.out_dir
     STUDIES.save(study)
@@ -379,6 +381,7 @@ def _apply_study(study: Study) -> None:
     SESSION.acrf_report = study.acrf_report or None
     SESSION.dedups = dict(study.dedups)
     SESSION.domain_reviews = {d: _normalize_review(r) for d, r in study.domain_reviews.items()}
+    SESSION.action_decisions = dict(study.action_decisions)
     # reopen the inputs so the reader lands where they left off, not on an empty form
     SESSION.open_problems = []
     if study.spec_path:
@@ -1890,6 +1893,32 @@ def set_dedup(domain: str, body: DedupIn):
     SESSION.dedups[dom] = body.model_dump()
     _autosave()
     return {"domain": dom, "dedup": SESSION.dedups[dom]}
+
+
+class ActionDecisionIn(BaseModel):
+    id: str
+    decision: str            # confirmed | dismissed | reopen
+    title: str = ""
+
+
+@app.get("/api/build/actions")
+def build_actions():
+    """What the current build leaves for a person to decide — guesses to confirm, variables
+    that did not build, domains with no records — minus what was already decided. Decisions
+    are saved with the study, so leaving the page or rebuilding never brings them back."""
+    from sdtm_builder import actions
+    return actions.open_actions(SESSION.results or {}, SESSION.action_decisions)
+
+
+@app.post("/api/build/actions/decide")
+def decide_action(body: ActionDecisionIn):
+    from sdtm_builder import actions
+    try:
+        actions.decide(SESSION.action_decisions, s(body.id), s(body.decision), s(body.title))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _autosave()
+    return {"ok": True, "id": body.id, "decision": body.decision}
 
 
 @app.get("/api/reviews")
