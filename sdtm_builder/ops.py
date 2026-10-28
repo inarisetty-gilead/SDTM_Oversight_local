@@ -462,6 +462,12 @@ def op_studyid(ctx, b: Block) -> pd.Series:
     raise OpError("no study identifier in the raw data — set STUDYID explicitly")
 
 
+def _starts_with_study(ids: pd.Series, study: pd.Series) -> pd.Series:
+    """Record by record: does the id already begin with that record's STUDYID- ?"""
+    return pd.Series([bool(st) and isinstance(i, str) and i.upper().startswith(st.upper() + "-")
+                      for i, st in zip(ids.fillna(""), study.fillna(""))], index=ids.index)
+
+
 def op_usubjid(ctx, b: Block) -> pd.Series:
     """USUBJID: carried from the raw data when it is there, otherwise composed from the study
     and subject identifiers using the SDTM convention STUDYID-SUBJID.
@@ -473,18 +479,34 @@ def op_usubjid(ctx, b: Block) -> pd.Series:
     if col:
         return str_series(ctx.base[col])
 
+    study = (ctx.frame["STUDYID"] if "STUDYID" in ctx.frame.columns
+             else pd.Series(ctx.studyid, index=ctx.index, dtype="string"))
+    study = str_series(study)
+
+    # an EDC's X_SUBJID is usually the full unique subject id already (STUDY-SITE-SUBJECT):
+    # carried as it is — composing STUDYID-X_SUBJID would prefix the study twice
+    xcol = _find_column(ctx.base, ("X_SUBJID",))
+    if xcol:
+        x = str_series(ctx.base[xcol])
+        filled = ~blank_mask(x)
+        full = _starts_with_study(x, study)
+        if filled.any() and (full | ~filled).all():
+            b.method_source = "convention"
+            b.confidence = 90
+            b.reason = (f"carried from {xcol}, which already holds the full subject id "
+                        "(it starts with STUDYID-)")
+            return x
+
     subj_col = _find_column(ctx.base, SUBJID_COLUMNS)
     if subj_col:
         subj = str_series(ctx.base[subj_col])
-        study = (ctx.frame["STUDYID"] if "STUDYID" in ctx.frame.columns
-                 else pd.Series(ctx.studyid, index=ctx.index, dtype="string"))
-        study = str_series(study)
         if not blank_mask(study).all():
             b.method_source = "convention"
             b.confidence = 80
             b.reason = (f"composed as STUDYID-{subj_col} (SDTM convention) — the raw data has no "
                         "USUBJID. Confirm the vendor composes it the same way.")
-            return (study.fillna("") + "-" + subj.fillna("")).astype("string")
+            already = _starts_with_study(subj, study)
+            return subj.where(already, study.fillna("") + "-" + subj.fillna("")).astype("string")
 
     dm = ctx.built.get("DM")
     key = _find_column(ctx.base, SUBJID_COLUMNS[1:])
@@ -698,8 +720,24 @@ def apply_sas_function(fn: str, parts: list, args: dict, raw: list | None = None
 
 
 # ── conditional logic (recipe='cond') ───────────────────────────────────────
+# a variable condition's operator, whichever way the spec or the interface spells it
+COND_OP_ALIASES = {
+    "=": "eq", "==": "eq", "ne": "ne", "!=": "ne", "^=": "ne", "~=": "ne", "<>": "ne",
+    ">": "gt", ">=": "ge", "<": "lt", "<=": "le", "startswith": "starts", "endswith": "ends",
+    "not_in": "notin", "nin": "notin", "null": "missing", "isnull": "missing",
+    "notnull": "notmissing", "not_null": "notmissing", "isnotnull": "notmissing",
+}
+COND_OP_NAMES = ("eq", "ne", "gt", "ge", "lt", "le", "in", "notin", "contains", "starts", "ends",
+                 "between", "missing", "notmissing")
+
+
 def _cond_mask(ctx, rule: dict, selfvar: str) -> pd.Series:
-    op = str((rule or {}).get("op", "eq")).lower()
+    raw_op = (rule or {}).get("op", "eq")
+    op = str(raw_op).strip().lower().replace(" ", "")
+    op = COND_OP_ALIASES.get(op, op)
+    if op not in COND_OP_NAMES:
+        # never a silent "equals": a condition the engine cannot read must say so
+        raise OpError(f"unknown condition operator '{raw_op}'")
     text = _series_for(ctx, (rule or {}).get("src"), selfvar, "string")
     num = pd.to_numeric(_series_for(ctx, (rule or {}).get("src"), selfvar, "raw"), errors="coerce")
     val = (rule or {}).get("value", "")
@@ -724,9 +762,14 @@ def _cond_mask(ctx, rule: dict, selfvar: str) -> pd.Series:
         return {"gt": num > f, "lt": num < f, "ge": num >= f, "le": num <= f}[op]
     if op == "between":
         return num.between(as_float(val), as_float((rule or {}).get("value2")))
+    vtxt = str(val).strip()
+    if vtxt in ("''", '""'):
+        vtxt = ""
+    if vtxt == "":                                  # SAS: a missing value equals ''
+        return ~blank if op == "ne" else blank
     if op == "ne":
-        return text != str(val)
-    return text == str(val)
+        return (text != vtxt).fillna(True)
+    return (text == vtxt).fillna(False)
 
 
 def _result_series(ctx, res: dict, selfvar: str) -> pd.Series:

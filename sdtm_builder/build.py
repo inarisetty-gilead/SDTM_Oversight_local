@@ -196,7 +196,8 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
     if prep_mode == "auto" and not base_override:
         try:
             if prep_override:
-                step = PrepStep(op=prep_override["op"], name=prep_override.get("name") or dom.lower(),
+                step = PrepStep(op=prep_override["op"],
+                                name=prep_override.get("name") or prep.output_name(store, dom),
                                 params=prep_override.get("params", {}),
                                 note=prep_override.get("note", "configured for this domain"))
             else:

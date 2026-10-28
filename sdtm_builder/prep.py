@@ -40,6 +40,20 @@ class PrepStep:
         return {"op": self.op, "name": self.name, "params": self.params, "note": self.note}
 
 
+def is_raw_file(store, name: str) -> bool:
+    """True when `name` is a dataset read from the raw folder (not a prepared, in-memory one)."""
+    ref = (getattr(store, "refs", None) or {}).get(norm_key(name))
+    return ref is not None and getattr(ref, "kind", "") != "memory"
+
+
+def output_name(store, domain: str) -> str:
+    """The name an automatic step's output takes: the domain's own name, unless a raw form is
+    called that — a prepared dataset must never replace a raw one, or every other domain (and
+    the next rebuild of this one) reads the prepared records as if they were the raw form."""
+    key = norm_key(domain)
+    return f"{key}_prep" if is_raw_file(store, key) else key
+
+
 # ── detection ───────────────────────────────────────────────────────────────
 def detect_stack(blocks: list[Block], store, domain: str) -> PrepStep | None:
     """A raw dataset referenced by two or more of the domain's variables is a RECORD source;
@@ -57,7 +71,7 @@ def detect_stack(blocks: list[Block], store, domain: str) -> PrepStep | None:
     if len(members) < 2:
         return None
     return PrepStep(
-        op="stack", name=norm_key(domain),
+        op="stack", name=output_name(store, domain),
         params={"datasets": members},
         note=(f"{domain} has no raw dataset of its own and {len(members)} forms each supply "
               f"two or more of its variables — they are unioned into one record source: "
@@ -147,7 +161,7 @@ def detect_transpose(blocks: list[Block], store, domain: str) -> PrepStep | None
     id_vars = [c for c in store.columns(best) if c not in measure_cols]
 
     return PrepStep(
-        op="transpose_findings", name=norm_key(domain),
+        op="transpose_findings", name=output_name(store, domain),
         params={"dataset": best, "id_vars": id_vars, "measures": measures,
                 "testcd_col": testcd_col, "test_col": test_col,
                 "orres_col": orres_col, "orresu_col": orresu_col},
@@ -166,7 +180,7 @@ def detect_split_forms(store, domain: str) -> PrepStep | None:
     if len(keys) < 2:
         return None
     return PrepStep(
-        op="stack", name=norm_key(domain), params={"datasets": keys},
+        op="stack", name=output_name(store, domain), params={"datasets": keys},
         note=(f"{domain} is collected across {len(keys)} forms — they are stacked into one "
               f"record source: {', '.join(keys)}."),
     )
@@ -396,9 +410,35 @@ def complete_partial_date(series: pd.Series) -> pd.Series:
     return parsed.dt.strftime("%Y-%m-%d").fillna("")
 
 
+# every spelling a mapping spec or a SAS programmer writes, onto the one the engine runs
+OP_ALIASES = {
+    "=": "==", "eq": "==", "ne": "!=", "<>": "!=", "^=": "!=", "~=": "!=",
+    "gt": ">", "ge": ">=", "lt": "<", "le": "<=",
+    "starts": "startswith", "ends": "endswith", "nin": "notin", "not_in": "notin",
+    "isnull": "missing", "null": "missing", "ismissing": "missing", "empty": "missing",
+    "notnull": "notmissing", "not_null": "notmissing", "isnotnull": "notmissing",
+    "isnotmissing": "notmissing", "notempty": "notmissing",
+}
+
+
+def norm_op(operator) -> str:
+    """A condition's operator in its one canonical spelling. Anything else is refused: an
+    operator the engine does not know must never quietly keep (or drop) every record."""
+    raw = "==" if operator is None else operator
+    o = str(raw).strip().lower().replace(" ", "")
+    o = OP_ALIASES.get(o, o)
+    if o not in COND_OPS:
+        raise PrepError(f"unknown condition '{raw}' — use one of: = ne > >= < <= contains "
+                        "startswith endswith in notin between missing notmissing")
+    return o
+
+
 def cond_mask(df: pd.DataFrame, conds) -> pd.Series:
     """Row mask for a list of ANDed conditions [{column, operator, value}].
-    Text comparison is trimmed and case-insensitive, as SAS character comparison behaves."""
+    Text comparison is trimmed and case-insensitive, as SAS character comparison behaves.
+    A missing cell equals '' (SAS: `x = ''` is true for a missing value), and > >= < <=
+    follow SAS too: against another column when the value names one, as numbers when the
+    value is a number (a missing value sorts lowest), otherwise as text."""
     m = pd.Series(True, index=df.index)
     for c in conds or []:
         col_req = c.get("column")
@@ -408,16 +448,17 @@ def cond_mask(df: pd.DataFrame, conds) -> pd.Series:
         if not col:
             raise PrepError(f"column '{col_req}' is not in the dataset "
                             f"(it has: {', '.join(str(x) for x in list(df.columns)[:8])}…)")
-        opr = str(c.get("operator", "==")).strip().lower().replace(" ", "")
-        opr = {"eq": "==", "ne": "!=", "<>": "!=", "starts": "startswith",
-               "ends": "endswith"}.get(opr, opr)
+        opr = norm_op(c.get("operator", "=="))
         raw = c.get("value", "")
         val = ",".join(str(x) for x in raw) if isinstance(raw, list) else str(raw)
+        val = _unquote(val)
         text = df[col].astype("string").str.strip()
         tu, vu = text.str.upper(), val.strip().upper()
         blank = blank_mask(df[col])
-        items = [x.strip().upper() for x in val.split(",") if x.strip()]
-        if opr == "==":
+        items = [_unquote(x).strip().upper() for x in val.split(",") if x.strip()]
+        if opr in ("==", "!=") and vu == "":
+            m &= blank if opr == "==" else ~blank
+        elif opr == "==":
             m &= tu.eq(vu).fillna(False)
         elif opr == "!=":
             m &= ~tu.eq(vu).fillna(False)
@@ -441,13 +482,77 @@ def cond_mask(df: pd.DataFrame, conds) -> pd.Series:
             if not bounds:
                 raise PrepError("between needs two numbers: low, high")
             m &= num.between(bounds[0], bounds[1]).fillna(False)
-        elif opr in (">", "<", ">=", "<="):
-            num = pd.to_numeric(df[col], errors="coerce")
-            f = as_float(val)
-            m &= {">" : num > f, "<": num < f, ">=": num >= f, "<=": num <= f}[opr].fillna(False)
-        else:
-            raise PrepError(f"unknown condition '{opr}'")
+        else:                                                     # > >= < <=
+            m &= _compare(df, col, opr, val, blank)
     return m
+
+
+def _unquote(v: str) -> str:
+    """'Y' and "Y" are the literal Y — a spec writes values the way SAS code quotes them."""
+    t = str(v).strip()
+    if len(t) >= 2 and t[0] == t[-1] and t[0] in "'\"":
+        return t[1:-1]
+    return t
+
+
+def _compare(df: pd.DataFrame, col: str, opr: str, val: str, blank: pd.Series) -> pd.Series:
+    vtxt = val.strip()
+    vcol = _ci_col(df, vtxt) if re.fullmatch(r"[A-Za-z_]\w*", vtxt) else ""
+    num = None if vcol else as_float(vtxt, None)
+    if num is not None:
+        # SAS: a missing numeric value is smaller than every number
+        lhs = pd.to_numeric(df[col].where(~blank), errors="coerce").fillna(float("-inf"))
+        rhs = num
+    elif vcol:
+        lnum = pd.to_numeric(df[col].where(~blank), errors="coerce")
+        rblank = blank_mask(df[vcol])
+        rnum = pd.to_numeric(df[vcol].where(~rblank), errors="coerce")
+        if (lnum.notna() | blank).all() and (rnum.notna() | rblank).all():
+            lhs, rhs = lnum.fillna(float("-inf")), rnum.fillna(float("-inf"))
+        else:                                       # text (ISO dates compare correctly as text)
+            lhs = df[col].astype("string").str.strip().where(~blank, "").fillna("")
+            rhs = df[vcol].astype("string").str.strip().where(~rblank, "").fillna("")
+    else:
+        lhs = df[col].astype("string").str.strip().where(~blank, "").fillna("")
+        rhs = vtxt
+    return {">": lhs.gt, ">=": lhs.ge, "<": lhs.lt, "<=": lhs.le}[opr](rhs).fillna(False).astype(bool)
+
+
+def rename_plan(columns, renames) -> tuple[dict, list]:
+    """(rename map, copies) for [{from, to}]. A column listed twice is renamed once and COPIED
+    for the other target(s) — a dict keeps only the last target, which silently lost one.
+    Renaming onto a column the dataset already has (and keeps) is refused: it makes two
+    columns with one name, and every reader then picks one of them at random."""
+    cols = {upper(c): c for c in columns}
+    mapping: dict = {}
+    copies: list = []
+    for r in renames or []:
+        frm = cols.get(upper(r.get("from")))
+        to = upper(r.get("to"))
+        if not frm or not to or to == upper(frm):
+            continue
+        if frm in mapping:
+            copies.append((mapping[frm], to))
+        else:
+            mapping[frm] = to
+    targets = list(mapping.values()) + [t for _, t in copies]
+    dupes = sorted({t for t in targets if targets.count(t) > 1})
+    if dupes:
+        raise PrepError(f"two columns are renamed to {', '.join(dupes)}")
+    kept = {upper(c) for c in columns if c not in mapping}
+    clash = sorted(t for t in targets if t in kept)
+    if clash:
+        raise PrepError(f"the dataset already has a column named {', '.join(clash)} — drop it "
+                        "first, or rename onto a different name")
+    return mapping, copies
+
+
+def apply_renames(df: pd.DataFrame, renames) -> pd.DataFrame:
+    mapping, copies = rename_plan(df.columns, renames)
+    out = df.rename(columns=mapping)
+    for have, to in copies:
+        out[to] = out[have]
+    return out
 
 
 def _load(name: str, store, ns: dict) -> pd.DataFrame:
@@ -511,8 +616,17 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
                 d = d[keep]
             frames.append(d)
         out = frames[0]
-        for d in frames[1:]:
-            keys = [c for c in on if c in out.columns and c in d.columns]
+        for spec, d in zip(specs[1:], frames[1:]):
+            if on:
+                # a named key missing on either side is an error, never a quiet fallback to
+                # the subject alone — that multiplies every record by the other side's visits
+                for side, frame, label in (("left", out, "the merged records so far"),
+                                           ("right", d, spec.get("dataset"))):
+                    gone = [k for k in on if k not in frame.columns]
+                    if gone:
+                        raise PrepError(f"merge key {', '.join(gone)} is not in {label} "
+                                        f"({side} side) — fix the join keys or add the column")
+            keys = list(on) if on else []
             if not keys:
                 common = [c for c in out.columns if c in d.columns]
                 keys = [c for c in KEYISH if c in common] or common
@@ -550,12 +664,7 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
 
     if op == "rename":
         src = _load(p.get("dataset"), store, ns)
-        mapping = {}
-        for r in p.get("renames") or []:
-            frm = _ci_col(src, r.get("from"))
-            if frm and s(r.get("to")):
-                mapping[frm] = upper(r.get("to"))
-        return src.rename(columns=mapping), extra
+        return apply_renames(src, p.get("renames") or []), extra
 
     if op == "constant":
         src = _load(p.get("dataset"), store, ns)
@@ -779,7 +888,16 @@ def run_pipeline(steps: list[dict], store, domain: str = "",
     for i, step in enumerate(steps or [], start=1):
         name = norm_key(step.get("name") or f"prep{i}")
         try:
+            if is_raw_file(store, name):
+                raise PrepError(f"step {i} is named '{name}', which is a raw dataset — a prepared "
+                                f"dataset must not replace it (other domains read it, and a "
+                                f"rebuild would run the steps over their own output). Name the "
+                                f"step '{name}_prep' or similar")
             out, extra = _apply_one(step, store, ns)
+            clash = [k for k in extra if is_raw_file(store, k)]
+            if clash:
+                raise PrepError(f"step {i} would replace the raw dataset(s) {', '.join(clash)} "
+                                "— give its outputs other names")
         except PrepError as exc:
             reports.append({"step": i, "name": name, "op": step.get("op"),
                             "ok": False, "error": str(exc)})

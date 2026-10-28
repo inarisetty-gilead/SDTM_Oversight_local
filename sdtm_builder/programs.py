@@ -432,6 +432,32 @@ def _py_block_lines(g: _Py, b: Block, var: str | None = None) -> list[str]:
                       "translation yet")]
 
 
+def _prep_op(operator) -> str:
+    """The engine's canonical operator spelling (see prep.norm_op); '' when it has none."""
+    from .prep import COND_OPS, OP_ALIASES
+    o = str(operator if operator is not None else "==").strip().lower().replace(" ", "")
+    o = OP_ALIASES.get(o, o)
+    return o if o in COND_OPS else ""
+
+
+def _unq(v: str) -> str:
+    t = s(v)
+    return t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in "'\"" else t
+
+
+def _is_name(v: str) -> bool:
+    import re
+    return bool(re.fullmatch(r"[A-Za-z_]\w*", s(v)))
+
+
+def _is_number(v: str) -> bool:
+    try:
+        float(s(v))
+        return True
+    except ValueError:
+        return False
+
+
 def _py_prep_lines(g: _Py, step: dict) -> list[str]:
     """Statements producing one prep step's output frame(s)."""
     op = str(step.get("op") or "").lower()
@@ -488,9 +514,10 @@ def _py_prep_lines(g: _Py, step: dict) -> list[str]:
                  f'columns={[upper(c) for c in p.get("columns") or []]!r}, errors="ignore")')
         return L
     if op == "rename":
-        mapping = {upper(r.get("from")): upper(r.get("to"))
-                   for r in p.get("renames") or [] if s(r.get("from")) and s(r.get("to"))}
+        mapping, copies = _rename_pairs(p.get("renames"))
         L.append(f'{name} = {g.frame(p.get("dataset"))}.rename(columns={mapping!r})')
+        for have, to in copies:               # one column listed twice: renamed once, copied
+            L.append(f'{name}["{to}"] = {name}["{have}"]')
         return L
     if op == "constant":
         L.append(f'{name} = {g.frame(p.get("dataset"))}.copy()')
@@ -505,24 +532,47 @@ def _py_prep_lines(g: _Py, step: dict) -> list[str]:
         fr = g.frame(p.get("dataset"))
         masks = []
         for c in conds:
-            colx = f'{fr}["{upper(c.get("column"))}"].astype("string").str.strip()'
-            oper, val = str(c.get("operator") or "==").lower(), s(c.get("value"))
-            if oper == "==":
-                masks.append(f'({colx}.str.upper() == {val.upper()!r})')
+            col = upper(c.get("column"))
+            colx = f'{fr}["{col}"].astype("string").str.strip()'
+            blank = f'({colx}.fillna("") == "")'
+            oper, val = _prep_op(c.get("operator")), _unq(c.get("value"))
+            items = [_unq(x).strip().upper() for x in val.split(",") if x.strip()]
+            if oper in ("==", "!=") and not val:            # SAS: missing equals ''
+                masks.append(blank if oper == "==" else f"~{blank}")
+            elif oper == "==":
+                masks.append(f'({colx}.str.upper() == {val.upper()!r}).fillna(False)')
             elif oper == "!=":
-                masks.append(f'({colx}.str.upper() != {val.upper()!r})')
+                masks.append(f'~({colx}.str.upper() == {val.upper()!r}).fillna(False)')
             elif oper == "contains":
                 masks.append(f'{colx}.str.contains({val!r}, case=False, na=False, regex=False)')
+            elif oper in ("startswith", "endswith"):
+                masks.append(f'{colx}.fillna("").str.upper().str.{oper}({val.upper()!r})')
             elif oper in ("in", "notin"):
-                items = [x.strip().upper() for x in val.split(",") if x.strip()]
-                m = f'{colx}.str.upper().isin({items!r})'
+                m = f'{colx}.str.upper().isin({items!r}).fillna(False)'
                 masks.append(m if oper == "in" else f"~({m})")
             elif oper == "missing":
-                masks.append(f'({colx}.isna() | ({colx} == ""))')
+                masks.append(blank)
             elif oper == "notmissing":
-                masks.append(f'~({colx}.isna() | ({colx} == ""))')
+                masks.append(f"~{blank}")
+            elif oper == "between":
+                lo, hi = (val.split(",") + ["", ""])[:2]
+                masks.append(f'pd.to_numeric({fr}["{col}"], errors="coerce")'
+                             f'.between({float(lo or 0)}, {float(hi or 0)}).fillna(False)')
+            elif oper in (">", ">=", "<", "<="):
+                # SAS rules: a missing value sorts lowest
+                if _is_number(val):
+                    lhs = f'pd.to_numeric({fr}["{col}"], errors="coerce").fillna(float("-inf"))'
+                    rhs = repr(float(val))
+                elif _is_name(val):
+                    lhs = f'{colx}.fillna("")'
+                    rhs = f'{fr}["{upper(val)}"].astype("string").str.strip().fillna("")'
+                else:
+                    lhs, rhs = f'{colx}.fillna("")', repr(val)
+                masks.append(f"({lhs} {oper} {rhs})")
             else:
-                masks.append("pd.Series(True, index=%s.index)  # TODO: operator %r" % (fr, oper))
+                # never a mask that keeps every row: the program must stop, as the tool does
+                L.append(f"raise NotImplementedError({('filter operator ' + repr(c.get('operator')) + ' is not supported')!r})")
+                masks.append(f"pd.Series(False, index={fr}.index)")
         L.append(f'{name} = {fr}[{" & ".join(masks)}].reset_index(drop=True)')
         return L
     if op == "sort":
@@ -1107,10 +1157,12 @@ def _sas_where(conds: list[dict]) -> str | None:
     parts = []
     for c in conds or []:
         col = upper((c or {}).get("column"))
-        op = str((c or {}).get("operator") or "==").lower()
-        val = s((c or {}).get("value"))
+        op = _prep_op((c or {}).get("operator"))
+        val = _unq((c or {}).get("value"))
         base = f"upcase(strip({col}))"
-        if op == "==":
+        if op in ("==", "!=") and not val:
+            parts.append(f"{'' if op == '==' else 'not '}missing({col})")
+        elif op == "==":
             parts.append(f"{base} = {_sas_quote(val.upper())}")
         elif op == "!=":
             parts.append(f"{base} ne {_sas_quote(val.upper())}")
@@ -1122,14 +1174,41 @@ def _sas_where(conds: list[dict]) -> str | None:
             parts.append(f"find({base}, {_sas_quote(val.upper())}, "
                          f"-length({base})) > 0")
         elif op in ("in", "notin"):
-            items = ", ".join(_sas_quote(x.strip().upper()) for x in val.split(",") if x.strip())
+            items = ", ".join(_sas_quote(_unq(x).strip().upper()) for x in val.split(",") if x.strip())
             parts.append(f"{base} {'not in' if op == 'notin' else 'in'} ({items})")
+        elif op == "missing":
+            parts.append(f"missing({col})")
+        elif op == "notmissing":
+            parts.append(f"not missing({col})")
         elif op == "between":
             lo, hi = (val.split(",") + ["", ""])[:2]
             parts.append(f"{float(lo or 0)} <= input({col}, ?? best32.) <= {float(hi or 0)}")
+        elif op in (">", ">=", "<", "<="):
+            if _is_number(val):          # a missing value is lower than every number in SAS
+                parts.append(f"input({col}, ?? best32.) {op} {float(val)}")
+            elif _is_name(val):
+                parts.append(f"strip({col}) {op} strip({upper(val)})")
+            else:
+                parts.append(f"strip({col}) {op} {_sas_quote(val)}")
         else:
             return None
     return " and ".join(parts) if parts else None
+
+
+def _rename_pairs(renames) -> tuple[dict, list]:
+    """({FROM: TO}, [(TO already made, extra TO)]) — a column listed twice is renamed once and
+    copied for its other name, as the tool runs it."""
+    mapping: dict = {}
+    copies: list = []
+    for r in renames or []:
+        frm, to = upper(r.get("from")), upper(r.get("to"))
+        if not frm or not to or frm == to:
+            continue
+        if frm in mapping:
+            copies.append((mapping[frm], to))
+        else:
+            mapping[frm] = to
+    return mapping, copies
 
 
 def _sas_prep(step: dict) -> list[str]:
@@ -1157,8 +1236,15 @@ def _sas_prep(step: dict) -> list[str]:
                 ds = f"{ds}__k"
             L.append(f"proc sort data={ds}; by {' '.join(on)}; run;")
             sorted_names.append(ds)
-        return L + [f"data {name};", f"  merge {' '.join(sorted_names)};",
-                    f"  by {' '.join(on)};", "run;"]
+        flags = [f"__in{i}" for i in range(1, len(sorted_names) + 1)]
+        how = str(p.get("how", "left")).lower()
+        keep_if = {"left": f"if {flags[0]};",
+                   "inner": f"if {' and '.join(flags)};",
+                   "right": f"if {flags[-1]};"}.get(how, "") if flags else ""
+        members = " ".join(f"{ds}(in={f})" for ds, f in zip(sorted_names, flags))
+        return L + [f"data {name};", f"  merge {members};", f"  by {' '.join(on)};"] \
+            + ([f"  {keep_if}   /* {how} join */"] if keep_if else ["  /* outer join: every record */"]) \
+            + ["run;"]
     if op == "select":
         cols = " ".join(upper(c) for c in p.get("columns") or [])
         return [f"data {name}; set {norm_key(p.get('dataset'))}(keep={cols}); run;"]
@@ -1166,10 +1252,12 @@ def _sas_prep(step: dict) -> list[str]:
         cols = " ".join(upper(c) for c in p.get("columns") or [])
         return [f"data {name}; set {norm_key(p.get('dataset'))}(drop={cols}); run;"]
     if op == "rename":
-        pairs = " ".join(f"{upper(r.get('from'))}={upper(r.get('to'))}"
-                         for r in p.get("renames") or []
-                         if s(r.get("from")) and s(r.get("to")))
-        return [f"data {name}; set {norm_key(p.get('dataset'))}(rename=({pairs})); run;"]
+        mapping, copies = _rename_pairs(p.get("renames"))
+        pairs = " ".join(f"{a}={b}" for a, b in mapping.items())
+        if not copies:
+            return [f"data {name}; set {norm_key(p.get('dataset'))}(rename=({pairs})); run;"]
+        return [f"data {name}; set {norm_key(p.get('dataset'))}(rename=({pairs}));",
+                "  " + " ".join(f"{to} = {have};" for have, to in copies), "run;"]
     if op == "constant":
         sets = "; ".join(f"{upper(s(item.get('name')))} = {_sas_quote(s(item.get('value')))}"
                          for item in p.get("columns") or [] if s(item.get("name")))

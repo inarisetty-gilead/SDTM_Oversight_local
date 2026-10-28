@@ -331,6 +331,89 @@ def test_between_condition():
     assert m.tolist() == [False, True, False, False]
 
 
+def test_sas_operator_spellings_and_blank_equals_missing():
+    """The spec writes SAS: `=`, `^=`, `ge`, `not_null`. A missing cell equals '' as in SAS."""
+    df = pd.DataFrame({"X": ["Y", "", None, "N"], "N": ["3", "", "10", "7"]})
+    def m(op, val=""):
+        return prep.cond_mask(df, [{"column": "X", "operator": op, "value": val}]).tolist()
+    assert m("=", "Y") == [True, False, False, False]
+    assert m("^=", "Y") == [False, True, True, True]
+    assert m("=", "") == [False, True, True, False]            # blank and missing both
+    assert m("ne", "''") == [True, False, False, True]
+    assert m("not_null") == [True, False, False, True]
+    ge = prep.cond_mask(df, [{"column": "N", "operator": "ge", "value": "7"}]).tolist()
+    assert ge == [False, False, True, True]
+    lt = prep.cond_mask(df, [{"column": "N", "operator": "lt", "value": "5"}]).tolist()
+    assert lt == [True, True, False, False]                    # SAS: missing sorts lowest
+    try:
+        prep.cond_mask(df, [{"column": "X", "operator": "like", "value": "Y"}])
+        raise AssertionError("an unknown operator must be refused, not keep every row")
+    except prep.PrepError as exc:
+        assert "unknown condition" in str(exc)
+
+
+def test_compare_against_another_column():
+    df = pd.DataFrame({"STDT": ["2024-01-05", "2024-02-01", ""],
+                       "ENDT": ["2024-01-10", "2024-01-15", "2024-01-01"]})
+    m = prep.cond_mask(df, [{"column": "ENDT", "operator": ">=", "value": "STDT"}]).tolist()
+    assert m == [True, False, True]                            # ISO dates as text; blank lowest
+
+
+def test_merge_refuses_a_named_key_missing_on_one_side():
+    """A missing named key used to drop silently, joining on the subject alone — every
+    record then multiplied by the other dataset's visits."""
+    with tempfile.TemporaryDirectory() as td:
+        store = _store(Path(td))
+        try:
+            run([{"op": "merge", "name": "m", "params": {
+                "how": "left", "on": ["USUBJID", "VISIT"],
+                "inputs": [{"dataset": "vs"}, {"dataset": "dm"}]}}], store)
+            raise AssertionError("merge on a key the right side lacks must fail")
+        except prep.PrepError as exc:
+            assert "VISIT" in str(exc) and "dm" in str(exc)
+
+
+def test_rename_twice_copies_and_refuses_a_clash():
+    df = pd.DataFrame({"A": [1, 2], "B": [3, 4]})
+    out = prep.apply_renames(df, [{"from": "A", "to": "X"}, {"from": "A", "to": "Y"}])
+    assert list(out.columns) == ["X", "B", "Y"] and out["Y"].tolist() == [1, 2]
+    try:
+        prep.apply_renames(df, [{"from": "A", "to": "B"}])
+        raise AssertionError("renaming onto an existing column must fail")
+    except prep.PrepError as exc:
+        assert "already has a column named B" in str(exc)
+    swapped = prep.apply_renames(df, [{"from": "A", "to": "B"}, {"from": "B", "to": "A"}])
+    assert swapped["B"].tolist() == [1, 2]                     # a swap is not a clash
+
+
+def test_a_prepared_dataset_never_replaces_a_raw_one():
+    with tempfile.TemporaryDirectory() as td:
+        store = _store(Path(td))
+        assert prep.output_name(store, "AE") == "ae_prep"      # raw ae exists
+        assert prep.output_name(store, "DS") == "ds"
+        try:
+            run([{"op": "filter", "name": "ae", "params": {
+                "dataset": "ae", "conds": [{"column": "AETERM", "operator": "notmissing"}]}}],
+                store)
+            raise AssertionError("a step named after a raw dataset must be refused")
+        except prep.PrepError as exc:
+            assert "raw dataset" in str(exc)
+
+
+def test_usubjid_carries_a_full_x_subjid():
+    from types import SimpleNamespace
+    from sdtm_builder import ops
+    from sdtm_builder.blocks import Block
+    base = pd.DataFrame({"X_SUBJID": ["S1-001", "S1-002"], "SUBJID": ["001", "002"]})
+    ctx = SimpleNamespace(base=base, frame=pd.DataFrame(index=base.index), studyid="S1",
+                          index=base.index, built={})
+    assert ops.op_usubjid(ctx, Block(variable="USUBJID", domain="DM")).tolist() == ["S1-001", "S1-002"]
+    base2 = pd.DataFrame({"SUBJID": ["001", "S1-002"]})
+    ctx2 = SimpleNamespace(base=base2, frame=pd.DataFrame(index=base2.index), studyid="S1",
+                           index=base2.index, built={})
+    assert ops.op_usubjid(ctx2, Block(variable="USUBJID", domain="DM")).tolist() == ["S1-001", "S1-002"]
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

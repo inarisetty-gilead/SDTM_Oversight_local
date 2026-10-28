@@ -219,6 +219,58 @@ def test_sas_program_is_structured_and_honest():
         assert "indsname=__src" in text_ds
 
 
+def test_generated_prep_code_matches_the_engine():
+    """Filters with SAS spellings, a blank test, column comparisons, a rename listed twice and
+    an inner merge: the generated Python must give the tool's records, and the SAS must
+    carry the join type (it used to be a plain MERGE — always an outer join)."""
+    import pandas as pd
+    from sdtm_builder import prep
+    a = pd.DataFrame({"USUBJID": ["1", "2", "3", "4"], "X": ["Y", "", "N", "Y"],
+                      "N": ["3", "", "10", "7"], "S": ["2024-01-02", "2024-01-09", "", "2024-01-01"],
+                      "E": ["2024-01-05", "2024-01-03", "2024-01-01", "2024-01-01"]})
+    b = pd.DataFrame({"USUBJID": ["1", "3", "4"], "Z": ["a", "b", "c"]})
+    steps = [
+        {"op": "filter", "name": "f1", "params": {"dataset": "a", "conds": [
+            {"column": "X", "operator": "ne", "value": "''"},
+            {"column": "N", "operator": "ge", "value": "3"}]}},
+        {"op": "filter", "name": "f2", "params": {"dataset": "a", "conds": [
+            {"column": "E", "operator": ">=", "value": "S"}]}},
+        {"op": "rename", "name": "r", "params": {"dataset": "a", "renames": [
+            {"from": "X", "to": "XA"}, {"from": "X", "to": "XB"}]}},
+        {"op": "merge", "name": "m", "params": {"how": "inner", "on": ["USUBJID"],
+                                                 "inputs": [{"dataset": "a"}, {"dataset": "b"}]}},
+    ]
+
+    class _S:                                 # a two-dataset store for the engine
+        refs = {}
+        frames = {"a": a, "b": b}
+        def resolve(self, n): return n if n in self.frames else None
+        def get(self, n): return self.frames[n]
+    engine = prep.run_pipeline(steps, _S())[0]
+
+    g = programs._Py("XX", "a", {})
+    ns = {"pd": pd, "raw_a": a.copy(), "raw_b": b.copy()}
+    for st in steps:
+        exec("\n".join(programs._py_prep_lines(g, st)), ns)
+        ns["raw_" + st["name"]] = ns[st["name"]]
+    for st in steps:
+        n = st["name"]
+        got = ns[n].reset_index(drop=True)
+        want = engine[n].reset_index(drop=True)
+        assert list(got.columns) == list(want.columns), (n, list(got.columns), list(want.columns))
+        assert got.astype(str).equals(want.astype(str)), (n, got, want)
+    assert engine["f1"]["USUBJID"].tolist() == ["1", "3", "4"]
+    assert engine["f2"]["USUBJID"].tolist() == ["1", "3", "4"]       # blank start sorts lowest
+    assert engine["m"]["USUBJID"].tolist() == ["1", "3", "4"]        # inner join
+
+    sas = "\n".join(programs._sas_prep(steps[3]))
+    assert "(in=__in1)" in sas and "if __in1 and __in2;" in sas
+    where = programs._sas_where(steps[0]["params"]["conds"])
+    assert "not missing(X)" in where and "input(N, ?? best32.) >= 3.0" in where
+    ren = "\n".join(programs._sas_prep(steps[2]))
+    assert "rename=(X=XA)" in ren and "XB = XA;" in ren
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
