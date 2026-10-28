@@ -64,6 +64,10 @@ class Study:
     domain_reviews: dict = field(default_factory=dict)
     # action-list item id -> {"decision": "confirmed"|"dismissed", "title", "at"}
     action_decisions: dict = field(default_factory=dict)
+    # which build engine this study uses: "oversight" (its own) or "studio" (SDTM Studio's,
+    # vendored), and — for a studio study — what was imported: {study_id, study_name, …}
+    engine: str = "oversight"
+    studio: dict = field(default_factory=dict)
 
     def counts(self) -> dict:
         return {

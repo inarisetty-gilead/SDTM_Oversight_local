@@ -25,6 +25,7 @@ def configure(path: Path) -> None:
     global _PATH
     _PATH = Path(path)
     _PATH.parent.mkdir(parents=True, exist_ok=True)
+    _READY.discard(str(_PATH))          # a re-import replaces the file: check its tables again
 
 
 def _ddl() -> list[str]:

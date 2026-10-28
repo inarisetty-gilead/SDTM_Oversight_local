@@ -74,6 +74,46 @@ def test_every_domain_builds_as_the_studio_builds_it():
     assert not diffs, "\n".join(diffs)
 
 
+def test_a_studio_study_imports_builds_and_reviews_in_the_app():
+    """The whole path a tester takes: import the studio export into a study, build, review."""
+    import time
+    from fastapi.testclient import TestClient
+    from app import server
+    with tempfile.TemporaryDirectory() as td:
+        server.RUNS = Path(td) / "runs"
+        server.RUNS.mkdir()
+        server.STUDIES = server.StudyStore(Path(td) / "studies")
+        server.SESSION = server.Session()
+        c = TestClient(server.app)
+        sid = c.post("/api/studies", json={"name": "TEST-001 from the studio"}).json()["id"]
+        r = c.post(f"/api/studies/{sid}/studio-import", json={"path": str(FIX)})
+        assert r.status_code == 200, r.text
+        r = c.post(f"/api/studies/{sid}/studio-import", json={"path": str(FIX)})   # re-import
+        assert r.status_code == 200, r.text
+        assert r.json()["study_name"] == "TEST-001 Oncology Phase III"
+        assert c.post("/api/build", json={"fmt": "csv"}).status_code == 200
+        for _ in range(600):
+            job = c.get("/api/job").json()
+            if job["status"] != "running":
+                break
+            time.sleep(0.2)
+        assert job["status"] == "done", job
+        res = c.get("/api/build/results").json()["domains"]
+        assert len(res) == 30
+        assert all(d["studio_match"]["same"] for d in res), [
+            (d["domain"], d["studio_match"]) for d in res if not d["studio_match"]["same"]]
+        ae = c.get("/api/domain/AE").json()
+        assert ae["engine"] == "studio" and ae["studio_prep"] and ae["rows"] == 16
+        assert any(v["reason"].startswith("ae[") for v in ae["variables"])     # the studio's code
+        prog = c.get("/api/domain/AE/program/sas").json()
+        assert "data" in prog["program"].lower() and prog["filename"] == "ae_build.sas"
+        assert c.post("/api/domain/AE/variable/AETERM", json={"mtype": "constant", "value": "X"}).status_code == 409
+        # reopening the study keeps it a studio study
+        c.post(f"/api/studies/{sid}/close")
+        c.post(f"/api/studies/{sid}/open")
+        assert c.get("/api/domain/AE").json()["engine"] == "studio"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

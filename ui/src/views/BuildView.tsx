@@ -215,6 +215,11 @@ export function domainCols(reviews: Record<string, DomainReview> = {}) {
       } },
     { id: "r", head: "Records", kind: "number" as const, align: "right" as const,
       cell: (d: DomainRow) => d.ok ? d.rows.toLocaleString() : "—" },
+    // a studio-engine study: does this build equal what SDTM Studio built at export?
+    { id: "sm", head: "vs SDTM Studio", kind: "tag" as const,
+      cell: (d: DomainRow) => !d.studio_match?.checked ? ""
+        : d.studio_match.same ? <Chip tone="green">same</Chip>
+        : <span title={d.studio_match.why}><Chip tone="red">differs</Chip></span> },
     { id: "s", head: "SUPP", kind: "number" as const, align: "right" as const,
       cell: (d: DomainRow) => d.supp_rows ? d.supp_rows.toLocaleString() : "" },
     { id: "b", head: "Built", kind: "number" as const, align: "right" as const,

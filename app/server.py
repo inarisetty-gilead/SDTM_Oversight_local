@@ -60,6 +60,8 @@ class Session:
     dedups: dict = field(default_factory=dict)       # DOMAIN -> {enabled, keys, keep}
     domain_reviews: dict = field(default_factory=dict)  # DOMAIN -> {status, comments, updated}
     action_decisions: dict = field(default_factory=dict)  # action id -> {decision, title, at}
+    engine: str = "oversight"                     # "studio" = SDTM Studio's engine (vendored)
+    studio: dict = field(default_factory=dict)    # the imported studio study: id, name, domains
     pipelines: dict = field(default_factory=dict)    # DOMAIN -> [prep step, ...]
     draft_pipelines: dict = field(default_factory=dict)  # DOMAIN -> steps being edited, not yet applied
     custom_fns: dict = field(default_factory=dict)       # name -> user-defined derivation
@@ -343,6 +345,7 @@ def _autosave() -> None:
     study.dedups = SESSION.dedups
     study.domain_reviews = SESSION.domain_reviews
     study.action_decisions = SESSION.action_decisions
+    study.engine, study.studio = SESSION.engine, SESSION.studio
     if SESSION.out_dir:
         study.last_run = SESSION.out_dir
     STUDIES.save(study)
@@ -385,6 +388,9 @@ def _apply_study(study: Study) -> None:
     SESSION.dedups = dict(study.dedups)
     SESSION.domain_reviews = {d: _normalize_review(r) for d, r in study.domain_reviews.items()}
     SESSION.action_decisions = dict(study.action_decisions)
+    SESSION.engine, SESSION.studio = study.engine or "oversight", dict(study.studio or {})
+    if SESSION.engine == "studio":
+        _studio_configure()
     # reopen the inputs so the reader lands where they left off, not on an empty form
     SESSION.open_problems = []
     if study.spec_path:
@@ -495,9 +501,65 @@ def delete_study(study_id: str):
     return {"ok": True}
 
 
+# ── SDTM Studio studies ─────────────────────────────────────────────────────
+# A study imported from SDTM Studio is built by the studio's own engine (sdtm_builder/studio),
+# from the studio's spec, saved Domain Build edits and prep steps — reviewed and compared here,
+# edited in the studio.
+class StudioImportIn(BaseModel):
+    path: str
+
+
+def _studio_dir() -> Path:
+    return STUDIES.root / SESSION.study_id / "studio"
+
+
+def _studio_configure() -> None:
+    from sdtm_builder import studio
+    studio.configure(_studio_dir())
+
+
+def _is_studio() -> bool:
+    return SESSION.engine == "studio" and bool(SESSION.studio.get("study_id"))
+
+
+def _refuse_if_studio(what: str = "edited") -> None:
+    if _is_studio():
+        raise HTTPException(409, f"this study is built by SDTM Studio's engine from the studio's own "
+                                 f"mapping — it is not {what} here. Change it in the studio, export the "
+                                 f"study again and re-import it.")
+
+
+@app.post("/api/studies/{study_id}/studio-import")
+def studio_import(study_id: str, body: StudioImportIn):
+    """Bring in a study exported from SDTM Studio (tools/export_studio_study.py): its spec, saved
+    Domain Build edits, prep steps and raw data. From then on the study builds with the studio's
+    engine. Re-importing replaces the previous import."""
+    from sdtm_builder.studio import oversight as studio_ov
+    if SESSION.study_id != study_id:
+        raise HTTPException(409, "open the study first")
+    if RUNNER.busy:
+        raise HTTPException(409, "a job is running")
+    try:
+        info = studio_ov.import_export(os.path.expanduser(body.path), _studio_dir())
+    except (ValueError, OSError, KeyError) as exc:
+        raise HTTPException(400, f"could not import the studio export: {exc}") from exc
+    SESSION.engine, SESSION.studio = "studio", info
+    spec_path, raw_path = Path(info["spec_path"]).resolve(), Path(info["raw_path"]).resolve()
+    SESSION.spec = load_spec(spec_path)
+    SESSION.spec_path, SESSION.spec_sig = str(spec_path), _file_sig(spec_path)
+    SESSION.store = RawStore.discover(raw_path)
+    SESSION.raw_path, SESSION.raw_sig = str(raw_path), _folder_sig(raw_path)
+    SESSION.results, SESSION.comps, SESSION.outputs = {}, {}, {}
+    SESSION.edits, SESSION.pipelines, SESSION.draft_pipelines = {}, {}, {}
+    SESSION.studyid = SESSION.studyid or ""
+    _autosave()
+    return {"ok": True, **info, "datasets": len(SESSION.store.refs)}
+
+
 # ── filesystem browser ──────────────────────────────────────────────────────
 DATA_EXT = {".sas7bdat", ".xpt", ".csv", ".parquet", ".xlsx", ".xls", ".xlsm", ".txt", ".tsv",
-            ".pdf"}   # the aCRF check reads annotated CRF PDFs
+            ".pdf",   # the aCRF check reads annotated CRF PDFs
+            ".zip"}   # a study exported from SDTM Studio
 
 
 @app.get("/api/browse")
@@ -785,6 +847,9 @@ def start_build(body: BuildIn):
 
     if body.domains:
         targets = [upper(d) for d in body.domains]
+    elif _is_studio():
+        # a studio study builds the domains the studio has a Domain Build for
+        targets = [d for d in SESSION.studio.get("domains") or [] if d in SESSION.spec.domains]
     elif SESSION.spec.toc:
         targets = SESSION.spec.active_domains
     else:
@@ -813,7 +878,7 @@ def start_build(body: BuildIn):
             done["n"] += 1
             progress(f"building {dom}", step=done["n"])
 
-        results = build_study(
+        results = _studio_build(targets, tick) if _is_studio() else build_study(
             SESSION.spec, SESSION.store, domains=targets, studyid=body.studyid,
             base_overrides={d: o["base"] for d, o in ovr.items() if o.get("base")},
             sort_overrides={d: o["sort"] for d, o in ovr.items() if o.get("sort")},
@@ -864,6 +929,26 @@ def start_build(body: BuildIn):
     return {"started": True, "domains": targets, "out_dir": str(out)}
 
 
+def _studio_build(targets: list[str], tick=None) -> dict:
+    """Every target domain through SDTM Studio's Domain Build, in the studio's build order. Each
+    result also says whether it equals what the studio produced when the study was exported."""
+    from sdtm_builder.studio import oversight as studio_ov
+    _studio_configure()
+    sid = SESSION.studio["study_id"]
+    results = {}
+    for dom in studio_ov.build_order(sid, targets):
+        if tick:
+            tick(dom)
+        try:
+            res, _raw = studio_ov.build_domain(sid, dom)
+        except Exception as exc:                                 # noqa: BLE001
+            from sdtm_builder.build import DomainResult
+            res = DomainResult(domain=dom, error=f"the studio's build failed: {type(exc).__name__}: {exc}")
+        res.studio_match = studio_ov.reference_match(_studio_dir(), dom, res.dataset)
+        results[dom] = res
+    return results
+
+
 @app.get("/api/build/results")
 def build_results():
     if not SESSION.results:
@@ -883,6 +968,7 @@ def build_results():
             "prep": r.prep_step.as_dict() if r.prep_step else None,
             "edited": c.get("edited", 0),
             "name_matched": c.get("name_matched", 0),
+            "studio_match": getattr(r, "studio_match", None),
             "override": SESSION.overrides.get(dom, {}),
         })
         for b in r.blocks:
@@ -1263,7 +1349,15 @@ def _domain_payload(dom: str) -> dict:
         "unapplied_datasets": sorted(SESSION.preview_outputs.get(dom, set())),
         "built_domains": sorted(d for d, r in SESSION.results.items() if d != dom and r.ok),
         "variables": variables,
+        "engine": "studio" if _is_studio() else "oversight",
+        "studio_prep": _studio_prep(res) if _is_studio() else [],
+        "studio_match": getattr(res, "studio_match", None),
     }
+
+
+def _studio_prep(res) -> list[dict]:
+    from sdtm_builder.studio import oversight as studio_ov
+    return studio_ov.prep_summary(getattr(res, "studio_prep", []) or [])
 
 
 @app.get("/api/domain/{domain}")
@@ -1273,6 +1367,7 @@ def domain_detail(domain: str):
 
 @app.post("/api/domain/{domain}/settings")
 def set_override(domain: str, body: OverrideIn):
+    _refuse_if_studio()
     dom = upper(domain)
     if dom not in (SESSION.spec.domains if SESSION.spec else {}):
         raise HTTPException(404, f"{dom} is not in the mapping spec")
@@ -1304,7 +1399,12 @@ def rebuild_domain(domain: str):
         progress(f"rebuilding {dom}", step=1, total=3)
         # other domains stay available as cross-domain references (DM reference dates, etc.)
         others = {d: r.dataset for d, r in SESSION.results.items() if d != dom and r.ok}
-        res = build_domain(SESSION.spec, SESSION.store, dom, built=others,
+        if _is_studio():
+            SESSION.results[dom] = _studio_build([dom])[dom]
+            res = SESSION.results[dom]
+        else:
+            res = None
+        res = res or build_domain(SESSION.spec, SESSION.store, dom, built=others,
                            studyid=SESSION.studyid, base_override=ov.get("base", ""),
                            sort_by=ov.get("sort"), include_unbuilt=SESSION.include_unbuilt,
                            prep_mode=ov.get("prep_mode", "auto"),
@@ -1555,6 +1655,12 @@ def domain_program(domain: str, lang: str):
     lang = lang.lower()
     if lang not in ("python", "sas"):
         raise HTTPException(400, "lang must be python or sas")
+    if _is_studio():                    # the studio's own programs, from its own generator
+        from sdtm_builder.studio import oversight as studio_ov
+        _studio_configure()
+        progs = studio_ov.programs(SESSION.studio["study_id"], dom)
+        return {"domain": dom, "lang": lang, "program": progs[lang],
+                "filename": f"{dom.lower()}_build.{'py' if lang == 'python' else 'sas'}"}
     # the distinct raw values behind every codelisted variable, so the program inlines
     # only the CT terms this study's data holds (5 entries, not the codelist's 100)
     observed: dict[str, list[str]] = {}
@@ -1972,6 +2078,7 @@ def suggest_arguments(domain: str, variable: str, recipe: str):
 def preview_edit(domain: str, variable: str, body: EditIn):
     """Try an edit WITHOUT keeping it: build the domain with it and return what the variable
     would contain. Nothing is committed, so a mapping can be judged before it is adopted."""
+    _refuse_if_studio()
     dom, var = upper(domain), upper(variable)
     if SESSION.spec is None or SESSION.store is None:
         raise HTTPException(400, "load the mapping spec and the raw data folder first")
@@ -2004,6 +2111,7 @@ def preview_edit(domain: str, variable: str, body: EditIn):
 
 @app.post("/api/domain/{domain}/variable/{variable}")
 def set_edit(domain: str, variable: str, body: EditIn):
+    _refuse_if_studio()
     dom, var = upper(domain), upper(variable)
     if SESSION.spec is None or dom not in SESSION.spec.domains:
         raise HTTPException(404, f"{dom} is not in the mapping spec")
@@ -2472,6 +2580,7 @@ def get_pipeline(domain: str):
 def preview_pipeline(domain: str, body: PipelineIn):
     """Run a pipeline without keeping it, and report each step's output — rows, columns and
     a sample — so a preparation can be checked step by step before it is adopted."""
+    _refuse_if_studio()
     if SESSION.store is None:
         raise HTTPException(400, "scan the raw data folder first")
     # The draft persists as it is typed — half-finished steps included — so a refresh or a
@@ -2505,6 +2614,7 @@ def preview_pipeline(domain: str, body: PipelineIn):
 
 @app.post("/api/domain/{domain}/pipeline")
 def set_pipeline(domain: str, body: PipelineIn):
+    _refuse_if_studio()
     dom = upper(domain)
     if SESSION.spec is None or dom not in SESSION.spec.domains:
         raise HTTPException(404, f"{dom} is not in the mapping spec")
@@ -2576,6 +2686,7 @@ def set_records_from(domain: str, body: RecordsFromIn):
 def pipeline_from_auto(domain: str):
     """Seed an editable pipeline from whatever the automatic detection proposed, so the
     detected stack or transpose becomes a starting point rather than a black box."""
+    _refuse_if_studio()
     dom = upper(domain)
     res = SESSION.results.get(dom)
     if res is None or res.prep_step is None:
@@ -2677,6 +2788,7 @@ def state():
     return {
         "version": __version__,
         "study_id": SESSION.study_id, "study_name": SESSION.study_name,
+        "engine": SESSION.engine, "studio": SESSION.studio,
         "spec": SESSION.spec_path, "raw": SESSION.raw_path, "vendor": SESSION.vendor_path,
         "out_dir": SESSION.out_dir, "studyid": SESSION.studyid,
         "domains": SESSION.spec.domain_names if SESSION.spec else [],

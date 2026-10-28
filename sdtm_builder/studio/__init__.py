@@ -52,6 +52,8 @@ def load_study_tables(tables: dict) -> None:
         # a row exported from an older database may carry a column the schema has since
         # renamed or dropped — only the current table's columns are loaded
         have = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}
+        if not have:
+            raise RuntimeError(f"the local database has no '{table}' table")
         for row in rows or []:
             cols = [c for c in row if c in have]
             db.execute(f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) VALUES "

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArrowDown, ArrowLeft, ArrowUp, BookOpen, CheckCircle2, Copy, ExternalLink, MessageSquare, Plus, Search, Table2, Trash2 } from "lucide-react"
 import { api } from "@/api"
-import type { CtInspect, DomainDetail, DomainReview, JobState, ReviewComment, ReviewStatus, VariableRow } from "@/api"
+import type { CtInspect, DomainDetail, DomainReview, JobState, ReviewComment, ReviewStatus, StudioPrepStep, VariableRow } from "@/api"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { SpecRowsPanel } from "@/components/SpecPeek"
@@ -409,6 +409,10 @@ export function DomainView({ domain, variable, onBack, onChanged }: {
       <PageHeader
         title={<span className="flex items-center gap-2">{d.domain}
           {d.prep && <Chip tone="violet">{d.prep.op === "stack" ? "stacked" : "transposed"}</Chip>}
+          {d.engine === "studio" && <Chip tone="teal">SDTM Studio engine</Chip>}
+          {d.studio_match?.checked && (d.studio_match.same
+            ? <Chip tone="green">same as the studio</Chip>
+            : <Chip tone="red">differs from the studio: {d.studio_match.why}</Chip>)}
         </span>}
         subtitle={<>{d.rows.toLocaleString()} record(s) from <Mono>{d.base}</Mono>
           {d.supp_rows ? <> · SUPP{d.domain}: {d.supp_rows.toLocaleString()}</> : null}</>}
@@ -543,14 +547,25 @@ export function DomainView({ domain, variable, onBack, onChanged }: {
                     {editing.how}{editing.source ? ` · ${editing.source}` : ""}
                   </span>
                   <div className="ml-auto flex gap-1">
+                    {d.engine !== "studio" && (
                     <Button size="sm" variant={pane === "edit" ? "default" : "outline"}
                             className="h-7 text-xs" onClick={() => setPane(pane === "edit" ? "data" : "edit")}>
                       {pane === "edit" ? "Done" : "Edit mapping"}
-                    </Button>
+                    </Button>)}
                     <Button size="sm" variant="ghost" className="h-7 text-xs"
                             onClick={() => { setEditing(null); setPane("data") }}>Close</Button>
                   </div>
                 </div>
+                {d.engine === "studio" && (editing.reason || editing.error) && (
+                  <div className="space-y-1">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      SDTM Studio builds it with</p>
+                    {editing.reason && (
+                      <pre className="max-h-48 overflow-auto rounded bg-muted/50 p-2 font-mono text-[11px] whitespace-pre-wrap">
+                        {editing.reason}</pre>)}
+                    {editing.error && <Callout tone="bad">{editing.error}</Callout>}
+                  </div>
+                )}
                 {/* the variable's own records: the subject key and the value by default —
                     plus whatever else the reader adds, including a prep step's own column
                     (e.g. __SOURCE_DATASET) that this domain does not itself build */}
@@ -725,11 +740,15 @@ export function DomainView({ domain, variable, onBack, onChanged }: {
             {/* keyed by domain: the step list initialises from the detail ON MOUNT, and a
                 stale instance from another domain would show no steps (and could even
                 clear the saved draft) while the pipeline is right there in the detail */}
-            <PipelineEditor key={d.domain} detail={d} onDone={() => void afterRebuild()} />
+            {d.engine === "studio"
+              ? <StudioPrepList steps={d.studio_prep ?? []} />
+              : <PipelineEditor key={d.domain} detail={d} onDone={() => void afterRebuild()} />}
           </TabsContent>
 
           <TabsContent value="settings" className="pt-4">
-            <DomainSettings detail={d} onDone={() => void afterRebuild()} />
+            {d.engine === "studio"
+              ? <Callout title="Settings are the studio's">This domain builds with the base, sort and de-duplication saved in SDTM Studio's Domain Build.</Callout>
+              : <DomainSettings detail={d} onDone={() => void afterRebuild()} />}
           </TabsContent>
         </Tabs>
 
@@ -842,4 +861,33 @@ function F({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="space-y-1.5">
     <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</Label>
     {children}</div>
+}
+
+
+/** A studio study's prep steps, as SDTM Studio saved them — read-only: they run here exactly as
+ *  in the studio, and are changed in the studio. */
+function StudioPrepList({ steps }: { steps: StudioPrepStep[] }) {
+  if (!steps.length) {
+    return <Callout title="No prep steps">SDTM Studio builds this domain straight from its raw forms.</Callout>
+  }
+  return (
+    <Panel title={`Prepare the data — ${steps.length} step${steps.length > 1 ? "s" : ""}, as saved in SDTM Studio`}
+           description="These run here exactly as in the studio. To change one, change it in the studio's Domain Build, export the study again and re-import it.">
+      <div className="divide-y rounded border">
+        {steps.map((s) => (
+          <details key={s.step} className="px-3 py-2">
+            <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-[13px]">
+              <span className="grid h-5 w-5 place-items-center rounded-full bg-muted text-[10px] font-semibold">{s.step}</span>
+              <Chip tone="blue">{s.op}</Chip>
+              <Mono>{s.name || "—"}</Mono>
+              {s.reads.length > 0 && <span className="text-[12px] text-muted-foreground">reads {s.reads.join(", ")}</span>}
+            </summary>
+            <pre className="mt-2 max-h-72 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px]">
+              {JSON.stringify(s.params, null, 2)}
+            </pre>
+          </details>
+        ))}
+      </div>
+    </Panel>
+  )
 }

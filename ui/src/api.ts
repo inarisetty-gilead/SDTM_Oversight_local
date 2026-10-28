@@ -70,6 +70,19 @@ export interface DomainRow {
   built: number; dropped: number; not_built: number; empty: number
   name_matched: number; edited: number;
   warnings: string[]; prep: { op: string; name: string; note: string } | null;
+  studio_match?: StudioMatch | null;
+}
+
+/** Does a studio-engine build equal what SDTM Studio built when the study was exported? */
+export interface StudioMatch { checked: boolean; same?: boolean; why?: string }
+
+export interface StudioImport {
+  ok: boolean; study_id: string; study_name: string; protocol_number: string
+  spec_path: string; raw_path: string; domains: string[]; exported: string; datasets: number
+}
+
+export interface StudioPrepStep {
+  step: number; op: string; name: string; reads: string[]; params: Record<string, unknown>
 }
 
 export interface BuildResults {
@@ -100,6 +113,7 @@ export interface DomainDetail {
   datasets: string[]; prepared_datasets: string[]; unapplied_datasets: string[]
   built_domains: string[]; variables: VariableRow[]; codelists?: string[];
   review?: DomainReview;
+  engine?: "studio" | "oversight"; studio_prep?: StudioPrepStep[]; studio_match?: StudioMatch | null;
 }
 
 export type ReviewStatus = "not_reviewed" | "in_progress" | "reviewed" | "completed"
@@ -259,6 +273,7 @@ export const api = {
     vendor: string; restored: Record<string, number>
     built: string[]; compared: string[]; problems?: string[] }>(`/api/studies/${id}/open`),
   closeStudy: (id: string) => post(`/api/studies/${id}/close`),
+  studioImport: (id: string, path: string) => post<StudioImport>(`/api/studies/${id}/studio-import`, { path }),
   deleteStudy: (id: string) => call(`/api/studies/${id}`, { method: "DELETE" }),
   buildId: () => call<{ version: string; assets: string[]; built: string }>("/api/build-id"),
   state: () => call<Record<string, unknown>>("/api/state"),

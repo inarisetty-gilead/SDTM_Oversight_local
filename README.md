@@ -465,6 +465,26 @@ build paths are not included.
   checks the result against what the studio's Domain Build produced, column for column.
 - The engine needs the studio's pandas (2.3.x). Under pandas 3 the same code builds differently.
 
+**Testing a studio study in Oversight.** In the studio's folder, export the study:
+
+    cd /path/to/sdtm-studio/Container/sdtm_api
+    .venv/bin/python /path/to/SDTM_Oversight_local/tools/export_studio_study.py STUDY_ID STUDY.zip
+
+Then, in Oversight, open or create a study and use **Setup → A study from SDTM Studio** to import
+the zip. The export carries the study as the studio holds it: its spec, saved Domain Build edits,
+prep steps and raw data. From then on the study builds with the studio's engine:
+
+- Build shows, per domain, whether the result is the **same** as what the studio built when the
+  study was exported.
+- Each variable shows the code the studio generated for it.
+- Prepare the data lists the studio's prep steps.
+- Program shows the studio's own Python and SAS.
+- Comparing with a vendor delivery works as for any study.
+
+Mappings and prep are reviewed here and changed in the studio; to see a change, export the study
+again and re-import it. A real study's export holds subject data: keep it on this machine, as with
+runs/ and studies/.
+
 To bring Oversight up to date after the studio changes, run these three, then the test above:
 
     python tools/vendor_studio.py /path/to/sdtm-studio/Container

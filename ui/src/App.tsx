@@ -46,6 +46,7 @@ function MainApp() {
   const [specPath, setSpecPath] = useState("")
   const [rawPath, setRawPath] = useState("")
   const [vendorPath, setVendorPath] = useState("")
+  const [studioPath, setStudioPath] = useState("")
   const [spec, setSpec] = useState<SpecInfo | null>(null)
   const [raw, setRaw] = useState<RawInfo | null>(null)
   const [build, setBuild] = useState<BuildResults | null>(null)
@@ -317,7 +318,19 @@ function MainApp() {
                          spec={spec} raw={raw} err={err} busy={busy}
                          onSpec={() => void onSpec()} onRaw={() => void onRaw()}
                          onBrowse={(target, mode) => setPicker({ mode, target })}
-                         onSynth={(dir) => { setRawPath(dir); setTimeout(() => void onRaw(), 0) }} />
+                         onSynth={(dir) => { setRawPath(dir); setTimeout(() => void onRaw(), 0) }}
+                         studyId={study?.id ?? ""} studioPath={studioPath} setStudioPath={setStudioPath}
+                         onStudioImported={(info) => void (async () => {
+                           // the import set the spec and raw folder server-side; show them here,
+                           // read from the import itself (state set now is not visible until
+                           // the next render)
+                           setSpecPath(info.spec_path); setRawPath(info.raw_path)
+                           setBuild(null); setCompare(null); setErr((p) => ({ ...p, spec: "", raw: "" }))
+                           try {
+                             setSpec(await api.setSpec(info.spec_path))
+                             setRaw(await api.setRaw(info.raw_path))
+                           } catch (e) { fail("spec", e) }
+                         })()} />
             )}
             {view === "spec" && <SpecView />}
             {view === "rawdata" && <RawDataView />}
@@ -358,11 +371,13 @@ function MainApp() {
 
       <PathPicker open={!!picker} mode={picker?.mode ?? "dir"}
                   start={picker?.target === "spec" ? specPath
-                       : picker?.target === "raw" ? rawPath : vendorPath}
+                       : picker?.target === "raw" ? rawPath
+                       : picker?.target === "studio" ? studioPath : vendorPath}
                   onClose={() => setPicker(null)}
                   onPick={(p) => {
                     if (picker?.target === "spec") setSpecPath(p)
                     else if (picker?.target === "raw") setRawPath(p)
+                    else if (picker?.target === "studio") setStudioPath(p)
                     else setVendorPath(p)
                   }} />
     </div>

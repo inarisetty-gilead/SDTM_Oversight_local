@@ -1,7 +1,7 @@
-import { useState } from "react"
-import { FileSpreadsheet, FolderOpen, Sparkles } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Boxes, FileSpreadsheet, FolderOpen, Sparkles } from "lucide-react"
 import { api } from "@/api"
-import type { RawInfo, SpecInfo } from "@/api"
+import type { RawInfo, SpecInfo, StudioImport } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -11,15 +11,17 @@ import { PathField } from "@/components/PathPicker"
 
 export function SetupView({
   specPath, setSpecPath, rawPath, setRawPath, spec, raw, err, busy,
-  onSpec, onRaw, onBrowse, onSynth,
+  onSpec, onRaw, onBrowse, onSynth, studyId, studioPath, setStudioPath, onStudioImported,
 }: {
   specPath: string; setSpecPath: (v: string) => void
   rawPath: string; setRawPath: (v: string) => void
   spec: SpecInfo | null; raw: RawInfo | null
   err: Record<string, string>; busy: string
   onSpec: () => void; onRaw: () => void
-  onBrowse: (target: "spec" | "raw", mode: "file" | "dir") => void
+  onBrowse: (target: "spec" | "raw" | "studio", mode: "file" | "dir") => void
   onSynth: (dir: string) => void
+  studyId: string; studioPath: string; setStudioPath: (v: string) => void
+  onStudioImported: (info: StudioImport) => void
 }) {
   const cov = spec?.coverage?.totals ?? {}
   const hasCov = Object.keys(cov).length > 0
@@ -30,6 +32,9 @@ export function SetupView({
         subtitle="Point the tool at the mapping spec and the raw extract. Everything after this reads only those two." />
 
       <div className="space-y-4">
+        <StudioImportPanel studyId={studyId} path={studioPath} setPath={setStudioPath}
+                           onBrowse={() => onBrowse("studio", "file")} onImported={onStudioImported} />
+
         <Panel icon={<FileSpreadsheet className="h-4 w-4" />} tone="violet" title="Mapping specification"
                description="One worksheet per SDTM domain. A title row above the headings is handled.">
           <div className="flex flex-wrap gap-2">
@@ -200,5 +205,56 @@ function SynthButton({ onGenerated, specPath }: {
       <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
       {error && <span className="text-xs text-destructive">{error}</span>}
     </div>
+  )
+}
+
+
+/** Bring in a study exported from SDTM Studio. From then on the study is built by the studio's
+ *  own engine — its spec, saved Domain Build edits and prep steps — and reviewed here. */
+function StudioImportPanel({ studyId, path, setPath, onBrowse, onImported }: {
+  studyId: string; path: string; setPath: (v: string) => void
+  onBrowse: () => void; onImported: (info: StudioImport) => void
+}) {
+  const [current, setCurrent] = useState<{ engine?: string; studio?: Partial<StudioImport> } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState("")
+  useEffect(() => {
+    api.state().then((s) => setCurrent(s as { engine?: string; studio?: Partial<StudioImport> }))
+      .catch(() => undefined)
+  }, [studyId])
+  const studio = current?.engine === "studio" ? current.studio : null
+  const run = async () => {
+    setBusy(true); setErr("")
+    try {
+      const info = await api.studioImport(studyId, path)
+      setCurrent({ engine: "studio", studio: info })
+      onImported(info)
+    } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+  return (
+    <Panel icon={<Boxes className="h-4 w-4" />} tone="teal" title="A study from SDTM Studio"
+           description="Import a study as the studio holds it — its spec, saved Domain Build edits, prep steps and raw data — and it builds with the studio's own engine, offline. Make the export in the studio's folder with tools/export_studio_study.py.">
+      {studio ? (
+        <Callout tone="good" title={`Built by SDTM Studio's engine — ${studio.study_name ?? ""}`}>
+          {studio.protocol_number ? <><Mono>{studio.protocol_number}</Mono> · </> : null}
+          {(studio.domains ?? []).length} domains with a Domain Build
+          {studio.exported ? <> · exported {studio.exported.replace("T", " ").slice(0, 16)}</> : null}.
+          {" "}Mappings and prep are the studio's: review them here, change them in the studio.
+        </Callout>
+      ) : null}
+      {!studyId ? (
+        <p className="text-[13px] text-muted-foreground">Open or create a study first.</p>
+      ) : (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <div className="min-w-72 flex-1">
+            <PathField value={path} onChange={setPath} mode="file"
+                       placeholder="/path/to/STUDY_studio_export.zip" onBrowse={onBrowse} />
+          </div>
+          <Button disabled={busy || !path} onClick={() => void run()}>
+            {studio ? "Re-import" : "Import"}</Button>
+        </div>
+      )}
+      {err && <Callout tone="bad" title="Could not import">{err}</Callout>}
+    </Panel>
   )
 }
