@@ -17,3 +17,8 @@ fixture/
 *.xlsx
 
 # app/static_dist IS committed: the built interface, so the app runs without Node.
+
+# the standards snapshot the studio engine reads (tools/snapshot_standards.py) IS committed —
+# reference standards, no study data
+!standards/
+!standards/**

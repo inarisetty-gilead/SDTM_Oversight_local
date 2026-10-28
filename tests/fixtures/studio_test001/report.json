@@ -1,0 +1,242 @@
+{
+ "AE": {
+  "ok": true,
+  "rows": 16,
+  "supp": 144,
+  "prep_steps": 40,
+  "error": null,
+  "warnings": []
+ },
+ "CE": {
+  "ok": true,
+  "rows": 112,
+  "supp": 112,
+  "prep_steps": 5,
+  "error": null,
+  "warnings": []
+ },
+ "CM": {
+  "ok": true,
+  "rows": 16,
+  "supp": 208,
+  "prep_steps": 7,
+  "error": null,
+  "warnings": []
+ },
+ "CO": {
+  "ok": true,
+  "rows": 224,
+  "supp": 0,
+  "prep_steps": 26,
+  "error": null,
+  "warnings": []
+ },
+ "DA": {
+  "ok": true,
+  "rows": 0,
+  "supp": 0,
+  "prep_steps": 1,
+  "error": null,
+  "warnings": []
+ },
+ "DD": {
+  "ok": true,
+  "rows": 0,
+  "supp": 0,
+  "prep_steps": 13,
+  "error": null,
+  "warnings": []
+ },
+ "DM": {
+  "ok": true,
+  "rows": 8,
+  "supp": 48,
+  "prep_steps": 0,
+  "error": null,
+  "warnings": []
+ },
+ "DS": {
+  "ok": true,
+  "rows": 24,
+  "supp": 48,
+  "prep_steps": 38,
+  "error": null,
+  "warnings": []
+ },
+ "EC": {
+  "ok": true,
+  "rows": 90,
+  "supp": 1260,
+  "prep_steps": 44,
+  "error": null,
+  "warnings": []
+ },
+ "EG": {
+  "ok": true,
+  "rows": 150,
+  "supp": 0,
+  "prep_steps": 25,
+  "error": null,
+  "warnings": []
+ },
+ "EX": {
+  "ok": true,
+  "rows": 90,
+  "supp": 90,
+  "prep_steps": 1,
+  "error": null,
+  "warnings": []
+ },
+ "FA": {
+  "ok": true,
+  "rows": 62,
+  "supp": 0,
+  "prep_steps": 5,
+  "error": null,
+  "warnings": []
+ },
+ "GF": {
+  "ok": true,
+  "rows": 224,
+  "supp": 224,
+  "prep_steps": 5,
+  "error": null,
+  "warnings": []
+ },
+ "HO": {
+  "ok": true,
+  "rows": 3,
+  "supp": 0,
+  "prep_steps": 11,
+  "error": null,
+  "warnings": []
+ },
+ "IE": {
+  "ok": true,
+  "rows": 224,
+  "supp": 0,
+  "prep_steps": 3,
+  "error": null,
+  "warnings": []
+ },
+ "LB": {
+  "ok": true,
+  "rows": 336,
+  "supp": 672,
+  "prep_steps": 18,
+  "error": null,
+  "warnings": []
+ },
+ "LC": {
+  "ok": true,
+  "rows": 112,
+  "supp": 336,
+  "prep_steps": 26,
+  "error": null,
+  "warnings": []
+ },
+ "MH": {
+  "ok": true,
+  "rows": 120,
+  "supp": 112,
+  "prep_steps": 3,
+  "error": null,
+  "warnings": []
+ },
+ "MI": {
+  "ok": true,
+  "rows": 344,
+  "supp": 344,
+  "prep_steps": 63,
+  "error": null,
+  "warnings": []
+ },
+ "PC": {
+  "ok": true,
+  "rows": 1920,
+  "supp": 0,
+  "prep_steps": 16,
+  "error": null,
+  "warnings": []
+ },
+ "PR": {
+  "ok": true,
+  "rows": 112,
+  "supp": 336,
+  "prep_steps": 28,
+  "error": null,
+  "warnings": []
+ },
+ "RP": {
+  "ok": true,
+  "rows": 243,
+  "supp": 0,
+  "prep_steps": 2,
+  "error": null,
+  "warnings": []
+ },
+ "RS": {
+  "ok": true,
+  "rows": 319,
+  "supp": 0,
+  "prep_steps": 14,
+  "error": null,
+  "warnings": []
+ },
+ "SC": {
+  "ok": true,
+  "rows": 8,
+  "supp": 0,
+  "prep_steps": 0,
+  "error": null,
+  "warnings": []
+ },
+ "SR": {
+  "ok": true,
+  "rows": 224,
+  "supp": 0,
+  "prep_steps": 3,
+  "error": null,
+  "warnings": []
+ },
+ "SS": {
+  "ok": true,
+  "rows": 200,
+  "supp": 0,
+  "prep_steps": 15,
+  "error": null,
+  "warnings": []
+ },
+ "SV": {
+  "ok": true,
+  "rows": 112,
+  "supp": 112,
+  "prep_steps": 7,
+  "error": null,
+  "warnings": []
+ },
+ "TR": {
+  "ok": true,
+  "rows": 386,
+  "supp": 0,
+  "prep_steps": 12,
+  "error": null,
+  "warnings": []
+ },
+ "TU": {
+  "ok": true,
+  "rows": 336,
+  "supp": 0,
+  "prep_steps": 22,
+  "error": null,
+  "warnings": []
+ },
+ "VS": {
+  "ok": true,
+  "rows": 409,
+  "supp": 0,
+  "prep_steps": 14,
+  "error": null,
+  "warnings": []
+ }
+}

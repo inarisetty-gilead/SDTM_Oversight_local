@@ -11,7 +11,9 @@ requires-python = ">=3.10"
 # later, and a library upgrade can change a rounding edge or a parsing default. `verify` will
 # tell you the environment drifted; the bounds stop it drifting by accident.
 dependencies = [
-    "pandas>=2.0,<4",
+    # the vendored studio engine (sdtm_builder/studio) must run on the studio's pandas:
+    # pandas 3 changed string and copy semantics, and TEST-001 then builds differently
+    "pandas>=2.3.3,<2.4",
     "numpy>=1.24,<3",
     "openpyxl>=3.1,<4",
     "pyreadstat>=1.2,<2",

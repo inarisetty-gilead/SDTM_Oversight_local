@@ -449,6 +449,31 @@ and joining on another looks right at both steps and matches nothing — so when
 be joined at all, it is named and skipped, and if none can be joined the variable reports the
 reason instead of returning a blank column.
 
+## The SDTM Studio engine, offline
+
+`sdtm_builder/studio` is SDTM Studio's own build engine: Domain Build, Auto-Build, prep,
+construction standards, controlled terminology from the core spec, biomedical concepts, the
+rule library and program generation. It is copied unchanged, not re-implemented, so a tester
+working in Oversight exercises the studio's code. Underneath it, S3 is replaced by folders on
+this machine and the database by a local SQLite file. Nothing reaches the network, and the AI
+build paths are not included.
+
+- `standards/` is a snapshot of the standards the studio reads from S3: the core spec, its
+  per-domain files, the TA specs, domain knowledge and construction standards.
+  `standards/SNAPSHOT.json` records when it was taken.
+- `tests/test_studio_equivalence.py` builds every TEST-001 domain and its SUPP-- offline. It
+  checks the result against what the studio's Domain Build produced, column for column.
+- The engine needs the studio's pandas (2.3.x). Under pandas 3 the same code builds differently.
+
+To bring Oversight up to date after the studio changes, run these three, then the test above:
+
+    python tools/vendor_studio.py /path/to/sdtm-studio/Container
+    cd /path/to/sdtm-studio/Container/sdtm_api
+    .venv/bin/python /path/to/SDTM_Oversight_local/tools/snapshot_standards.py
+    .venv/bin/python /path/to/SDTM_Oversight_local/tools/export_studio_fixture.py
+
+The last two run with the studio's Python, which has the S3 access; they only read.
+
 ## Standard template derivations
 
 The company SAS templates (SDTM-Designer's `dm-merge` and siblings) carry derivations that

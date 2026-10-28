@@ -1,0 +1,411 @@
+{
+ "taken": "2026-10-28T19:01:14+00:00",
+ "bucket": "sdtm-standard-files",
+ "objects": [
+  {
+   "key": "specs/core_spec.xlsx",
+   "bytes": 3875972,
+   "s3_last_modified": "2026-09-14T13:17:03+00:00"
+  },
+  {
+   "key": "specs/core/<ds>.parquet",
+   "bytes": 14882,
+   "s3_last_modified": "2026-05-30T22:51:40+00:00"
+  },
+  {
+   "key": "specs/core/AE.parquet",
+   "bytes": 27662,
+   "s3_last_modified": "2026-09-14T13:17:03+00:00"
+  },
+  {
+   "key": "specs/core/AG.parquet",
+   "bytes": 17131,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/APMH.parquet",
+   "bytes": 17075,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/CE.parquet",
+   "bytes": 16962,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/CM.parquet",
+   "bytes": 32051,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/CO.parquet",
+   "bytes": 21985,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/CV.parquet",
+   "bytes": 17252,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/Codelist.parquet",
+   "bytes": 1624823,
+   "s3_last_modified": "2026-05-30T22:51:45+00:00"
+  },
+  {
+   "key": "specs/core/Computation.parquet",
+   "bytes": 9998,
+   "s3_last_modified": "2026-05-30T22:51:45+00:00"
+  },
+  {
+   "key": "specs/core/DA.parquet",
+   "bytes": 22211,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/DD.parquet",
+   "bytes": 21382,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/DM.parquet",
+   "bytes": 32835,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/DS.parquet",
+   "bytes": 22988,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/DV.parquet",
+   "bytes": 20825,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/EC.parquet",
+   "bytes": 29136,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/EG.parquet",
+   "bytes": 25984,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/EX.parquet",
+   "bytes": 24872,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/FA.parquet",
+   "bytes": 22698,
+   "s3_last_modified": "2026-09-12T23:14:34+00:00"
+  },
+  {
+   "key": "specs/core/FT.parquet",
+   "bytes": 17349,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/HO.parquet",
+   "bytes": 22935,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/History of Revisions.parquet",
+   "bytes": 9455,
+   "s3_last_modified": "2026-05-30T22:51:39+00:00"
+  },
+  {
+   "key": "specs/core/IE.parquet",
+   "bytes": 20364,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/IS.parquet",
+   "bytes": 25149,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/LB.parquet",
+   "bytes": 28553,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/LC.parquet",
+   "bytes": 27123,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/MB.parquet",
+   "bytes": 17426,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/MH.parquet",
+   "bytes": 21310,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/MI.parquet",
+   "bytes": 17090,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/MK.parquet",
+   "bytes": 22037,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/ML.parquet",
+   "bytes": 20998,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/MO.parquet",
+   "bytes": 17340,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/MS.parquet",
+   "bytes": 18465,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/Maintenance.parquet",
+   "bytes": 14207,
+   "s3_last_modified": "2026-05-30T22:51:45+00:00"
+  },
+  {
+   "key": "specs/core/NV.parquet",
+   "bytes": 17246,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/OE.parquet",
+   "bytes": 17655,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/OI.parquet",
+   "bytes": 15724,
+   "s3_last_modified": "2026-09-12T23:14:34+00:00"
+  },
+  {
+   "key": "specs/core/PC.parquet",
+   "bytes": 25189,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/PE.parquet",
+   "bytes": 16825,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/PP.parquet",
+   "bytes": 21709,
+   "s3_last_modified": "2026-09-12T23:14:34+00:00"
+  },
+  {
+   "key": "specs/core/PR.parquet",
+   "bytes": 21135,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/QS.parquet",
+   "bytes": 26431,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/RE.parquet",
+   "bytes": 17378,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/RP.parquet",
+   "bytes": 21640,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/RS.parquet",
+   "bytes": 22624,
+   "s3_last_modified": "2026-09-12T23:14:34+00:00"
+  },
+  {
+   "key": "specs/core/SC.parquet",
+   "bytes": 21074,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/SE.parquet",
+   "bytes": 19324,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/SM.parquet",
+   "bytes": 18733,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/SR.parquet",
+   "bytes": 17147,
+   "s3_last_modified": "2026-09-12T23:14:34+00:00"
+  },
+  {
+   "key": "specs/core/SS.parquet",
+   "bytes": 21196,
+   "s3_last_modified": "2026-09-12T23:14:34+00:00"
+  },
+  {
+   "key": "specs/core/SU.parquet",
+   "bytes": 23250,
+   "s3_last_modified": "2026-09-12T23:14:32+00:00"
+  },
+  {
+   "key": "specs/core/SV.parquet",
+   "bytes": 19685,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/Standards.parquet",
+   "bytes": 4694,
+   "s3_last_modified": "2026-05-30T22:51:40+00:00"
+  },
+  {
+   "key": "specs/core/Study.parquet",
+   "bytes": 2532,
+   "s3_last_modified": "2026-05-30T22:51:40+00:00"
+  },
+  {
+   "key": "specs/core/TA-DATA.parquet",
+   "bytes": 4566,
+   "s3_last_modified": "2026-05-30T22:51:40+00:00"
+  },
+  {
+   "key": "specs/core/TA.parquet",
+   "bytes": 15752,
+   "s3_last_modified": "2026-09-12T23:14:30+00:00"
+  },
+  {
+   "key": "specs/core/TD-DATA.parquet",
+   "bytes": 4299,
+   "s3_last_modified": "2026-05-30T22:51:41+00:00"
+  },
+  {
+   "key": "specs/core/TD.parquet",
+   "bytes": 14407,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/TE-DATA.parquet",
+   "bytes": 3397,
+   "s3_last_modified": "2026-05-30T22:51:40+00:00"
+  },
+  {
+   "key": "specs/core/TE.parquet",
+   "bytes": 15470,
+   "s3_last_modified": "2026-09-12T23:14:30+00:00"
+  },
+  {
+   "key": "specs/core/TI-DATA.parquet",
+   "bytes": 3804,
+   "s3_last_modified": "2026-05-30T22:51:40+00:00"
+  },
+  {
+   "key": "specs/core/TI.parquet",
+   "bytes": 15923,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/TM-DATA.parquet",
+   "bytes": 2627,
+   "s3_last_modified": "2026-05-30T22:51:41+00:00"
+  },
+  {
+   "key": "specs/core/TM.parquet",
+   "bytes": 15399,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/TOC.parquet",
+   "bytes": 15245,
+   "s3_last_modified": "2026-05-30T22:51:40+00:00"
+  },
+  {
+   "key": "specs/core/TR.parquet",
+   "bytes": 16858,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/TS-DATA.parquet",
+   "bytes": 25156,
+   "s3_last_modified": "2026-05-30T22:51:40+00:00"
+  },
+  {
+   "key": "specs/core/TS.parquet",
+   "bytes": 16280,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/TU.parquet",
+   "bytes": 16768,
+   "s3_last_modified": "2026-09-12T23:14:33+00:00"
+  },
+  {
+   "key": "specs/core/TV-DATA.parquet",
+   "bytes": 4183,
+   "s3_last_modified": "2026-05-30T22:51:40+00:00"
+  },
+  {
+   "key": "specs/core/TV.parquet",
+   "bytes": 16389,
+   "s3_last_modified": "2026-09-12T23:14:31+00:00"
+  },
+  {
+   "key": "specs/core/UR.parquet",
+   "bytes": 17314,
+   "s3_last_modified": "2026-09-12T23:14:34+00:00"
+  },
+  {
+   "key": "specs/core/VS.parquet",
+   "bytes": 25698,
+   "s3_last_modified": "2026-09-12T23:14:34+00:00"
+  },
+  {
+   "key": "specs/core/Valuelist.parquet",
+   "bytes": 18093,
+   "s3_last_modified": "2026-05-30T22:51:45+00:00"
+  },
+  {
+   "key": "specs/ta_spec.xlsx",
+   "bytes": 3434280,
+   "s3_last_modified": "2026-05-30T23:11:06+00:00"
+  },
+  {
+   "key": "specs/ta_spec_onc.xlsx",
+   "bytes": 3434280,
+   "s3_last_modified": "2026-09-22T16:11:40+00:00"
+  },
+  {
+   "key": "reference/domain_knowledge.json",
+   "bytes": 39091,
+   "s3_last_modified": "2026-09-20T23:28:19+00:00"
+  },
+  {
+   "key": "reference/construction_standards.json",
+   "bytes": 80,
+   "s3_last_modified": "2026-09-21T14:52:40+00:00"
+  },
+  {
+   "key": "reference/construction_standards/IGCORE-SDTMIG-3.4.json",
+   "bytes": 171,
+   "s3_last_modified": "2026-09-29T14:24:32+00:00"
+  },
+  {
+   "key": "reference/construction_standards/index.json",
+   "bytes": 336,
+   "s3_last_modified": "2026-09-22T15:15:52+00:00"
+  }
+ ]
+}
