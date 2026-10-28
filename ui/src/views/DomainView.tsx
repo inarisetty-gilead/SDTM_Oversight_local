@@ -409,7 +409,8 @@ export function DomainView({ domain, variable, onBack, onChanged }: {
       <PageHeader
         title={<span className="flex items-center gap-2">{d.domain}
           {d.prep && <Chip tone="violet">{d.prep.op === "stack" ? "stacked" : "transposed"}</Chip>}
-          {d.engine === "studio" && <Chip tone="teal">SDTM Studio engine</Chip>}
+          {d.engine === "studio" && <Chip tone="teal">
+            SDTM Studio {d.build_mode === "auto" ? "Auto-Build" : "Domain Build"}</Chip>}
           {d.studio_match?.checked && (d.studio_match.same
             ? <Chip tone="green">same as the studio</Chip>
             : <Chip tone="red">differs from the studio: {d.studio_match.why}</Chip>)}
@@ -740,7 +741,9 @@ export function DomainView({ domain, variable, onBack, onChanged }: {
             {/* keyed by domain: the step list initialises from the detail ON MOUNT, and a
                 stale instance from another domain would show no steps (and could even
                 clear the saved draft) while the pipeline is right there in the detail */}
-            {d.engine === "studio"
+            {d.engine === "studio" && d.build_mode === "auto"
+              ? <Callout title="Auto-Build's prep">Auto-Build runs this domain's prep as saved in SDTM Studio's Domain Build (shown when the study is built with Domain Build), or the studio's own findings transpose where the spec calls for one.</Callout>
+              : d.engine === "studio"
               ? <StudioPrepList steps={d.studio_prep ?? []} />
               : <PipelineEditor key={d.domain} detail={d} onDone={() => void afterRebuild()} />}
           </TabsContent>

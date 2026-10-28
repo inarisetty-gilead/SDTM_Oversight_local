@@ -461,8 +461,11 @@ build paths are not included.
 - `standards/` is a snapshot of the standards the studio reads from S3: the core spec, its
   per-domain files, the TA specs, domain knowledge and construction standards.
   `standards/SNAPSHOT.json` records when it was taken.
-- `tests/test_studio_equivalence.py` builds every TEST-001 domain and its SUPP-- offline. It
-  checks the result against what the studio's Domain Build produced, column for column.
+- `tests/test_studio_equivalence.py` builds TEST-001 (`tests/fixtures/studio_test001.zip`, a studio
+  export) offline, both ways, column for column:
+  - every domain through Domain Build, against the studio's Domain Build;
+  - the whole study through Auto-Build, including the trial-design domains, against the studio's
+    Auto-Build.
 - The engine needs the studio's pandas (2.3.x). Under pandas 3 the same code builds differently.
 
 **Testing a studio study in Oversight.** In the studio's folder, export the study:
@@ -472,10 +475,21 @@ build paths are not included.
 
 Then, in Oversight, open or create a study and use **Setup → A study from SDTM Studio** to import
 the zip. The export carries the study as the studio holds it: its spec, saved Domain Build edits,
-prep steps and raw data. From then on the study builds with the studio's engine:
+prep steps and raw data. From then on the study builds with the studio's engine, in either of the studio's two ways
+(**Build → Options → SDTM Studio build**):
 
-- Build shows, per domain, whether the result is the **same** as what the studio built when the
-  study was exported.
+- **Domain Build**: each domain's saved Domain Build edits, settings and prep, as the studio's
+  Domain Build runs them.
+- **Auto-Build**: every active domain in the studio's order, each saved as it is built so later
+  domains read it, then the trial-design domains (TA, TE, TI, TV, TS) from the study's trial
+  design. It runs on a throwaway copy of the imported study, so every run starts from the export.
+  The studio's Auto-Build button first designs prep, possibly with AI, for any domain that has none
+  saved. That step does not run here: such a domain builds without it, and is labelled.
+
+In both modes:
+
+- Build shows, per domain, whether the result is the **same** as what the studio's Domain Build or
+  Auto-Build produced when the study was exported.
 - Each variable shows the code the studio generated for it.
 - Prepare the data lists the studio's prep steps.
 - Program shows the studio's own Python and SAS.
@@ -490,9 +504,12 @@ To bring Oversight up to date after the studio changes, run these three, then th
     python tools/vendor_studio.py /path/to/sdtm-studio/Container
     cd /path/to/sdtm-studio/Container/sdtm_api
     .venv/bin/python /path/to/SDTM_Oversight_local/tools/snapshot_standards.py
-    .venv/bin/python /path/to/SDTM_Oversight_local/tools/export_studio_fixture.py
+    .venv/bin/python /path/to/SDTM_Oversight_local/tools/export_studio_study.py \
+        ae5b6eb8-b082-45d4-b877-db94aaf0d771 /path/to/SDTM_Oversight_local/tests/fixtures/studio_test001.zip
 
-The last two run with the studio's Python, which has the S3 access; they only read.
+The last two run with the studio's Python, which has the S3 access. Neither changes anything in
+the studio: the export's builds run against a throwaway copy of its database, with S3 writes held
+in memory.
 
 ## Standard template derivations
 

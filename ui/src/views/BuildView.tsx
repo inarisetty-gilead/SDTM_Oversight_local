@@ -17,8 +17,8 @@ export function BuildView({
   specDomains, inactive, selected, setSelected,
 }: {
   build: BuildResults | null; job: JobState | null; err: string; busy: boolean
-  opts: { fmt: string; studyid: string; nameMatch: string; structure: string }
-  setOpts: (o: Partial<{ fmt: string; studyid: string; nameMatch: string; structure: string }>) => void
+  opts: { fmt: string; studyid: string; nameMatch: string; structure: string; studioMode: string }
+  setOpts: (o: Partial<{ fmt: string; studyid: string; nameMatch: string; structure: string; studioMode: string }>) => void
   onBuild: () => void; onOpenDomain: (d: string, variable?: string) => void; ready: boolean
   specDomains: string[]; inactive: string[]
   selected: string[]; setSelected: (d: string[]) => void
@@ -31,6 +31,15 @@ export function BuildView({
   const dropped = ok.reduce((a, d) => a + d.dropped, 0)
 
   const [reviews, setReviews] = useState<Record<string, DomainReview>>({})
+  // a study imported from SDTM Studio builds with the studio's engine, in one of its two modes
+  const [studio, setStudio] = useState<{ mode: string; name: string } | null>(null)
+  useEffect(() => {
+    api.state().then((s) => {
+      const st = s as { engine?: string; studio_mode?: string; studio?: { study_name?: string } }
+      setStudio(st.engine === "studio" ? { mode: st.studio_mode || "domain", name: st.studio?.study_name ?? "" } : null)
+    }).catch(() => undefined)
+  }, [build])
+  const studioMode = opts.studioMode || studio?.mode || "domain"
   useEffect(() => { api.reviews().then((r) => setReviews(r.reviews)).catch(() => undefined) }, [build])
 
   return (
@@ -43,6 +52,7 @@ export function BuildView({
             {busy ? "Building…"
               : selected.length === 1 ? `Build ${selected[0]}`
               : selected.length ? `Build ${selected.length} domains`
+              : studio && studioMode === "auto" ? "Run Auto-Build"
               : "Build all domains"}
           </Button>} />
 
@@ -78,6 +88,13 @@ export function BuildView({
 
         <Panel icon={<Settings2 className="h-4 w-4" />} title="Options">
           <div className="flex flex-wrap items-end gap-4">
+            {studio && (
+              <Field label="SDTM Studio build">
+                <Pick value={studioMode} onChange={(v) => setOpts({ studioMode: v })} width="w-72" options={[
+                  ["domain", "Domain Build — each domain's saved edits and prep"],
+                  ["auto", "Auto-Build — every active domain, then trial design"]]} />
+              </Field>
+            )}
             <Field label="Output format">
               <Pick value={opts.fmt} onChange={(v) => setOpts({ fmt: v })} width="w-52" options={[
                 ["xpt", "SAS transport (.xpt v5)"], ["csv", "CSV"], ["parquet", "Parquet"],

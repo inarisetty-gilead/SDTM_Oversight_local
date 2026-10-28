@@ -70,7 +70,7 @@ export interface DomainRow {
   built: number; dropped: number; not_built: number; empty: number
   name_matched: number; edited: number;
   warnings: string[]; prep: { op: string; name: string; note: string } | null;
-  studio_match?: StudioMatch | null;
+  studio_match?: StudioMatch | null; build_mode?: "domain" | "auto" | null;
 }
 
 /** Does a studio-engine build equal what SDTM Studio built when the study was exported? */
@@ -114,6 +114,7 @@ export interface DomainDetail {
   built_domains: string[]; variables: VariableRow[]; codelists?: string[];
   review?: DomainReview;
   engine?: "studio" | "oversight"; studio_prep?: StudioPrepStep[]; studio_match?: StudioMatch | null;
+  build_mode?: "domain" | "auto" | null;
 }
 
 export type ReviewStatus = "not_reviewed" | "in_progress" | "reviewed" | "completed"

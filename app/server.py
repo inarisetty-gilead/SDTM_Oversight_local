@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from sdtm_builder import __version__, acrf as acrf_module, prep as prep_module, report
-from sdtm_builder.build import build_domain, build_study
+from sdtm_builder.build import DomainResult, build_domain, build_study
 from sdtm_builder.compare import compare_study, discover_vendor
 from sdtm_builder.rawio import RawStore
 from sdtm_builder.spec import analyse as analyse_spec, check_consistency, load_spec
@@ -62,6 +62,7 @@ class Session:
     action_decisions: dict = field(default_factory=dict)  # action id -> {decision, title, at}
     engine: str = "oversight"                     # "studio" = SDTM Studio's engine (vendored)
     studio: dict = field(default_factory=dict)    # the imported studio study: id, name, domains
+    studio_mode: str = "domain"                   # its last build: "domain" or "auto"
     pipelines: dict = field(default_factory=dict)    # DOMAIN -> [prep step, ...]
     draft_pipelines: dict = field(default_factory=dict)  # DOMAIN -> steps being edited, not yet applied
     custom_fns: dict = field(default_factory=dict)       # name -> user-defined derivation
@@ -104,6 +105,9 @@ class BuildIn(BaseModel):
     include_unbuilt: bool = True
     name_match: int = 70
     bases: dict[str, str] = {}
+    # a study imported from SDTM Studio: "domain" = its Domain Build (the saved edits and prep,
+    # per domain), "auto" = its Auto-Build (every active domain in order, plus trial design)
+    studio_mode: str = ""
 
 
 class EditIn(BaseModel):
@@ -345,7 +349,7 @@ def _autosave() -> None:
     study.dedups = SESSION.dedups
     study.domain_reviews = SESSION.domain_reviews
     study.action_decisions = SESSION.action_decisions
-    study.engine, study.studio = SESSION.engine, SESSION.studio
+    study.engine, study.studio = SESSION.engine, {**SESSION.studio, "mode": SESSION.studio_mode}
     if SESSION.out_dir:
         study.last_run = SESSION.out_dir
     STUDIES.save(study)
@@ -389,6 +393,7 @@ def _apply_study(study: Study) -> None:
     SESSION.domain_reviews = {d: _normalize_review(r) for d, r in study.domain_reviews.items()}
     SESSION.action_decisions = dict(study.action_decisions)
     SESSION.engine, SESSION.studio = study.engine or "oversight", dict(study.studio or {})
+    SESSION.studio_mode = SESSION.studio.get("mode") or "domain"
     if SESSION.engine == "studio":
         _studio_configure()
     # reopen the inputs so the reader lands where they left off, not on an empty form
@@ -845,8 +850,15 @@ def start_build(body: BuildIn):
     if RUNNER.busy:
         raise HTTPException(409, "a job is already running")
 
+    mode = (body.studio_mode or SESSION.studio_mode or "domain") if _is_studio() else ""
+    if mode not in ("", "domain", "auto"):
+        raise HTTPException(400, "studio_mode must be domain or auto")
     if body.domains:
         targets = [upper(d) for d in body.domains]
+    elif mode == "auto":
+        # Auto-Build decides the domains itself (active ones, then trial design); this list
+        # only sizes the progress bar
+        targets = SESSION.spec.active_domains if SESSION.spec.toc else SESSION.spec.domain_names
     elif _is_studio():
         # a studio study builds the domains the studio has a Domain Build for
         targets = [d for d in SESSION.studio.get("domains") or [] if d in SESSION.spec.domains]
@@ -878,7 +890,7 @@ def start_build(body: BuildIn):
             done["n"] += 1
             progress(f"building {dom}", step=done["n"])
 
-        results = _studio_build(targets, tick) if _is_studio() else build_study(
+        results = _studio_build(targets, tick, mode, selected=bool(body.domains)) if _is_studio() else build_study(
             SESSION.spec, SESSION.store, domains=targets, studyid=body.studyid,
             base_overrides={d: o["base"] for d, o in ovr.items() if o.get("base")},
             sort_overrides={d: o["sort"] for d, o in ovr.items() if o.get("sort")},
@@ -893,10 +905,12 @@ def start_build(body: BuildIn):
         # Building a chosen subset ACCUMULATES: DM now, AE next, one by one — each build adds
         # to the session rather than wiping the domains built before it. Only a full build
         # (no selection) replaces everything.
-        if body.domains:
+        if body.domains and not (_is_studio() and mode != SESSION.studio_mode):
             SESSION.results = {**SESSION.results, **results}
         else:
-            SESSION.results = results
+            SESSION.results = results       # (a studio study switching build mode starts afresh)
+        if _is_studio():
+            SESSION.studio_mode = mode
 
         if body.fmt != "none":
             data_dir = out / "datasets"
@@ -929,12 +943,21 @@ def start_build(body: BuildIn):
     return {"started": True, "domains": targets, "out_dir": str(out)}
 
 
-def _studio_build(targets: list[str], tick=None) -> dict:
-    """Every target domain through SDTM Studio's Domain Build, in the studio's build order. Each
-    result also says whether it equals what the studio produced when the study was exported."""
+def _studio_build(targets: list[str], tick=None, mode: str = "domain", selected: bool = True) -> dict:
+    """Build through SDTM Studio's engine. mode "domain": each target through its Domain Build, in
+    the studio's order. mode "auto": its Auto-Build (all active domains unless some were picked,
+    then trial design). Each result says whether it equals what the studio built at export."""
     from sdtm_builder.studio import oversight as studio_ov
     _studio_configure()
+    studio_ov.reset_caches()
     sid = SESSION.studio["study_id"]
+    if mode == "auto":
+        out = studio_ov.auto_build(_studio_dir(), sid, targets if selected else None, progress=tick)
+        results = out["results"]
+        for dom, res in results.items():
+            res.studio_match = studio_ov.reference_match(_studio_dir(), dom, res.dataset, "reference_autobuild")
+            res.build_mode = "auto"
+        return results
     results = {}
     for dom in studio_ov.build_order(sid, targets):
         if tick:
@@ -942,9 +965,9 @@ def _studio_build(targets: list[str], tick=None) -> dict:
         try:
             res, _raw = studio_ov.build_domain(sid, dom)
         except Exception as exc:                                 # noqa: BLE001
-            from sdtm_builder.build import DomainResult
             res = DomainResult(domain=dom, error=f"the studio's build failed: {type(exc).__name__}: {exc}")
         res.studio_match = studio_ov.reference_match(_studio_dir(), dom, res.dataset)
+        res.build_mode = "domain"
         results[dom] = res
     return results
 
@@ -969,6 +992,7 @@ def build_results():
             "edited": c.get("edited", 0),
             "name_matched": c.get("name_matched", 0),
             "studio_match": getattr(r, "studio_match", None),
+            "build_mode": getattr(r, "build_mode", None),
             "override": SESSION.overrides.get(dom, {}),
         })
         for b in r.blocks:
@@ -1352,6 +1376,7 @@ def _domain_payload(dom: str) -> dict:
         "engine": "studio" if _is_studio() else "oversight",
         "studio_prep": _studio_prep(res) if _is_studio() else [],
         "studio_match": getattr(res, "studio_match", None),
+        "build_mode": getattr(res, "build_mode", None),
     }
 
 
@@ -1400,8 +1425,9 @@ def rebuild_domain(domain: str):
         # other domains stay available as cross-domain references (DM reference dates, etc.)
         others = {d: r.dataset for d, r in SESSION.results.items() if d != dom and r.ok}
         if _is_studio():
-            SESSION.results[dom] = _studio_build([dom])[dom]
-            res = SESSION.results[dom]
+            built_one = _studio_build([dom], mode=SESSION.studio_mode)
+            res = SESSION.results[dom] = built_one.get(dom) or DomainResult(
+                domain=dom, error=f"the studio's {SESSION.studio_mode} build produced nothing for {dom}")
         else:
             res = None
         res = res or build_domain(SESSION.spec, SESSION.store, dom, built=others,
@@ -2788,7 +2814,7 @@ def state():
     return {
         "version": __version__,
         "study_id": SESSION.study_id, "study_name": SESSION.study_name,
-        "engine": SESSION.engine, "studio": SESSION.studio,
+        "engine": SESSION.engine, "studio": SESSION.studio, "studio_mode": SESSION.studio_mode,
         "spec": SESSION.spec_path, "raw": SESSION.raw_path, "vendor": SESSION.vendor_path,
         "out_dir": SESSION.out_dir, "studyid": SESSION.studyid,
         "domains": SESSION.spec.domain_names if SESSION.spec else [],

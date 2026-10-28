@@ -45,7 +45,7 @@ def engine(name: str):
 
 def load_study_tables(tables: dict) -> None:
     """Insert a study's rows ({table: [row, …]}) into the local database — how a study the
-    studio exported (tools/export_studio_fixture.py) is brought in."""
+    studio exported (tools/export_studio_study.py) is brought in."""
     from .db import get_db
     db = get_db()
     for table, rows in tables.items():

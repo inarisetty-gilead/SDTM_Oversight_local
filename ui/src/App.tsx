@@ -55,7 +55,8 @@ function MainApp() {
   const [picker, setPicker] = useState<{ mode: "file" | "dir"; target: string } | null>(null)
   const [err, setErr] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState("")
-  const [opts, setOptsState] = useState({ fmt: "xpt", studyid: "", nameMatch: "70", structure: "full" })
+  const [opts, setOptsState] = useState({ fmt: "xpt", studyid: "", nameMatch: "70", structure: "full",
+                                          studioMode: "" })
   const [ignoreCase, setIgnoreCase] = useState(false)
   const [ignoreVars, setIgnoreVars] = useState("")
   const [compareSel, setCompareSel] = useState<string[]>([])
@@ -140,7 +141,8 @@ function MainApp() {
     setBusy("build"); setErr((p) => ({ ...p, build: "" })); setView("build")
     try {
       await api.build({ fmt: opts.fmt, studyid: opts.studyid, domains: buildSel,
-        include_unbuilt: opts.structure === "full", name_match: Number(opts.nameMatch) })
+        include_unbuilt: opts.structure === "full", name_match: Number(opts.nameMatch),
+        studio_mode: opts.studioMode })
       const j = await waitJob()
       if (j.status === "error") { fail("build", new Error(j.error)); return }
       await loadBuild(); setCompare(null)

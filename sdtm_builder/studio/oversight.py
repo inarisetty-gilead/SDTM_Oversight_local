@@ -128,6 +128,107 @@ def build_domain(study: str, domain: str):
     return out, res
 
 
+def reset_caches() -> None:
+    """Forget raw sources the engine cached in this process, so every build job reads the study
+    as it is now (the studio keeps them for its process's lifetime)."""
+    engine("build_engine")._SOURCE_CACHE.clear()
+
+
+def auto_build(dest: str | Path, study: str, domains: list[str] | None = None, progress=None) -> dict:
+    """SDTM Studio's Auto-Build, as its button runs it once prep is designed: every active domain
+    in the studio's order, each saved as it is built so later domains read it, then the
+    trial-design domains. It runs on a throwaway copy of the imported study, so the import stays
+    as exported and every run starts from the same place. No AI: prep a domain does not have saved
+    is not designed here (the studio's button would design it first) — such domains are reported.
+    Returns {"results": {DOM: DomainResult}, "manifest": the studio's build manifest}."""
+    from ..build import DomainResult
+    dest = Path(dest)
+    work = dest.parent / f"{dest.name}_autobuild"
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    shutil.copytree(dest / "store", work / "store")
+    if (dest / "studio.sqlite").is_file():
+        shutil.copy2(dest / "studio.sqlite", work / "studio.sqlite")
+    ab = engine("build_engine")
+    built: dict[str, pd.DataFrame] = {}
+    real_persist, real_build_domain = ab._persist, ab.build_domain
+
+    def capture(study_id, domain, df):
+        built[upper(domain)] = df.copy()
+        return real_persist(study_id, domain, df)
+
+    def build_one(study_id, domain, *a, **k):          # reports progress, as the studio's log does
+        if progress:
+            progress(upper(domain))
+        return real_build_domain(study_id, domain, *a, **k)
+
+    configure(work)
+    reset_caches()
+    ab._persist, ab.build_domain = capture, build_one
+    try:
+        manifest = ab.build_all(study, domains=domains, persist=True)
+    finally:
+        ab._persist, ab.build_domain = real_persist, real_build_domain
+        configure(dest)
+        reset_caches()
+        shutil.rmtree(work, ignore_errors=True)
+    if manifest.get("error"):
+        raise ValueError(manifest["error"])
+    saved = set(saved_domains(dest, study))
+    results = {}
+    for d in manifest.get("domains") or []:
+        dom = upper(d.get("domain"))
+        df = built.get(dom)
+        res = DomainResult(domain=dom, dataset=df if df is not None else (pd.DataFrame() if d.get("rows") == 0 else None),
+                           supp=built.get(f"SUPP{dom}"))
+        res.blocks = _auto_blocks(dom, d)
+        if res.dataset is None:
+            res.error = s(d.get("error")) or "the studio's Auto-Build produced no dataset"
+        notes = [f"built by SDTM Studio's Auto-Build — score {d.get('score')}, {d.get('status', '')}".rstrip(", ")]
+        if d.get("source") == "trial_design":
+            notes.append("from the study's trial design (protocol extraction in the studio)")
+        elif dom not in saved:
+            notes.append("no saved Domain Build: the studio's Auto-Build button would design this "
+                         "domain's prep first (possibly with AI) — here it builds without it")
+        res.warnings = notes
+        res.studio_prep = []
+        results[dom] = res
+    return {"results": results, "manifest": manifest}
+
+
+def _auto_blocks(domain: str, d: dict) -> list[Block]:
+    """Auto-Build's per-variable record (its recipes, and how each ran) as Oversight variables."""
+    ran = {upper(b.get("variable")): b for b in d.get("blocks") or [] if isinstance(b, dict)}
+    lineage = d.get("lineage") or {}
+    out = []
+    for i, r in enumerate(d.get("recipes") or []):
+        name = upper(r.get("var"))
+        if not name:
+            continue
+        op = s(r.get("op"))
+        srcs = [".".join(x) if isinstance(x, (list, tuple)) else s(x) for x in r.get("sources") or []]
+        blk = Block(variable=name, domain=domain,
+                    mtype="drop" if op == "drop" else "unmapped" if op in ("", "unmapped") else "derived",
+                    recipe=op, label=s(r.get("label")), codelist=s(r.get("codelist")),
+                    input_variables=", ".join(srcs), supp=bool(r.get("supp")), order=i)
+        blk.method_source = "studio"
+        how = s(r.get("expr")) or (f"{op}({', '.join(srcs)})" if srcs else op)
+        method = s((lineage.get(name) or {}).get("method"))
+        blk.reason = f"{how}  [{method}]" if method else how
+        b = ran.get(name, {})
+        if blk.mtype == "drop":
+            blk.status = "dropped"
+        elif b.get("error") or b.get("ok") is False:
+            blk.status, blk.error = "error", s(b.get("error")) or "failed in the studio's Auto-Build"
+        elif blk.mtype == "unmapped":
+            blk.status = "not_built"
+        else:
+            blk.status = "built"
+        out.append(blk)
+    return out
+
+
 def _base_of(comp: dict) -> str:
     steps = comp.get("prep_steps") or []
     return s(steps[-1].get("name")) if steps else ""
@@ -171,10 +272,14 @@ def programs(study: str, domain: str) -> dict:
     return engine("program_gen").generate_for_domain(study, upper(domain))
 
 
-def reference_match(dest: str | Path, domain: str, df: pd.DataFrame | None) -> dict:
-    """Does this build equal what the studio's Domain Build produced when the study was exported?"""
-    p = Path(dest) / "reference" / f"{upper(domain)}.parquet"
+def reference_match(dest: str | Path, domain: str, df: pd.DataFrame | None, kind: str = "reference") -> dict:
+    """Does this build equal what the studio produced when the study was exported? `kind` is
+    "reference" (its Domain Build) or "reference_autobuild" (its Auto-Build)."""
+    p = Path(dest) / kind / f"{upper(domain)}.parquet"
     if not p.is_file():
+        # the studio saves no dataset for a domain with no records: none here either is the same
+        if (Path(dest) / kind).is_dir() and df is not None and not len(df):
+            return {"checked": True, "same": True, "why": "no records, here or in the studio"}
         return {"checked": False}
     want = _norm(pd.read_parquet(p))
     got = _norm(df if df is not None else pd.DataFrame())
