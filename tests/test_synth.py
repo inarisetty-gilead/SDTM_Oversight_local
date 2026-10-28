@@ -101,6 +101,32 @@ def test_a_spec_with_no_raw_sources_is_refused():
             raise AssertionError("a spec with no raw sources should be refused")
 
 
+def test_a_visit_not_done_has_no_results_and_a_reason():
+    """The performed flag drives the form: not done -> results empty, dates kept, a reason
+    (never Y/N) in the reason-not-done field; done -> no reason. Built through the spec's
+    transpose rule, a visit not done becomes one VSALL record."""
+    import pandas as pd
+    from sdtm_builder import synth
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_spec_transpose import _study
+    from sdtm_builder.build import build_domain
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        spec, _ = _study(tmp)
+        synth.generate(spec, tmp / "synth", synth.SynthOptions(subjects=12, visits=4, studyid="S1"))
+        vs = pd.read_csv(tmp / "synth" / "vsperf.csv", dtype=str, keep_default_na=False)
+        nd = vs["VSPERF_STD"] == "N"
+        assert nd.any() and (~nd).any(), vs["VSPERF_STD"].value_counts()
+        assert (vs.loc[nd, "HEIGHT_RAW"] == "").all() and (vs.loc[~nd, "HEIGHT_RAW"] != "").all()
+        assert (vs.loc[nd, "VSREASND"].isin(synth.ND_REASONS)).all()
+        assert (vs.loc[~nd, "VSREASND"] == "").all()
+        res = build_domain(spec, RawStore.discover(tmp / "synth"), "VS", studyid="S1")
+        assert res.ok, res.error
+        alls = res.dataset[res.dataset["VSTESTCD"] == "VSALL"]
+        assert len(alls) == int(nd.sum())
+        assert set(alls["VSSTAT"]) == {"NOT DONE"} and alls["VSREASND"].str.len().gt(0).all()
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

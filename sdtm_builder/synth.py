@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -287,6 +288,62 @@ def _value(col: str, meta: dict, sub: Subject, visit: int, when: date,
     return f"{cu[:8]}-{sub.idx:03d}"
 
 
+ND_REASONS = ["Patient refused", "Equipment not available", "Subject did not attend the visit",
+              "Missed by site staff", "Outside visit window"]
+PERFORMED_SHARE = 0.9          # a form's assessment is done at most visits, as in a real EDC
+_REASON_ND = re.compile(r"REASND|RSNND|REASNOT|NDREAS")
+_STRUCTURAL = {"STUDYID", "PROJECT", "STUDY", "STUDY_ID", "DOMAIN", "SUBJID", "SUBJECTNUMBER",
+               "SCRNID", "SUBJECT_ID", "SUBJ_ID", "USUBJID", "X_SUBJID", "SUBJECT", "SUBJECTID",
+               "SITEID", "SITENUMBER", "STUDYSITEID", "STUDYENVSITENUMBER", "SITE_NUMBER", "INVID",
+               "RECORDID", "INSTANCEID", "DATAPAGEID", "RECORDPOSITION", "INSTANCEREPEATNUMBER",
+               "PAGEREPEATNUMBER", "FOLDERSEQ", "FOLDERNAME", "INSTANCENAME", "VISIT", "VISITNUM",
+               "FOLDERSEQNUM", "DATAPAGENAME"}
+
+
+def _is_reason_nd(col: str, meta: dict) -> bool:
+    return bool(_REASON_ND.search(upper(col))) or any(
+        re.search(r"\breason\b.*\bnot\b", lab, re.I) for lab in meta["labels"])
+
+
+def _performed_flag(columns: dict) -> str:
+    """The form's "performed?" flag — VSPERF, or VSPERF_STD when the spec names only that — or ''."""
+    return (next((c for c in sorted(columns) if re.search(r"PERF$", upper(c))), "")
+            or next((c for c in sorted(columns) if re.search(r"PERF_STD$", upper(c))), ""))
+
+
+def _keeps_value_when_not_done(col: str, meta: dict) -> bool:
+    cu = upper(col)
+    label_blob = " ".join(meta["labels"]).lower()
+    return (cu in _STRUCTURAL or cu.endswith(("_YYYY", "_MM", "_DD"))
+            or cu.endswith(("DAT", "DATE", "DTC", "DTM", "DT", "TIM", "TIME"))
+            or "date" in label_blob or "time" in label_blob)
+
+
+def apply_not_done(rec: dict, columns: dict, seed: str, *key) -> None:
+    """A form's performed flag drives its fields, as a real EDC records them: performed most
+    of the time; when not, the results are empty — the visit still happened, so dates, times
+    and identifiers stay — and the reason-not-done field holds a reason. A performed form has
+    no reason. With no flag to say a form was not done, a reason field stays empty."""
+    reasons = [c for c in columns if _is_reason_nd(c, columns[c])]
+    perf = _performed_flag(columns)
+    if not perf:
+        for r in reasons:
+            rec[r] = ""
+        return
+    done = _u(seed, *key, "performed") < PERFORMED_SHARE
+    twins = [c for c in columns if upper(c) == upper(perf) + "_STD"]
+    for c in [perf, *twins]:
+        rec[c] = "Y" if done else "N"
+    for r in reasons:
+        rec[r] = "" if done else _pick(ND_REASONS, seed, *key, "reason")
+    if done:
+        return
+    for c in columns:
+        if c in reasons or c == perf or c in twins or _keeps_value_when_not_done(c, columns[c]):
+            continue
+        rec[c] = ""
+
+
 def generate(spec: Spec, out_dir: str | Path, opts: SynthOptions | None = None) -> dict:
     """Write a synthetic raw folder for this spec. Returns a summary."""
     opts = opts or SynthOptions()
@@ -321,8 +378,10 @@ def generate(spec: Spec, out_dir: str | Path, opts: SynthOptions | None = None) 
                           sub.enrolled + timedelta(days=7 + r * 21), r) for r in range(n)]
             for visit, when, row in slots:
                 cache: dict = {}
-                records.append({c: _value(c, columns[c], sub, visit, when, row, opts,
-                                          studyid, cache, spec.codelists) for c in ordered})
+                rec = {c: _value(c, columns[c], sub, visit, when, row, opts,
+                                 studyid, cache, spec.codelists) for c in ordered}
+                apply_not_done(rec, columns, opts.seed, dataset, sub.subjid, visit, row)
+                records.append(rec)
 
         frame = pd.DataFrame(records, columns=ordered)
         path = out / f"{dataset}.{opts.fmt}"
