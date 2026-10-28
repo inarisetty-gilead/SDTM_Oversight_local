@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Check, ClipboardList, Database, Download, FileText, FolderOpen, Layers, Play, Settings2, Table2, Undo2, X } from "lucide-react"
+import { Check, ClipboardList, Database, Download, FileCode2, FileText, FolderOpen, Layers, Play, Settings2, Table2, Undo2, X } from "lucide-react"
 import type { ActionItem, BuildResults, DomainRow, DomainReview, JobState } from "@/api"
 import { api } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -202,6 +202,15 @@ export function BuildView({
                 <Button variant="outline" size="sm" asChild>
                   <a href="/api/download?name=manifest">
                     <Download className="mr-1.5 h-3.5 w-3.5" />Build manifest</a>
+                </Button>
+                {/* every built domain's program, as the Program tab shows it, written with the build */}
+                <Button variant="outline" size="sm" asChild>
+                  <a href="/api/programs/download?lang=python">
+                    <FileCode2 className="mr-1.5 h-3.5 w-3.5" />Python programs</a>
+                </Button>
+                <Button variant="outline" size="sm" asChild>
+                  <a href="/api/programs/download?lang=sas">
+                    <FileCode2 className="mr-1.5 h-3.5 w-3.5" />SAS programs</a>
                 </Button>
                 <Button variant="outline" size="sm" asChild>
                   <a href="/api/report" target="_blank" rel="noreferrer">

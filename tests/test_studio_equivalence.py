@@ -100,6 +100,16 @@ def test_a_studio_study_imports_builds_and_reviews_in_the_app():
         assert any(v["reason"].startswith("ae[") for v in ae["variables"])     # the studio's code
         prog = c.get("/api/domain/AE/program/sas").json()
         assert "data" in prog["program"].lower() and prog["filename"] == "ae_build.sas"
+        # every domain's studio programs are written with the build, and download as one zip
+        import io
+        import zipfile
+        z = zipfile.ZipFile(io.BytesIO(c.get("/api/programs/download?lang=all").content))
+        names = set(z.namelist())
+        assert {f"python/{d['domain'].lower()}_build.py" for d in res} <= names
+        assert {f"sas/{d['domain'].lower()}_build.sas" for d in res} <= names
+        import re
+        stamp = re.compile(r"Generated: \S+")             # the studio stamps each generation's time
+        assert stamp.sub("", z.read("sas/ae_build.sas").decode()) == stamp.sub("", prog["program"])
         assert c.post("/api/domain/AE/variable/AETERM", json={"mtype": "constant", "value": "X"}).status_code == 409
 
         res = build(studio_mode="auto")
@@ -108,6 +118,9 @@ def test_a_studio_study_imports_builds_and_reviews_in_the_app():
         assert all(d["studio_match"]["same"] for d in res if d["studio_match"].get("checked")), [
             (d["domain"], d["studio_match"]) for d in res if not d["studio_match"].get("same")]
         assert c.get("/api/domain/TA").json()["build_mode"] == "auto"
+        assert "trial design" in c.get("/api/domain/TA/program/sas").json()["program"]
+        z = zipfile.ZipFile(io.BytesIO(c.get("/api/programs/download?lang=python").content))
+        assert "python/cv_build.py" in z.namelist() and not any(n.startswith("sas/") for n in z.namelist())
         # reopening the study keeps it a studio study
         c.post(f"/api/studies/{sid}/close")
         c.post(f"/api/studies/{sid}/open")

@@ -1037,6 +1037,22 @@ def test_sas_catalog_check_and_statements():
         assert step["lines"][1] == "  if AESEV = 'SEVERE';", step
 
 
+def test_every_build_writes_each_domains_programs():
+    """Python and SAS for every built domain land in the run folder and download as a zip."""
+    import io
+    import zipfile
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, srv = _client(Path(td) / "runs")
+        _load_and_build(client, tmp)
+        z = zipfile.ZipFile(io.BytesIO(client.get("/api/programs/download?lang=all").content))
+        built = client.get("/api/state").json()["built"]
+        assert sorted(z.namelist()) == sorted(
+            [f"python/{d.lower()}_build.py" for d in built] + [f"sas/{d.lower()}_build.sas" for d in built])
+        assert z.read("python/dm_build.py").decode() == client.get("/api/domain/DM/program/python").json()["program"]
+        assert client.get("/api/programs/download?lang=cobol").status_code == 400
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

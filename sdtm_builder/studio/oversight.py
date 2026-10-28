@@ -186,7 +186,8 @@ def auto_build(dest: str | Path, study: str, domains: list[str] | None = None, p
         if res.dataset is None:
             res.error = s(d.get("error")) or "the studio's Auto-Build produced no dataset"
         notes = [f"built by SDTM Studio's Auto-Build — score {d.get('score')}, {d.get('status', '')}".rstrip(", ")]
-        if d.get("source") == "trial_design":
+        res.from_trial_design = d.get("source") == "trial_design"
+        if res.from_trial_design:
             notes.append("from the study's trial design (protocol extraction in the studio)")
         elif dom not in saved:
             notes.append("no saved Domain Build: the studio's Auto-Build button would design this "

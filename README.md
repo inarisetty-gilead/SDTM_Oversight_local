@@ -492,7 +492,10 @@ In both modes:
   Auto-Build produced when the study was exported.
 - Each variable shows the code the studio generated for it.
 - Prepare the data lists the studio's prep steps.
-- Program shows the studio's own Python and SAS.
+- Program shows the studio's own Python and SAS for the domain. Every build also writes each
+  built domain's programs into the run folder (`programs/python`, `programs/sas`); Build → Output
+  downloads them as a zip. The trial-design domains get a note instead, since they come from the
+  study's trial design rather than from a program.
 - Comparing with a vendor delivery works as for any study.
 
 Mappings and prep are reviewed here and changed in the studio; to see a change, export the study

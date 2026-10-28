@@ -6,6 +6,7 @@ points it at and writes only into the run's output folder.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 from dataclasses import dataclass, field
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -925,6 +926,10 @@ def start_build(body: BuildIn):
                     write_dataset(res.supp, data_dir, f"SUPP{dom}", body.fmt)
             SESSION.outputs["datasets"] = str(data_dir)
 
+        if body.fmt != "none":
+            _write_programs(out, sorted(SESSION.results),
+                            lambda m: progress(m, step=len(targets), total=len(targets)))
+
         progress("writing the build manifest")
         meta = {"spec": SESSION.spec_path, "raw": SESSION.raw_path,
                 "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -1449,6 +1454,8 @@ def rebuild_domain(domain: str):
             write_dataset(res.dataset, out / "datasets", dom, SESSION.fmt, labels)
             if res.supp is not None and len(res.supp):
                 write_dataset(res.supp, out / "datasets", f"SUPP{dom}", SESSION.fmt)
+        if res.ok and SESSION.fmt != "none":
+            _write_programs(out, [dom])
         progress("refreshing the manifest", step=3)
         _, xpath = write_manifest(SESSION.results, out, SESSION.build_meta)
         SESSION.outputs["manifest"] = str(xpath)
@@ -1672,7 +1679,6 @@ def domain_program(domain: str, lang: str):
     """The build, written out as a standalone program — Python/pandas or house-style SAS.
     Generated from the same structured blocks the build executed (hand edits included),
     with clearly-marked TODOs where a recipe has no standalone translation."""
-    from sdtm_builder import programs
     dom = upper(domain)
     res = SESSION.results.get(dom)
     if res is None:
@@ -1681,12 +1687,27 @@ def domain_program(domain: str, lang: str):
     lang = lang.lower()
     if lang not in ("python", "sas"):
         raise HTTPException(400, "lang must be python or sas")
-    if _is_studio():                    # the studio's own programs, from its own generator
+    return {"domain": dom, "lang": lang, "program": _program_text(dom, lang),
+            "filename": _program_name(dom, lang)}
+
+
+def _program_name(dom: str, lang: str) -> str:
+    return f"{dom.lower()}_build.{'py' if lang == 'python' else 'sas'}"
+
+
+def _program_text(dom: str, lang: str) -> str:
+    """One built domain's Python or SAS program: the studio's own generator for a studio
+    study, Oversight's for its own builds."""
+    from sdtm_builder import programs
+    res = SESSION.results[dom]
+    if _is_studio():
+        if getattr(res, "from_trial_design", False):
+            note = (f"{dom} is built from the study's trial design (captured by protocol extraction "
+                    "in SDTM Studio), not by a program over raw data — there is no build program.")
+            return f"# {note}\n" if lang == "python" else f"/* {note} */\n"
         from sdtm_builder.studio import oversight as studio_ov
         _studio_configure()
-        progs = studio_ov.programs(SESSION.studio["study_id"], dom)
-        return {"domain": dom, "lang": lang, "program": progs[lang],
-                "filename": f"{dom.lower()}_build.{'py' if lang == 'python' else 'sas'}"}
+        return studio_ov.programs(SESSION.studio["study_id"], dom)[lang]
     # the distinct raw values behind every codelisted variable, so the program inlines
     # only the CT terms this study's data holds (5 entries, not the codelist's 100)
     observed: dict[str, list[str]] = {}
@@ -1731,10 +1752,51 @@ def domain_program(domain: str, lang: str):
                 if key and key in source_columns:
                     source_columns.setdefault(norm_key(alias), source_columns[key])
         kwargs["source_columns"] = source_columns
-    text = programs.python_program(**kwargs) if lang == "python" else programs.sas_program(**kwargs)
-    ext = "py" if lang == "python" else "sas"
-    return {"domain": dom, "lang": lang, "program": text,
-            "filename": f"{dom.lower()}_build.{ext}"}
+    return programs.python_program(**kwargs) if lang == "python" else programs.sas_program(**kwargs)
+
+
+def _write_programs(out: Path, domains: list[str], progress=None) -> Path:
+    """Every built domain's Python and SAS program into the run folder: programs/python/,
+    programs/sas/. A domain whose program cannot be generated gets a note saying why, rather
+    than a silent gap."""
+    root = out / "programs"
+    for i, dom in enumerate(sorted(domains), start=1):
+        res = SESSION.results.get(dom)
+        if res is None or not res.ok:
+            continue
+        if progress:
+            progress(f"writing the {dom} programs")
+        for lang in ("python", "sas"):
+            folder = root / lang
+            folder.mkdir(parents=True, exist_ok=True)
+            try:
+                text = _program_text(dom, lang)
+            except Exception as exc:                             # noqa: BLE001
+                why = f"the {lang} program for {dom} could not be generated: {type(exc).__name__}: {exc}"
+                text = f"# {why}\n" if lang == "python" else f"/* {why} */\n"
+            (folder / _program_name(dom, lang)).write_text(text, encoding="utf-8")
+    SESSION.outputs["programs"] = str(root)
+    return root
+
+
+@app.get("/api/programs/download")
+def download_programs(lang: str = "all"):
+    """The last build's programs as one zip — python, sas, or both."""
+    import zipfile
+    lang = lang.lower()
+    if lang not in ("python", "sas", "all"):
+        raise HTTPException(400, "lang must be python, sas or all")
+    root = Path(SESSION.outputs.get("programs") or "")
+    if not SESSION.outputs.get("programs") or not root.is_dir():
+        raise HTTPException(409, "build first — the programs are written with each build")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(root.rglob("*")):
+            if f.is_file() and (lang == "all" or f.parent.name == lang):
+                z.write(f, f.relative_to(root).as_posix())
+    name = f"{(SESSION.study_name or 'study').replace(' ', '_')}_programs_{lang}.zip"
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 class SasCheckIn(BaseModel):
