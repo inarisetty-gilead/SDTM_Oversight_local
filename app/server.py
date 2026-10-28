@@ -130,6 +130,9 @@ class PipelineIn(BaseModel):
     # None = leave the current choice alone, "" = follow the LAST step (the default),
     # a name = pin to that output, so adding prep2 later never moves prep1's mappings
     base: str | None = None
+    # preview only: keep these steps as the domain's draft (False for the build's own
+    # automatic step shown untouched — showing it must not turn it into the reader's work)
+    draft: bool = True
 
 
 class DedupIn(BaseModel):
@@ -2474,11 +2477,12 @@ def preview_pipeline(domain: str, body: PipelineIn):
     # The draft persists as it is typed — half-finished steps included — so a refresh or a
     # reopened study lands back in the editor exactly as it was left, not on an empty form.
     dom = upper(domain)
-    if body.steps:
-        SESSION.draft_pipelines[dom] = body.steps
-    else:
-        SESSION.draft_pipelines.pop(dom, None)
-    _autosave()
+    if body.draft:
+        if body.steps:
+            SESSION.draft_pipelines[dom] = body.steps
+        else:
+            SESSION.draft_pipelines.pop(dom, None)
+        _autosave()
     built = {d: r.dataset for d, r in SESSION.results.items() if d != dom and r.ok}
     try:
         outputs, reports = prep_module.run_pipeline(body.steps, SESSION.store, dom, built=built)

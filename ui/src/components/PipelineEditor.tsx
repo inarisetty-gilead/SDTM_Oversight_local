@@ -390,6 +390,9 @@ const FIELDS: Record<string, Field[]> = {
   split: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "branches", t: "branches", label: "Branches" }, { k: "other_name", t: "text", label: "Name for the rest" }],
   transpose_long: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "id_vars", t: "collist", label: "Carry through" }, { k: "value_vars", t: "collist", label: "Columns to melt" },
                    { k: "var_name", t: "text", ph: "TESTCD", label: "Name column" }, { k: "value_name", t: "text", ph: "ORRES", label: "Value column" }],
+  transpose_rule: [{ k: "forms", t: "ruleforms", label: "Tests, by form (from the spec's --TESTCD rule)" },
+                   { k: "stat_value", t: "text", label: "Status of a visit not done" },
+                   { k: "all_test", t: "text", label: "Test name of the not-done record" }],
   transpose_findings: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "id_vars", t: "collist", label: "Carry through" }, { k: "measures", t: "measures", label: "Measurements" },
                        { k: "testcd_col", t: "text", label: "Test code column" }, { k: "test_col", t: "text", label: "Test name column" },
                        { k: "orres_col", t: "text", label: "Result column" }, { k: "orresu_col", t: "text", label: "Unit column" }],
@@ -1001,10 +1004,10 @@ function DateSourcesEditor({ rows, datasets, domain, onChange }: {
   )
 }
 
-type Measure = { testcd?: string; value_col?: string; unit_col?: string }
+type Measure = { testcd?: string; test?: string; value_col?: string; unit_col?: string; iso?: boolean }
 
-function MeasuresEditor({ rows, columns, onChange }: {
-  rows: Measure[]; columns: string[]; onChange: (r: Measure[]) => void
+function MeasuresEditor({ rows, columns, onChange, withName = false }: {
+  rows: Measure[]; columns: string[]; onChange: (r: Measure[]) => void; withName?: boolean
 }) {
   const set = (i: number, patch: Measure) =>
     onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
@@ -1014,6 +1017,10 @@ function MeasuresEditor({ rows, columns, onChange }: {
         <div key={i} className="flex flex-wrap items-center gap-1.5">
           <Input className="h-8 w-32 font-mono text-xs" placeholder="TESTCD, e.g. SYSBP"
                  value={r.testcd ?? ""} onChange={(e) => set(i, { testcd: e.target.value })} />
+          {withName && (
+            <Input className="h-8 w-48 text-xs" placeholder="test name, e.g. Systolic Blood Pressure"
+                   value={r.test ?? ""} onChange={(e) => set(i, { test: e.target.value })} />
+          )}
           <span className="text-[11px] text-muted-foreground">value from</span>
           <ColSelect value={r.value_col} columns={columns} width="w-40"
                      onChange={(v) => set(i, { value_col: v })} />
@@ -1029,6 +1036,65 @@ function MeasuresEditor({ rows, columns, onChange }: {
               onClick={() => onChange([...rows, {}])}>
         <Plus className="mr-1 h-3 w-3" />Add a measurement
       </Button>
+    </div>
+  )
+}
+
+type RuleForm = {
+  dataset: string; measures: Measure[]; date_col?: string; time_col?: string; reasnd_col?: string
+  date_from?: { dataset: string; column: string; keys: string[] } | null
+  not_done?: Array<{ column: string; value: string }>
+}
+
+/** The spec-rule transpose, form by form: its tests (code, name, value and unit columns), the
+ *  not-done condition that gives the one --ALL record, and where the date, time and reason
+ *  come from — every part the build read from the spec, now the reader's to change. */
+function RuleFormsEditor({ forms, domain, onChange }: {
+  forms: RuleForm[]; domain: string; onChange: (f: RuleForm[]) => void
+}) {
+  const set = (i: number, patch: Partial<RuleForm>) =>
+    onChange(forms.map((f, k) => (k === i ? { ...f, ...patch } : f)))
+  return (
+    <div className="space-y-3">
+      {forms.map((f, i) => <RuleFormRow key={i} form={f} domain={domain} onChange={(p) => set(i, p)} />)}
+    </div>
+  )
+}
+
+function RuleFormRow({ form, domain, onChange }: {
+  form: RuleForm; domain: string; onChange: (p: Partial<RuleForm>) => void
+}) {
+  const columns = useColumns(domain, form.dataset)
+  const nd = form.not_done?.[0] ?? { column: "", value: "N" }
+  return (
+    <div className="space-y-2 rounded-md border bg-background/60 p-2.5">
+      <p className="text-[12px] font-medium">From <Mono>{form.dataset}</Mono> — one record per test with a result</p>
+      <MeasuresEditor rows={form.measures ?? []} columns={columns} withName
+                      onChange={(r) => onChange({ measures: r })} />
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span>a visit is not done when</span>
+        <ColSelect value={nd.column} columns={columns} width="w-40" placeholder="no flag"
+                   onChange={(v) => onChange({ not_done: v ? [{ column: v, value: nd.value || "N" }] : [] })} />
+        <span>=</span>
+        <Input className="h-8 w-16 font-mono text-xs" value={nd.value ?? ""}
+               onChange={(e) => onChange({ not_done: nd.column ? [{ column: nd.column, value: e.target.value }] : [] })} />
+        <span>— reason from</span>
+        <ColSelect value={form.reasnd_col} columns={columns} width="w-40" placeholder="none"
+                   onChange={(v) => onChange({ reasnd_col: v })} />
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span>date</span>
+        {form.date_from ? (
+          <span>from <Mono>{form.date_from.dataset}.{form.date_from.column}</Mono>, merged by{" "}
+            <Mono>{form.date_from.keys.join(" + ")}</Mono></span>
+        ) : (
+          <ColSelect value={form.date_col} columns={columns} width="w-40" placeholder="none"
+                     onChange={(v) => onChange({ date_col: v })} />
+        )}
+        <span>time</span>
+        <ColSelect value={form.time_col} columns={columns} width="w-40" placeholder="none"
+                   onChange={(v) => onChange({ time_col: v })} />
+      </div>
     </div>
   )
 }
@@ -1067,9 +1133,23 @@ function StepColumns({ domain, dataset, children }: {
   return <>{children(columns)}</>
 }
 
+/** The step the build applied on its own (a stack of the forms, a findings transpose) —
+ *  what this domain's preparation IS until the reader makes it their own. */
+function appliedSteps(detail: DomainDetail): Step[] {
+  const own = (detail.pipeline_draft ?? detail.pipeline ?? []) as Step[]
+  if (own.length || !detail.prep) return []
+  const { op, name, params } = detail.prep
+  return [{ op, name, params: JSON.parse(JSON.stringify(params ?? {})) }]
+}
+
 export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDone: () => void }) {
-  const [steps, setSteps] = useState<Step[]>(() =>
-    JSON.parse(JSON.stringify(detail.pipeline_draft ?? detail.pipeline ?? [])))
+  const [steps, setSteps] = useState<Step[]>(() => {
+    const own = (detail.pipeline_draft ?? detail.pipeline ?? []) as Step[]
+    return JSON.parse(JSON.stringify(own.length ? own : appliedSteps(detail)))
+  })
+  // true while the list shows the build's automatic step, untouched: it is not a draft (no
+  // autosave), Apply has nothing to apply, and the build keeps detecting it from the spec
+  const [fromAuto, setFromAuto] = useState(() => appliedSteps(detail).length > 0)
   const [ops, setOps] = useState<Array<{ id: string; label: string }>>([])
   const [reports, setReports] = useState<Report[]>((detail.prep_reports as unknown as Report[]) ?? [])
   const [outs, setOuts] = useState<Record<string, { columns: string[]; sample: string[][]; rows: number }>>({})
@@ -1125,7 +1205,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
   const firstRun = useRef(true)
   const hadSteps = useRef(false)
   useEffect(() => {
-    if (!firstRun.current) { touched.current = true; setDirty(true) }   // any change after mount pins this editor
+    if (!firstRun.current) { touched.current = true; setDirty(true); setFromAuto(false) }   // any change after mount pins this editor
     if (!steps.length) {
       setReports([]); setOuts({})
       // removing every step must forget the saved draft — but ONLY when the reader
@@ -1136,18 +1216,19 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
       return
     }
     hadSteps.current = true
-    const t = window.setTimeout(() => { void run(steps, true) }, firstRun.current ? 0 : 200)
+    const auto = firstRun.current && fromAuto     // the untouched automatic step: preview only
+    const t = window.setTimeout(() => { void run(steps, true, !auto) }, firstRun.current ? 0 : 200)
     firstRun.current = false
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(steps)])
 
-  const run = async (list: Step[], quiet = false) => {
+  const run = async (list: Step[], quiet = false, draft = true) => {
     if (!quiet) setBusy(true)
     setLive(true)
     try {
-      const r = await api.previewPipeline(detail.domain, list)
-      if (!r.ok) { setReports([]); setOuts({}); setError(r.error ?? "failed"); setSaveFailed(true); return }
+      const r = await api.previewPipeline(detail.domain, list, draft)
+      if (!r.ok) { setReports([]); setOuts({}); setError(r.error ?? "failed"); setSaveFailed(draft); return }
       setError(""); setSaveFailed(false); setDirty(false)
       setReports((r.reports ?? []) as Report[])
       // EVERY step's output, so each step keeps its own preview table — adding prep2
@@ -1241,7 +1322,8 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
 
   // the last-applied (Apply & rebuild) pipeline, frozen at mount — "Revert" goes back to
   // this exact baseline no matter how far editing has since wandered
-  const savedBaseline = useRef<Step[]>(JSON.parse(JSON.stringify(detail.pipeline ?? [])))
+  const savedBaseline = useRef<Step[]>(JSON.parse(JSON.stringify(
+    (detail.pipeline ?? []).length ? detail.pipeline : appliedSteps(detail))))
   const revert = () => {
     updateSteps(() => JSON.parse(JSON.stringify(savedBaseline.current)))
   }
@@ -1349,7 +1431,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                 onClick={() => insertStepAt(steps.length)}>
           <Plus className="mr-1 h-3 w-3" />Add step
         </Button>
-        {detail.prep && (
+        {detail.prep && !fromAuto && !steps.length && (
           <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
                   onClick={() => void act(async () => {
                     const s = (await api.pipelineFromAuto(detail.domain)).steps as Step[]
@@ -1375,6 +1457,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
           {live ? <><Loader2 className="h-3 w-3 animate-spin" />saving…</>
                 : saveFailed ? <span className="text-destructive">draft not saved — will retry</span>
                 : dirty ? <>unsaved…</>
+                : fromAuto ? <>applied by the build</>
                 : steps.length ? <>saved</> : null}
         </span>
         {steps.length > 0 && (
@@ -1395,12 +1478,13 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
             </Select>
           </span>
         )}
-        <Button size="sm" className="h-7 text-xs" disabled={busy}
+        <Button size="sm" className="h-7 text-xs" disabled={busy || fromAuto}
+                title={fromAuto ? "nothing to apply — this is what the build already does; change a step first" : undefined}
                 onClick={() => void act(async () => {
                   await api.setPipeline(detail.domain, steps, recordsFrom)
                   await api.rebuild(detail.domain); onDone()
                 })}>Apply &amp; rebuild</Button>
-        {steps.length > 0 && (
+        {steps.length > 0 && !fromAuto && (
           <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy}
                   onClick={() => void act(async () => {
                     if (!window.confirm("Remove every step and rebuild without preparation? This applies immediately.")) return
@@ -1409,6 +1493,16 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                   })}>Remove all</Button>
         )}
       </div>
+
+      {fromAuto && detail.prep && (
+        <div className="px-3">
+          <Callout tone="info" title="The step the build applied on its own">
+            {detail.prep.note} Change it, or add steps before or after it, then <b>Apply &amp; rebuild</b> to
+            make this the domain's own preparation. Until then the build keeps detecting it from the
+            spec and the raw data. To build without it, set Data preparation to off in Settings.
+          </Callout>
+        </div>
+      )}
 
       {!steps.length && (
         <p className="px-3 pb-3 text-xs text-muted-foreground">
@@ -1565,7 +1659,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                 if (f.funcs && !f.funcs.includes(st.params.func as string)) return null
                 if (f.notFuncs?.includes(st.params.func as string)) return null
                 const v = st.params[f.k]
-                const wide = ["mergeinputs", "joinkeys", "conds", "rules", "branches", "sasexpr",
+                const wide = ["mergeinputs", "joinkeys", "conds", "rules", "branches", "sasexpr", "ruleforms",
                               "renames", "datesources", "measures", "constants", "elsevalues"].includes(f.t)
                 let control
                 if (f.t === "sasexpr") {
@@ -1652,6 +1746,9 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                     </StepColumns>)
                 } else if (f.t === "constants") {
                   control = <ConstantsEditor rows={(v as Array<{ name?: string; value?: string }>) ?? []}
+                                             onChange={(r) => setParam(i, f.k, r)} />
+                } else if (f.t === "ruleforms") {
+                  control = <RuleFormsEditor forms={(v as RuleForm[]) ?? []} domain={detail.domain}
                                              onChange={(r) => setParam(i, f.k, r)} />
                 } else if (f.t === "measures") {
                   control = (

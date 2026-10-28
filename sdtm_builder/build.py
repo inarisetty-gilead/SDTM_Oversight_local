@@ -174,6 +174,7 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
     # A hand-built pipeline is authoritative: its outputs become datasets the mappings can
     # read by name, and nothing is auto-retargeted behind the user's back.
     prep_final = ""
+    custom_transpose = None
     if prep_mode == "custom" and prep_steps:
         try:
             outputs, reports = prep.run_pipeline(prep_steps, store, dom, built=built)
@@ -188,6 +189,16 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
             if not base_override and names:
                 base_override = names[-1]      # the last step is the domain's records by default
             prep_final = store.resolve(base_override) or (names[-1] if names else "")
+            # A findings transpose in the pipeline produces --TESTCD / --TEST / --ORRES (and,
+            # from the spec's rule, --DTC / --STAT / --REASND) itself: those variables read
+            # its records exactly as when the build applies the transpose on its own — a
+            # column-name match cannot know that VSTESTCD comes from the melt, not HEIGHT_RAW.
+            for st in prep_steps:
+                op = str(st.get("op") or "").lower()
+                name = norm_key(st.get("name") or "")
+                if op in ("transpose_findings", "transpose_rule") and name in outputs:
+                    custom_transpose = PrepStep(op=op, name=name, params=st.get("params") or {})
+                    prep.retarget(custom_transpose, blocks, store, list(outputs[name].columns))
         except prep.PrepError as exc:
             result.error = f"data preparation failed: {exc}"
             return result
@@ -272,8 +283,9 @@ def build_domain(spec: Spec, store: RawStore, domain: str,
 
     # a --DTC the spec-rule transpose already dated record by record is not re-derived
     # from the raw form, which would give every test of a visit the first date of the subject
+    dated = step if step is not None else custom_transpose
     passes.run_all(blocks, store, base_name, dom,
-                   skip={step.name} if step is not None and step.op == "transpose_rule" else None)
+                   skip={dated.name} if dated is not None and dated.op == "transpose_rule" else None)
 
     # The reader's own pipeline overrides the spec's sources: wherever the final prepared
     # dataset carries a mapping's column, the mapping reads from it. Done after the automatic

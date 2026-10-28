@@ -355,6 +355,8 @@ PREP_OPS = {
     "dedup": "De-duplicate — keep the first or last record per group",
     "split": "Split — route records into separate outputs",
     "transpose_long": "Transpose — melt chosen columns into name/value records",
+    "transpose_rule": "Transpose as the spec's --TESTCD rule says — one record per test, "
+                      "one --ALL record for a visit not done",
     "transpose_findings": "Transpose findings — value+unit columns into one record per test",
 }
 

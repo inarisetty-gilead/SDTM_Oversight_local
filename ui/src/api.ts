@@ -382,10 +382,10 @@ export const api = {
   getPipeline: (d: string) => call<{ steps: Array<Record<string, unknown>>; datasets: string[]
     built_domains: string[] }>(
     `/api/domain/${d}/pipeline`),
-  previewPipeline: (d: string, steps: unknown) => post<{
+  previewPipeline: (d: string, steps: unknown, draft = true) => post<{
     ok: boolean; error?: string; reports?: Array<Record<string, unknown>>;
     outputs?: Record<string, { rows: number; columns: string[]; sample: string[][] }>
-  }>(`/api/domain/${d}/pipeline/preview`, { steps }),
+  }>(`/api/domain/${d}/pipeline/preview`, { steps, draft }),
   setPipeline: (d: string, steps: unknown, base?: string) =>
     post(`/api/domain/${d}/pipeline`, base === undefined ? { steps } : { steps, base }),
   moveVariable: (d: string, v: string, dir: "up" | "down") =>

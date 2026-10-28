@@ -77,6 +77,14 @@ def _aliases(key: str) -> list[str]:
     return out
 
 
+SKIP_DIRS = {"node_modules", ".venv", "venv", ".git", "__pycache__", "site-packages", ".tox",
+             ".mypy_cache", "dist", "build", "runs", "static_dist", ".claude"}
+
+
+def _skip_dir(part: str) -> bool:
+    return part in SKIP_DIRS or part.startswith(".") or part.endswith(".egg-info")
+
+
 @dataclass
 class RawStore:
     """Index of a raw-data folder, with a small load cache."""
@@ -96,13 +104,14 @@ class RawStore:
         store = cls(root=p, encoding=encoding)
         files = sorted(p.rglob("*") if recursive else p.glob("*"))
         # Folders that never hold raw study data. A raw folder pointed at (or near) a code
-        # checkout would otherwise ingest thousands of package files as "datasets".
-        SKIP_DIRS = {"node_modules", ".venv", "venv", ".git", "__pycache__",
-                     "site-packages", ".tox", ".mypy_cache", "dist", "build"}
+        # checkout would otherwise ingest thousands of package files as "datasets" — and,
+        # worse, this application's OWN build output (runs/…/datasets/ae.xpt): read back as
+        # raw data, the next build would be SDTM built from SDTM. Matched below the chosen
+        # folder only, so a study kept under e.g. /data/build/raw is still read.
         for f in files:
             if not f.is_file() or f.name.startswith((".", "~$")):
                 continue
-            if any(part in SKIP_DIRS for part in f.parent.parts):
+            if any(_skip_dir(part) for part in f.relative_to(p).parent.parts):
                 continue
             kind = READERS.get(f.suffix.lower())
             if not kind:

@@ -269,9 +269,12 @@ def _upper_rule_params(p: dict) -> dict:
                 "time_col": upper(f.get("time_col")), "reasnd_col": upper(f.get("reasnd_col")),
                 "date_from": ({"dataset": norm_key(lk["dataset"]), "column": upper(lk["column"]),
                                "keys": [upper(k) for k in lk["keys"]]} if lk else None),
-                "not_done": [{"column": upper(c["column"]), "value": s(c["value"])} for c in f.get("not_done") or []],
+                "not_done": [{"column": upper(c["column"]), "value": s(c.get("value"))}
+                             for c in f.get("not_done") or [] if s(c.get("column"))],
                 "measures": [{**m, "value_col": upper(m["value_col"]), "unit_col": upper(m.get("unit_col")),
-                              "testcd": upper(m["testcd"])} for m in f.get("measures") or []]}
+                              "testcd": upper(m["testcd"]), "test": s(m.get("test")) or upper(m["testcd"])}
+                             for m in f.get("measures") or []
+                             if s(m.get("value_col")) and s(m.get("testcd"))]}
     return {**p, "forms": [fm(f) for f in p.get("forms") or []],
             "stresc": {upper(k): upper(v) for k, v in (p.get("stresc") or {}).items()},
             "stresu": {upper(k): upper(v) for k, v in (p.get("stresu") or {}).items()}}

@@ -36,9 +36,10 @@ export function useSasLines(key: string, fetch: () => Promise<{ lines: string[] 
  *  RUN — `data prep2; set ds; if DSCAT = 'X';` — the way a SAS programmer reads it. */
 export function sasSentence(lines: string[]): string {
   const out: string[] = []
-  for (const raw of lines) {
+  const code = lines.filter((l) => l.trim() && !l.trim().startsWith("/*"))
+  if (!code.length) return (lines.find((l) => l.trim()) ?? "").trim()   // only a comment: say it
+  for (const raw of code) {
     const l = raw.trim()
-    if (!l || l.startsWith("/*") && out.length) continue
     if (/^(run;|quit;)$/i.test(l)) { if (out.length) break; continue }
     out.push(l)
     if (/\brun;$/i.test(l)) break

@@ -227,12 +227,14 @@ def apply(step, store) -> pd.DataFrame:
                 tm = src[t].astype("string").str.strip().fillna("")
                 day = day.where(~((day.str.len() == 10) & (tm != "")), day + "T" + tm)
             src["__DTC"] = day
-        measure_cols = {m["value_col"] for m in f["measures"]} | {m["unit_col"] for m in f["measures"] if m.get("unit_col")}
+        # a test row still being filled in (no code or no column yet) is not a test
+        measures = [m for m in f.get("measures") or [] if s(m.get("value_col")) and s(m.get("testcd"))]
+        measure_cols = {m["value_col"] for m in measures} | {m["unit_col"] for m in measures if m.get("unit_col")}
         id_cols = [c for c in src.columns if c not in measure_cols and c != "__DATE" and c != "__DTC"]
         nd = _not_done_mask(src, f.get("not_done"))
         src["__ROW"] = range(len(src))
         done = src[~nd]
-        for mi, m in enumerate(f["measures"]):
+        for mi, m in enumerate(measures):
             vcol = m["value_col"]
             if vcol not in done.columns:
                 continue

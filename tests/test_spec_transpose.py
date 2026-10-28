@@ -146,6 +146,21 @@ def test_the_generated_programs_reproduce_the_rule_transpose():
         assert "merge" in sas and "by X_SUBJID FOLDERNAME;" in sas
 
 
+def test_the_detected_transpose_applied_as_a_pipeline_builds_the_same():
+    """Taking the automatic step into the Prepare-the-data editor and applying it unchanged
+    must not change the domain: the transposed variables still read the transposed records."""
+    with tempfile.TemporaryDirectory() as td:
+        spec, store = _study(Path(td))
+        auto = build_domain(spec, store, "VS", studyid="S1")
+        step = auto.prep_step.as_dict()
+        mine = build_domain(spec, store, "VS", studyid="S1", prep_mode="custom",
+                            prep_steps=[{"op": step["op"], "name": step["name"], "params": step["params"]}])
+        assert mine.ok, mine.error
+        a, m = auto.dataset.fillna(""), mine.dataset.fillna("")
+        assert list(a.columns) == list(m.columns)
+        assert a.astype(str).equals(m.astype(str)), (a, m)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

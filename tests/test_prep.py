@@ -450,6 +450,22 @@ def test_sas_expression_compute_and_filter():
     assert sas[1] == "  if (SEX = 'F') and not missing(BRTHDAT);", sas
 
 
+def test_the_raw_folder_never_reads_this_apps_own_build_output():
+    """A raw folder that contains a study's runs/ (e.g. the application folder itself) must
+    not read the built SDTM back as raw data — the next build would be SDTM built from SDTM.
+    Skipping is judged below the chosen folder, so a study under …/build/raw still reads."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "build" / "study"
+        (root / "raw").mkdir(parents=True)
+        (root / "runs" / "run_1" / "datasets").mkdir(parents=True)
+        pd.DataFrame({"USUBJID": ["1"], "AETERM": ["raw"]}).to_csv(root / "raw" / "ae.csv", index=False)
+        pd.DataFrame({"USUBJID": ["1"], "AETERM": ["BUILT"]}).to_csv(
+            root / "runs" / "run_1" / "datasets" / "ae.csv", index=False)
+        store = RawStore.discover(root)
+        assert str(store.refs["ae"].path).endswith("raw/ae.csv"), store.refs["ae"].path
+        assert len(store.refs) == 1
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
