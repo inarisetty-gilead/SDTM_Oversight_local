@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { CondControl, CtControl, FnControl, PipelineControl } from "./derivation"
 import { Mono } from "./grid"
+import { SasCodeField, SasForm } from "./sas"
+import { useSasLines } from "./sasHooks"
 import { Callout } from "./shell"
 
 type Recipe = { id: string; label: string; desc?: string; hidden?: boolean
@@ -92,6 +94,11 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
     args: mtype === "derived" ? args : mtype === "sequence" ? args : {},
   })
 
+  // the mapping as the SAS program writes it — the current draft, refreshed as it is edited
+  const draft = payload()
+  const sasLines = useSasLines(JSON.stringify(draft),
+                               () => api.variableSas(detail.domain, variable.variable, draft))
+
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError("")
     try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
@@ -140,6 +147,15 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
         </div>)
     }
     if (recipe === "cond" && k === "else") return null   // CondControl renders OTHERWISE
+    if (t === "sas") {
+      return (
+        <div key={k} className="col-span-full space-y-1">
+          <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">{(f.label as string) || k}</Label>
+          <SasCodeField value={(v as string) ?? ""} variable={variable.variable} rows={4}
+                        placeholder={(f.help as string) || ""}
+                        onChange={(x) => setArg(k, x)} />
+        </div>)
+    }
     const wide = t === "json" || t === "sources"
     const heading = (f.label as string) || k
     let control
@@ -194,6 +210,7 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
         {variable.spec_rule ? <p className="mt-1 text-xs italic text-muted-foreground">{variable.spec_rule}</p> : null}
       </div>
 
+      <SasForm lines={sasLines} title="SAS">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="space-y-1">
           <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Mapping type</Label>
@@ -287,6 +304,7 @@ export function VariableEditor({ detail, variable, onDone, onClose }: {
             This variable will be excluded from the built dataset.</p>
         )}
       </div>
+      </SasForm>
 
       {detail.unapplied_datasets.includes(dataset) && (
         <Callout tone="warn" title={`${dataset} comes from a pipeline you have not applied yet`}>

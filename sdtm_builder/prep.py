@@ -570,6 +570,12 @@ def apply_renames(df: pd.DataFrame, renames) -> pd.DataFrame:
     return out
 
 
+def uses_expression(p: dict) -> bool:
+    """A Compute step runs its SAS expression when its calculation is 'sas' (or unset) — an
+    expression left behind after switching to another calculation never wins."""
+    return bool(s(p.get("expression"))) and s(p.get("func")).lower() in ("", "sas")
+
+
 def sas_eval(df: pd.DataFrame, code: str) -> pd.Series:
     """A SAS expression over a dataset's columns, record by record, with SAS semantics. A name
     the dataset does not have is an error — SAS would make it a new, all-missing variable and
@@ -749,7 +755,7 @@ def _apply_one(step: dict, store, ns: dict) -> tuple[pd.DataFrame, dict]:
     if op == "compute":
         src = _load(p.get("dataset"), store, ns)
         out = src.copy()
-        if s(p.get("expression")):           # any SAS expression, on the SAS runtime
+        if uses_expression(p):               # any SAS expression, on the SAS runtime
             target = upper(p.get("target") or p.get("out_col"))
             if not target:
                 raise PrepError("name the column the expression sets")

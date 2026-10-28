@@ -3,7 +3,7 @@
 // every variable they fill. No JSON anywhere: the same dropdown builders as the
 // variable editor.
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ChevronDown, ChevronRight, FunctionSquare, Library, PenLine, Plus, Trash2, Wand2 } from "lucide-react"
+import { ChevronDown, ChevronRight, Code2, FunctionSquare, Library, PenLine, Plus, Search, Trash2, Wand2 } from "lucide-react"
 import { api } from "@/api"
 import type { CustomFn, DomainDetail, TemplateFn, TemplateResolved } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PipelineControl } from "@/components/derivation"
 import { Chip, Mono } from "@/components/grid"
 import { Callout, Panel } from "@/components/shell"
+import { useSasCatalog } from "@/components/sasHooks"
 
 const BLANK: CustomFn = { name: "", description: "", variable: "", domains: [],
                           steps: [], override: false, enabled: true }
@@ -81,6 +82,8 @@ export function FunctionsView({ specDomains, ready }: { specDomains: string[]; r
           ))}
         </div>
       </Panel>
+
+      <SasCatalogPanel />
 
       <Panel icon={<FunctionSquare className="h-4 w-4" />} tone="teal" title="The sdtm.oak function set — in Python, all dropdowns"
              description="Every mapping algorithm from the pharmaverse {sdtm.oak} R package has its equivalent here. The building blocks are steps in a variable derivation or a custom function; the rest run automatically on every build.">
@@ -549,3 +552,86 @@ const OAK_MAP: Array<{ oak: string; kind: "step" | "auto" | "template"; here: st
   { oak: "read_ct_spec / ct_spec", kind: "auto",
     here: "The mapping spec's Codelist sheet — loaded with the spec and offered in every codelist dropdown." },
 ]
+
+
+/** The SAS the build runs: every function with its syntax and a worked example (each example
+ *  is checked against the runtime by the test suite), the statements and where each lives
+ *  here, and the formats PUT / INPUT accept. */
+function SasCatalogPanel() {
+  const cat = useSasCatalog()
+  const [q, setQ] = useState("")
+  const [tab, setTab] = useState<"functions" | "statements" | "formats">("functions")
+  if (!cat) return null
+  const t = q.trim().toLowerCase()
+  const fns = cat.functions.filter((f) => !t || f.name.includes(t) || f.summary.toLowerCase().includes(t)
+                                          || f.category.toLowerCase().includes(t))
+  return (
+    <Panel icon={<Code2 className="h-4 w-4" />} tone="blue"
+           title={`SAS functions, statements and formats (${cat.functions.length} functions)`}
+           description="What SAS code in a mapping or a prep step can use — the spec's Implemented SAS Code, the 'SAS code' derivation, Compute and Filter. Each runs with SAS's own rules: missing values, formats, SAS dates. Every example below is checked against the engine.">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {(["functions", "statements", "formats"] as const).map((k) => (
+          <Button key={k} type="button" size="sm" variant={tab === k ? "default" : "outline"}
+                  className="h-7 text-[11px] capitalize" onClick={() => setTab(k)}>{k}</Button>
+        ))}
+        {tab === "functions" && (
+          <span className="relative ml-auto w-64">
+            <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input className="h-8 pl-7 text-xs" placeholder="search functions" value={q}
+                   onChange={(e) => setQ(e.target.value)} />
+          </span>
+        )}
+      </div>
+      {tab === "functions" && (
+        <div className="max-h-[28rem] space-y-3 overflow-auto">
+          {cat.categories.map((c) => {
+            const list = fns.filter((f) => f.category === c)
+            if (!list.length) return null
+            return (
+              <div key={c}>
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{c}</p>
+                <div className="divide-y rounded border">
+                  {list.map((f) => (
+                    <div key={f.name} className="grid grid-cols-1 gap-x-4 px-2.5 py-1.5 md:grid-cols-[18rem_1fr]">
+                      <code className="font-mono text-[11.5px] font-semibold">{f.syntax}</code>
+                      <span className="text-[11.5px]">{f.summary}
+                        <code className="ml-2 font-mono text-[10.5px] text-muted-foreground">{f.example}</code></span>
+                    </div>
+                  ))}
+                </div>
+              </div>)
+          })}
+        </div>
+      )}
+      {tab === "statements" && (
+        <div className="divide-y rounded border">
+          {cat.statements.map((st) => (
+            <div key={st.sas} className="space-y-0.5 px-2.5 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="font-mono text-[11.5px] font-semibold">{st.sas}</code>
+                <Chip tone={st.status === "gap" ? "red" : "green"}>{st.status === "gap" ? "not yet" : "supported"}</Chip>
+              </div>
+              <p className="text-[11.5px]">{st.what} <span className="text-muted-foreground">— {st.app}</span></p>
+              <pre className="whitespace-pre-wrap font-mono text-[10.5px] text-muted-foreground">{st.example}</pre>
+            </div>
+          ))}
+        </div>
+      )}
+      {tab === "formats" && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {([["Formats (PUT)", cat.formats], ["Informats (INPUT)", cat.informats]] as const).map(([title, groups]) => (
+            <div key={title} className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+              {Object.entries(groups).map(([g, names]) => (
+                <p key={g} className="text-[11.5px]"><span className="capitalize text-muted-foreground">{g}: </span>
+                  <code className="font-mono text-[10.5px]">{names.join(" ")}</code></p>
+              ))}
+            </div>
+          ))}
+          <p className="text-[11.5px] md:col-span-2"><span className="text-muted-foreground">Intervals (INTCK / INTNX): </span>
+            <code className="font-mono text-[10.5px]">{cat.intervals.join(" ")}</code></p>
+        </div>
+      )}
+    </Panel>
+  )
+}

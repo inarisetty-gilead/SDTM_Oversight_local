@@ -180,6 +180,18 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+/** The SAS function catalog the build runs — for the function picker and Functions page. */
+export interface SasFunction {
+  name: string; category: string; syntax: string; summary: string; example: string
+  params: Array<{ name: string; kind: string; label: string; optional?: boolean }>; note?: string
+}
+export interface SasCatalog {
+  categories: string[]; functions: SasFunction[]; legacy: SasFunction[]
+  formats: Record<string, string[]>; informats: Record<string, string[]>; intervals: string[]
+  operators: string[]
+  statements: Array<{ sas: string; status: string; what: string; example: string; app: string }>
+}
+
 /** One thing a build leaves for a person: a guess to confirm, a variable that did not
  *  build, a domain with no records. `decision` is set on decided items. */
 export interface ActionItem {
@@ -351,6 +363,12 @@ export const api = {
       `/api/domain/${d}/variable/${v}/suggest?recipe=${recipe}`),
   recipes: () => call<{ mtypes: string[]; recipes: Array<{ id: string; label: string; fields: Array<Record<string, unknown>> }> }>(
     "/api/recipes"),
+  sasCatalog: () => call<SasCatalog>("/api/sas/catalog"),
+  sasCheck: (code: string, variable = "") =>
+    post<{ ok: boolean; error?: string; names?: string[]; sas?: string[] }>("/api/sas/check", { code, variable }),
+  variableSas: (d: string, v: string, b?: unknown) =>
+    post<{ lines: string[] }>(`/api/domain/${d}/variable/${v}/sas`, b),
+  prepSas: (step: unknown) => post<{ lines: string[] }>("/api/prep/sas", { step }),
   previewEdit: (d: string, v: string, b: unknown) => post<{
     ok: boolean; status?: string; error?: string; reason?: string; how?: string;
     rows?: number; populated?: number; samples?: string[]

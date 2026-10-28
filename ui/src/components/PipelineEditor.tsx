@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils"
 import { FN_LABELS } from "./fnLabels"
 import { RecordTable } from "./DataView"
 import { Chip, DataGrid, Mono, type ChipTone } from "./grid"
+import { SasCodeField, SasForm } from "./sas"
+import { sasSentence, useSasLines } from "./sasHooks"
 import { Callout } from "./shell"
 
 /** Every step reads the same at a glance, in any order, after any amount of time away:
@@ -340,9 +342,10 @@ function GraphGutter({ hasParent, hasChildren, isLastChild }: {
 
 
 type Field = { k: string; t: string; ph?: string; label?: string
-               opts?: [string, string][]; funcs?: string[] }
+               opts?: [string, string][]; funcs?: string[]; notFuncs?: string[] }
 
 const COMPUTE_FUNCS: [string, string][] = [
+  ["sas", "SAS expression — any expression, on SAS's own rules"],
   ["complete_date", "Complete a partial date — fill missing month/day with 01"],
   ["year", "Take the year"],
   ...Object.entries(FN_LABELS),
@@ -352,7 +355,9 @@ const FIELDS: Record<string, Field[]> = {
   stack: [{ k: "datasets", t: "dslist", label: "Datasets to append" }],
   merge: [{ k: "inputs", t: "mergeinputs", label: "Datasets to join" }, { k: "on", t: "joinkeys", label: "Join on" },
           { k: "how", t: "choice:left,inner,outer,right", label: "Keep records from" }],
-  filter: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "conds", t: "conds", label: "Keep records where" }],
+  filter: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "conds", t: "conds", label: "Keep records where" },
+           { k: "expression", t: "sasexpr", label: "…or a SAS condition (used instead of the rows above)",
+             ph: "e.g. vsstat ne 'NOT DONE' and input(vsorres, ?? best.) > 0" }],
   select: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "collist", label: "Columns" }],
   drop: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "columns", t: "collist", label: "Columns" }],
   rename: [{ k: "dataset", t: "ds", label: "Dataset" }, { k: "renames", t: "renames", label: "Rename" }],
@@ -363,7 +368,9 @@ const FIELDS: Record<string, Field[]> = {
            { k: "else_values", t: "elsevalues", label: "Otherwise (else — when nothing above matched)" }],
   compute: [{ k: "dataset", t: "ds", label: "Dataset" },
             { k: "func", t: "choicel", label: "Calculation", opts: COMPUTE_FUNCS },
-            { k: "columns", t: "colseq", label: "From column(s)" },
+            { k: "expression", t: "sasexpr", label: "SAS expression", funcs: ["sas"],
+              ph: "e.g. put(input(brthdat, date9.), yymmdd10.)" },
+            { k: "columns", t: "colseq", label: "From column(s)", notFuncs: ["sas"] },
             { k: "out_col", t: "text", ph: "blank overwrites the source column", label: "Save as" },
             { k: "start", t: "text", ph: "1", label: "From position", funcs: ["substr"] },
             { k: "len", t: "text", ph: "to the end", label: "Length", funcs: ["substr"] },
@@ -1483,10 +1490,7 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
                     {(ops.find((o) => o.id === st.op)?.label ?? st.op).split(" — ")[0]}
                   </span>
                   <Mono>{st.name || `prep${i + 1}`}</Mono>
-                  <span className={`min-w-0 flex-1 truncate text-[12px] italic ${FIELD_TONE_TEXT[meta.tone]}`}
-                        title={stepSummary(st)}>
-                    {stepSummary(st)}
-                  </span>
+                  <StepSasLine step={st} summary={stepSummary(st)} />
                   {rep && (rep.ok
                     ? <span className="num-cell shrink-0 text-[11px] text-muted-foreground">
                         {rep.rows?.toLocaleString()} rec</span>
@@ -1553,15 +1557,21 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
               </p>
             )}
 
+            {!isMin && <StepSas step={st} />}
+
             {!isMin && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {(FIELDS[st.op] ?? []).map((f) => {
                 // a parameter appears only for the function it belongs to
                 if (f.funcs && !f.funcs.includes(st.params.func as string)) return null
+                if (f.notFuncs?.includes(st.params.func as string)) return null
                 const v = st.params[f.k]
-                const wide = ["mergeinputs", "joinkeys", "conds", "rules", "branches",
+                const wide = ["mergeinputs", "joinkeys", "conds", "rules", "branches", "sasexpr",
                               "renames", "datesources", "measures", "constants", "elsevalues"].includes(f.t)
                 let control
-                if (f.t === "ds") {
+                if (f.t === "sasexpr") {
+                  control = <SasCodeField value={(v as string) ?? ""} rows={2} placeholder={f.ph}
+                                          onChange={(x) => setParam(i, f.k, x, true)} />
+                } else if (f.t === "ds") {
                   control = (
                     <Select value={(v as string) || "__none"}
                             onValueChange={(x) => setParam(i, f.k, x === "__none" ? "" : x)}>
@@ -1717,4 +1727,22 @@ export function PipelineEditor({ detail, onDone }: { detail: DomainDetail; onDon
       {fullView && <FullDataDialog dataset={fullView} onClose={() => setFullView("")} />}
     </div>
   )
+}
+
+
+/** One step's SAS, as the program writes it: the one-line sentence with the SAS ▸ toggle. */
+function StepSas({ step }: { step: Step }) {
+  const lines = useSasLines(JSON.stringify(step), () => api.prepSas(step))
+  return lines.length ? <SasForm lines={lines} title="SAS" /> : null
+}
+
+/** A collapsed step's one line: its SAS sentence (plain English on hover). */
+function StepSasLine({ step, summary }: { step: Step; summary: string }) {
+  const lines = useSasLines(JSON.stringify(step), () => api.prepSas(step))
+  const line = sasSentence(lines)
+  return (
+    <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-sky-700 dark:text-sky-300"
+          title={summary}>
+      {line || summary}
+    </span>)
 }

@@ -86,6 +86,8 @@ def check(code: str, variable: str = "") -> dict:
         c = compile_code(code, variable)
     except SasCodeError as exc:
         return {"ok": False, "error": str(exc)}
+    if not variable and c[0] == "expr":          # a prep step's expression: no target
+        return {"ok": True, "names": names(c), "sas": [sx.to_sas(c[1])]}
     return {"ok": True, "names": names(c), "sas": to_sas(c, upper(variable) or "X")}
 
 
@@ -139,11 +141,23 @@ def _carry_frame(ctx, cols: list[str], selfvar: str) -> pd.DataFrame:
                         index=ctx.index)
 
 
+def carry_source(a: dict) -> dict:
+    """The value a RETAIN / LAG carries: {'source': {...}}, or the editor's `source_var`."""
+    src = a.get("source") or {}
+    if not src and s(a.get("source_var")):
+        src = {"var": upper(a["source_var"])}
+    return src
+
+
+def _is_dif(a: dict) -> bool:
+    return bool(a.get("dif")) or s(a.get("fn")).lower() == "dif"
+
+
 def op_retain(ctx, b) -> pd.Series:
     from .ops import _series_for
     a = b.args or {}
     by, order = [upper(c) for c in a.get("by") or []], [upper(c) for c in a.get("order") or []]
-    src = _series_for(ctx, a.get("source"), b.variable, "raw")
+    src = _series_for(ctx, carry_source(a), b.variable, "raw")
     frame = _carry_frame(ctx, by + order, b.variable)
     return _as_column(rt._sx_retain(frame, src, by, order, s(a.get("mode")) or "locf"))
 
@@ -152,23 +166,23 @@ def op_lag(ctx, b) -> pd.Series:
     from .ops import _series_for
     a = b.args or {}
     by, order = [upper(c) for c in a.get("by") or []], [upper(c) for c in a.get("order") or []]
-    src = _series_for(ctx, a.get("source"), b.variable, "raw")
+    src = _series_for(ctx, carry_source(a), b.variable, "raw")
     frame = _carry_frame(ctx, by + order, b.variable)
     n = max(int(float(a.get("n") or 1)), 1)
-    return _as_column(rt._sx_lag(frame, src, by, order, n, bool(a.get("dif"))))
+    return _as_column(rt._sx_lag(frame, src, by, order, n, _is_dif(a)))
 
 
 def describe(b) -> str:
     """One line of SAS for a carry recipe, for reports and the editor."""
     a = b.args or {}
-    src = a.get("source") or {}
+    src = carry_source(a)
     col = upper(src.get("var") or src.get("column") or "?")
     by = " ".join(upper(c) for c in a.get("by") or []) or "the whole dataset"
     if b.recipe == "retain":
         what = f"RETAIN the {'first' if s(a.get('mode')) == 'first' else 'last'} non-missing {col}"
     else:
         n = max(int(float(a.get("n") or 1)), 1)
-        what = f"{'DIF' if a.get('dif') else 'LAG'}{n}({col})"
+        what = f"{'DIF' if _is_dif(a) else 'LAG'}{n}({col})"
     order = " ".join(upper(c) for c in a.get("order") or [])
     return f"{what} within {by}" + (f", ordered by {order}" if order else "")
 
@@ -199,4 +213,4 @@ def carry_mode(b) -> str:
     a = b.args or {}
     if b.recipe == "retain":
         return "first" if s(a.get("mode")) == "first" else "locf"
-    return "dif" if a.get("dif") else "lag"
+    return "dif" if _is_dif(a) else "lag"

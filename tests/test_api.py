@@ -1011,6 +1011,32 @@ def test_action_decisions_survive_a_rebuild_and_a_reopen():
         assert item["id"] in {i["id"] for i in client.get("/api/build/actions").json()["open"]}
 
 
+def test_sas_catalog_check_and_statements():
+    """The editors' SAS: the function catalog, a live check of typed SAS, and the SAS
+    statement a mapping (current or draft) or a prep step is."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = _fixture(Path(td))
+        client, _srv = _client(Path(td) / "runs")
+        cat = client.get("/api/sas/catalog").json()
+        assert len(cat["functions"]) > 100 and "Dates & times" in cat["categories"]
+        ok = client.post("/api/sas/check", json={"code": "upcase(aeterm)", "variable": "AETERM"}).json()
+        assert ok == {"ok": True, "names": ["AETERM"], "sas": ["AETERM = upcase(AETERM);"]}
+        assert not client.post("/api/sas/check", json={"code": "upcase(", "variable": "X"}).json()["ok"]
+        _load_and_build(client, tmp)
+        cur = client.post("/api/domain/AE/variable/AETERM/sas").json()["lines"]
+        assert cur and "AETERM" in cur[0], cur
+        draft = client.post("/api/domain/AE/variable/AETERM/sas", json={
+            "mtype": "derived", "recipe": "sas", "args": {"code": "propcase(aeterm)"}}).json()
+        assert draft["lines"] == ["AETERM = propcase(AETERM);"], draft
+        lag = client.post("/api/domain/AE/variable/AETERM/sas", json={
+            "mtype": "derived", "recipe": "lag",
+            "args": {"source_var": "AESEV", "by": ["USUBJID"], "fn": "dif"}}).json()
+        assert lag["lines"] == ["/* DIF1(AESEV) within USUBJID */"], lag
+        step = client.post("/api/prep/sas", json={"step": {"op": "filter", "name": "f", "params": {
+            "dataset": "ae", "expression": "aesev = 'SEVERE'"}}}).json()
+        assert step["lines"][1] == "  if AESEV = 'SEVERE';", step
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

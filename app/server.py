@@ -1490,6 +1490,45 @@ RECIPES = [
                   "fallback — e.g. RGMNDTN, CONSDAT tries randomization first, consent only "
                   "when randomization is missing"},
      ]},
+    {"id": "sas",
+     "label": "SAS code",
+     "desc": "Any SAS expression, or IF / ELSE IF / ELSE statements assigning this variable — "
+             "run with SAS's own rules: operator precedence, missing values, PUT / INPUT "
+             "formats, SAS dates, and the functions in the catalog. A name reads a variable "
+             "of this domain built before this one, else a column of the base records.",
+     "fields": [
+         {"k": "code", "t": "sas", "label": "SAS",
+          "help": "e.g. floor(yrdif(input(BRTHDAT, date9.), input(RFSTDTC, yymmdd10.), 'AGE')) "
+                  "— or: if AETOXGR in ('3','4') then AESEV = 'SEVERE'; else AESEV = 'MILD';"},
+     ]},
+    {"id": "retain",
+     "label": "Carry forward (RETAIN)",
+     "desc": "The last non-missing value so far within each group — or the first one of the "
+             "group — walking the records in group + order order, as a RETAIN in a BY-group "
+             "DATA step does. The records keep their own order in the dataset.",
+     "fields": [
+         {"k": "source_var", "t": "sdtmvar", "label": "Variable to carry",
+          "help": "a variable of this domain built before this one"},
+         {"k": "by", "t": "list", "label": "Within (BY)", "help": "usually USUBJID"},
+         {"k": "order", "t": "list", "label": "In order of",
+          "help": "e.g. VISITNUM, or --DTC"},
+         {"k": "mode", "t": "choice", "options": ["locf", "first"], "label": "Carry",
+          "help": "locf: the last non-missing value so far; first: the group's first one"},
+     ]},
+    {"id": "lag",
+     "label": "Previous record (LAG / DIF)",
+     "desc": "The value n records back within each group (LAGn), or the change from it "
+             "(DIFn = value − LAGn), in group + order order. A group's first n records have "
+             "no previous value and stay missing.",
+     "fields": [
+         {"k": "source_var", "t": "sdtmvar", "label": "Variable",
+          "help": "a variable of this domain built before this one"},
+         {"k": "by", "t": "list", "label": "Within (BY)", "help": "usually USUBJID"},
+         {"k": "order", "t": "list", "label": "In order of", "help": "e.g. VISITNUM"},
+         {"k": "fn", "t": "choice", "options": ["lag", "dif"], "label": "Take",
+          "help": "lag: the previous value; dif: the change from it"},
+         {"k": "n", "t": "text", "label": "Records back", "help": "1 by default"},
+     ]},
     {"id": "studyid", "label": "Study identifier", "hidden": True,
      "desc": "Taken from the STUDYID override, or whichever spelling of a study key the raw "
              "data carries.", "fields": []},
@@ -1561,6 +1600,109 @@ def domain_program(domain: str, lang: str):
     ext = "py" if lang == "python" else "sas"
     return {"domain": dom, "lang": lang, "program": text,
             "filename": f"{dom.lower()}_build.{ext}"}
+
+
+class SasCheckIn(BaseModel):
+    code: str = ""
+    variable: str = ""
+
+
+class PrepStepIn(BaseModel):
+    step: dict
+
+
+@app.get("/api/sas/catalog")
+def sas_catalog():
+    """Every SAS function the build runs — category, syntax, a worked example — plus the
+    formats, informats, intervals, operators and statements, for the function picker."""
+    from sdtm_builder.sas import functions
+    cat = functions.catalog()
+    cat["statements"] = [{**st, "app": _WHERE_IN_OVERSIGHT.get(i, st["app"])}
+                         for i, st in enumerate(cat["statements"])]
+    return cat
+
+
+# where each SAS statement lives in THIS application (the catalog's own notes name the
+# studio's screens) — by position in functions.STATEMENTS
+_WHERE_IN_OVERSIGHT = {
+    0: "Variable: SAS code, or the spec's own Implemented SAS Code. Prepare the data: Compute "
+       "(SAS expression).",
+    1: "Variable: SAS code, or If / else-if / else. Prepare the data: Derive.",
+    2: "Variable: If / else-if / else — each WHEN is a rule, OTHERWISE is the else.",
+    3: "Prepare the data: Filter — conditions, or any SAS expression (a subsetting IF).",
+    4: "Prepare the data: Stack.",
+    5: "Prepare the data: Merge (left / inner / outer / right).",
+    6: "Prepare the data: Merge, with a join-key override for a key named differently.",
+    7: "Domain settings: sort and de-duplicate (keep first / last). Prepare the data: Sort, "
+       "Remove duplicates, Aggregate.",
+    8: "Prepare the data: Transpose to findings / long. The spec's --TESTCD transpose rule is "
+       "read automatically.",
+    9: "Prepare the data: Aggregate, Earliest / latest date. Variable: Earliest / latest date.",
+    10: "Prepare the data: Keep / Drop / Rename columns. Variable: Drop.",
+    11: "Prepare the data: Split.",
+    12: "Variable: Sequence number (numbered on the final sort order).",
+    13: "Variable: ISO 8601 date/time and Study day; PUT(…, E8601DA.) in SAS code.",
+    14: "Variable: SAS code — PUT / INPUT (and PUTC / PUTN / INPUTC / INPUTN) with the formats "
+        "in this list.",
+    16: "Controlled terminology (the spec's codelists) on the variable.",
+    17: "Variable: Carry forward (RETAIN).",
+    18: "Variable: Previous record (LAG / DIF).",
+    19: "Not yet — each variable is its own mapping; the transposes cover the common "
+        "wide-to-long use.",
+}
+
+
+@app.post("/api/sas/check")
+def sas_check(body: SasCheckIn):
+    """Does this SAS parse, which names does it read, and the canonical SAS it will run as."""
+    from sdtm_builder import sas_recipe
+    return sas_recipe.check(body.code, body.variable)
+
+
+def _source_columns() -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    if SESSION.store is None:
+        return out
+    for name in list(SESSION.store.refs):
+        try:
+            out[name] = [upper(c) for c in SESSION.store.columns(name)]
+        except Exception:                                        # noqa: BLE001
+            continue
+    return out
+
+
+@app.post("/api/domain/{domain}/variable/{variable}/sas")
+def variable_sas(domain: str, variable: str, body: EditIn | None = None):
+    """The SAS statement(s) a mapping is — the current one, or the draft in the editor — as
+    the SAS program writes it. The editors show it as the variable's one-line SAS sentence."""
+    import copy
+    from sdtm_builder import programs
+    from sdtm_builder.build import DomainResult, _apply_edits
+    dom, var = upper(domain), upper(variable)
+    res = SESSION.results.get(dom)
+    if res is None:
+        raise HTTPException(409, f"build {dom} first")
+    blk = next((b for b in res.blocks if b.variable == var), None)
+    if blk is None:
+        raise HTTPException(404, f"{var} is not a variable of {dom}")
+    blk = copy.deepcopy(blk)
+    if body is not None:
+        _apply_edits([blk], {var: body.model_dump()}, dom, DomainResult(domain=dom))
+    if blk.mtype in ("drop", "unmapped"):
+        return {"lines": [f"/* {var}: {'dropped' if blk.mtype == 'drop' else 'not mapped'} */"]}
+    if blk.mtype == "sequence":
+        return {"lines": [f"{var} + 1;  /* numbered within {upper((blk.args or {}).get('group') or 'USUBJID')} */"]}
+    lines = programs.block_sas(dom, blk, res.base_dataset,
+                               SESSION.spec.codelists if SESSION.spec else {}, _source_columns(),
+                               SESSION.studyid)
+    return {"lines": lines}
+
+
+@app.post("/api/prep/sas")
+def prep_step_sas(body: PrepStepIn):
+    """The SAS for one Prepare-the-data step, as the program writes it."""
+    from sdtm_builder import programs
+    return {"lines": programs.prep_sas(body.step)}
 
 
 @app.get("/api/recipes")

@@ -240,6 +240,11 @@ def transpose_rule(frames, p):
 '''.rstrip()
 
 
+def _prep_uses_expression(p: dict) -> bool:
+    from .prep import uses_expression
+    return uses_expression(p)
+
+
 def _py_sas_runtime() -> str:
     """The SAS runtime's own source, inlined so the program stands alone and computes exactly
     what the build computed."""
@@ -480,7 +485,8 @@ def _py_block_lines(g: _Py, b: Block, var: str | None = None) -> list[str]:
         return [f'df["{v}"] = _sx_column({sas_recipe.to_py(compiled, lambda n: g.sx_ref(n, srcs.get(n), v))})']
     if rc in ("retain", "lag"):
         by, order = [upper(c) for c in a.get("by") or []], [upper(c) for c in a.get("order") or []]
-        src = a.get("source") or {}
+        from . import sas_recipe
+        src = sas_recipe.carry_source(a)
         src_expr = (f'df["{upper(src.get("var"))}"]' if src.get("var")
                     else g.col(norm_key(src.get("dataset")), upper(src.get("column"))))
         cols = ", ".join(f'"{c}": {g.sx_ref(c, None, v)}' for c in by + order)
@@ -490,7 +496,7 @@ def _py_block_lines(g: _Py, b: Block, var: str | None = None) -> list[str]:
             call = f"_sx_retain({frame}, {src_expr}, {by!r}, {order!r}, {mode!r})"
         else:
             n = max(int(float(a.get("n") or 1)), 1)
-            call = f"_sx_lag({frame}, {src_expr}, {by!r}, {order!r}, {n}, {bool(a.get('dif'))})"
+            call = f"_sx_lag({frame}, {src_expr}, {by!r}, {order!r}, {n}, {sas_recipe.carry_mode(b) == 'dif'})"
         return [f'df["{v}"] = _sx_column({call})']
     if rc == "cond":
         lines = [f'df["{v}"] = {_py_result(g, a.get("else") or {"kind": "missing"}, v)}']
@@ -662,7 +668,7 @@ def _py_prep_lines(g: _Py, step: dict) -> list[str]:
             if col:
                 L.append(f'{name}["{col}"] = {s(item.get("value"))!r}')
         return L
-    if op in ("filter", "compute") and s(p.get("expression")):
+    if s(p.get("expression")) and (op == "filter" or (op == "compute" and _prep_uses_expression(p))):
         from .sas import expr as sx
         fr = g.frame(p.get("dataset"))
         try:
@@ -1339,6 +1345,25 @@ def _sas_stmts(g: _Sas, b: Block, observed_vals: set | None,
     return g.todo(b, f"recipe '{rc or b.mtype}' runs inside the tool")
 
 
+def block_sas(domain: str, b: Block, base_dataset: str, codelists: dict,
+              source_columns: dict | None = None, studyid: str = "") -> list[str]:
+    """The DATA-step statement(s) one mapping is, as the SAS program writes it — what the
+    editors show as the variable's one-line SAS sentence. Comment lines are dropped, except a
+    TODO, which says plainly that the mapping has no SAS translation."""
+    g = _Sas(upper(domain), norm_key(base_dataset), codelists, source_columns or {}, studyid)
+    if b.recipe in ("retain", "lag"):
+        from . import sas_recipe
+        return [f"/* {sas_recipe.describe(b)} */"]
+    lines = [x.strip() for x in _sas_stmts(g, b, None)]
+    keep = [x for x in lines if x and not x.startswith("/*")]
+    return keep or [x for x in lines if "TODO" in x][:1] or ["/* no SAS statement */"]
+
+
+def prep_sas(step: dict) -> list[str]:
+    """The SAS for one prep step, as the program writes it."""
+    return _sas_prep(step)
+
+
 def _sas_where(conds: list[dict]) -> str | None:
     """A WHERE clause for the prep filter's conditions (all must hold)."""
     parts = []
@@ -1519,7 +1544,7 @@ def _sas_prep(step: dict) -> list[str]:
         sets = "; ".join(f"{upper(s(item.get('name')))} = {_sas_quote(s(item.get('value')))}"
                          for item in p.get("columns") or [] if s(item.get("name")))
         return [f"data {name}; set {norm_key(p.get('dataset'))};", f"  {sets};", "run;"]
-    if op in ("filter", "compute") and s(p.get("expression")):
+    if s(p.get("expression")) and (op == "filter" or (op == "compute" and _prep_uses_expression(p))):
         from .sas import expr as sx
         try:
             code = sx.to_sas(sx.parse(s(p["expression"]).strip().rstrip(";")))
@@ -1697,7 +1722,7 @@ def sas_program(domain: str, blocks: list[Block], base_dataset: str,
         L.append("   order is restored afterwards, as the build does ─────────────────────── */")
         for b in carry:
             a = b.args or {}
-            src = a.get("source") or {}
+            src = sas_recipe.carry_source(a)
             col = g.src(src, b.variable) or upper(src.get("var") or src.get("column"))
             n = max(int(float(a.get("n") or 1)), 1)
             L.append(f"/* {b.variable}: {sas_recipe.describe(b)} */")
