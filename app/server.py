@@ -983,12 +983,15 @@ def set_raw(body: PathIn):
         cleared = _discard_build("the raw data folder changed")
     SESSION.raw_path, SESSION.store, SESSION.raw_sig = str(resolved), store, sig
 
+    # Header reads only (store.peek): counts and columns come from each file's own
+    # header/footer, so a real study's folder scans in seconds. The data itself loads
+    # lazily, per dataset, when a build or preview first reads it.
     datasets = []
     for name in sorted(store.refs):
         ref = store.refs[name]
         try:
-            df = store.get(name)
-            datasets.append({"name": name, "rows": len(df), "cols": len(df.columns),
+            rows, cols = store.peek(name)
+            datasets.append({"name": name, "rows": rows, "cols": len(cols),
                              "file": ref.path.name, "error": ""})
         except Exception as exc:                                  # noqa: BLE001
             datasets.append({"name": name, "rows": None, "cols": None,

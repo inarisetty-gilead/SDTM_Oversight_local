@@ -7,6 +7,7 @@ spec's Input Variables are written against.
 """
 from __future__ import annotations
 
+import csv
 import re
 import warnings
 from dataclasses import dataclass, field
@@ -92,6 +93,7 @@ class RawStore:
     refs: dict[str, DatasetRef] = field(default_factory=dict)
     alias: dict[str, list[str]] = field(default_factory=dict)
     _cache: dict[str, pd.DataFrame] = field(default_factory=dict, repr=False)
+    _peeked: dict[str, tuple] = field(default_factory=dict, repr=False)
     encoding: str = "latin-1"
 
     # ── discovery ───────────────────────────────────────────────────────────
@@ -177,18 +179,65 @@ class RawStore:
             self._cache[key] = _read(self.refs[key], self.encoding)
         return self._cache[key]
 
+    def peek(self, name: str) -> tuple[int | None, list[str]]:
+        """(records, columns) WITHOUT loading the data, where the format says so itself:
+        a sas7bdat/xpt header, a parquet footer, a CSV's header row plus a column-0 pass
+        through the C parser (quote-aware, nothing materialised). Excel and JSON say
+        nothing up front, so they fall back to a full load. The real data is then read
+        lazily, per dataset, the first time a build or preview needs it."""
+        key = self.resolve(name)
+        if key is None:
+            raise KeyError(f"raw dataset '{name}' not found in {self.root}")
+        if key in self._cache:
+            df = self._cache[key]
+            return len(df), [str(c) for c in df.columns]
+        if key in self._peeked:
+            return self._peeked[key]
+        ref, out = self.refs[key], None
+        try:
+            if ref.kind == "sas7bdat":
+                import pyreadstat
+                _df, meta = pyreadstat.read_sas7bdat(str(ref.path), metadataonly=True,
+                                                     encoding=self.encoding)
+                out = (int(meta.number_rows), [upper(c) for c in meta.column_names])
+            elif ref.kind == "xport":
+                import pyreadstat
+                _df, meta = pyreadstat.read_xport(str(ref.path), metadataonly=True)
+                n = int(meta.number_rows or 0)       # an xpt header may not carry a count
+                out = (n if n > 0 else None, [upper(c) for c in meta.column_names])
+            elif ref.kind == "parquet":
+                import pyarrow.parquet as pq
+                f = pq.ParquetFile(ref.path)
+                out = (int(f.metadata.num_rows), [upper(str(c)) for c in f.schema_arrow.names])
+            elif ref.kind == "csv":
+                sep = _csv_sep(ref.path, self.encoding)
+                cols = [upper(c) for c in pd.read_csv(ref.path, sep=sep, nrows=0,
+                                                      encoding=self.encoding).columns]
+                rows = 0
+                for chunk in pd.read_csv(ref.path, sep=sep, usecols=[0], header=0, dtype=str,
+                                         encoding=self.encoding, chunksize=1_000_000):
+                    rows += len(chunk)
+                out = (rows, cols)
+        except Exception:                            # noqa: BLE001 - the full read decides
+            out = None
+        if out is None:                              # excel/json/memory, or a header that lied
+            df = self.get(key)
+            out = (len(df), [str(c) for c in df.columns])
+        self._peeked[key] = out
+        return out
+
     def columns(self, name: str) -> set[str]:
         try:
-            return set(self.get(name).columns)
+            return set(self.peek(name)[1])
         except (KeyError, OSError, ValueError):
             return set()
 
     def schema(self) -> dict[str, list[str]]:
-        """{dataset: [columns]} for every dataset that loads. Used by the spec audit."""
+        """{dataset: [columns]} for every dataset that reads. Used by the spec audit."""
         out: dict[str, list[str]] = {}
         for key in sorted(self.refs):
             try:
-                out[key] = list(self.get(key).columns)
+                out[key] = self.peek(key)[1]
             except Exception:                        # noqa: BLE001 - reported by audit
                 out[key] = []
         return out
@@ -228,21 +277,44 @@ def _read(ref: DatasetRef, encoding: str) -> pd.DataFrame:
     elif ref.kind == "json":
         df = pd.read_json(p)
     else:
-        sep = "\t" if p.suffix.lower() == ".tsv" else None
+        # Sniff the delimiter from a sample, then parse with pandas' C engine — the
+        # python engine (the only one that sniffs for itself) is 10-50x slower, which
+        # on a real study's CSV extracts turns a scan or build into minutes.
+        sep = _csv_sep(p, encoding)
         try:
-            df = pd.read_csv(p, sep=sep, engine="python", dtype=object,
-                             encoding=encoding, keep_default_na=True)
-        except Exception as exc:
-            # The sniffer cannot type a single-column file ("Could not determine
-            # delimiter") — those are legitimate; read them as plain comma CSV.
-            if sep is None and "delimiter" in str(exc).lower():
-                df = pd.read_csv(p, sep=",", engine="python", dtype=object,
+            df = pd.read_csv(p, sep=sep, dtype=str, encoding=encoding,
+                             keep_default_na=True, low_memory=False)
+        except Exception:                            # noqa: BLE001 - fall back to the sniffer
+            try:
+                df = pd.read_csv(p, sep=None, engine="python", dtype=object,
                                  encoding=encoding, keep_default_na=True)
-            else:
-                raise ValueError(f"could not read {p.name}: {exc}") from exc
+            except Exception as exc:
+                # The sniffer cannot type a single-column file ("Could not determine
+                # delimiter") — those are legitimate; read them as plain comma CSV.
+                if "delimiter" in str(exc).lower():
+                    df = pd.read_csv(p, sep=",", engine="python", dtype=object,
+                                     encoding=encoding, keep_default_na=True)
+                else:
+                    raise ValueError(f"could not read {p.name}: {exc}") from exc
     df = df.copy()
     df.columns = [upper(c) for c in df.columns]
     return df.reset_index(drop=True)
+
+
+def _csv_sep(p: Path, encoding: str) -> str:
+    """The file's delimiter, from its first 64KB (a .tsv is taken at its word)."""
+    if p.suffix.lower() == ".tsv":
+        return "\t"
+    try:
+        with open(p, encoding=encoding, errors="replace", newline="") as fh:
+            sample = fh.read(65536)
+    except OSError:
+        return ","
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+    except csv.Error:
+        head = sample.splitlines()[0] if sample else ""
+        return max([",", ";", "\t", "|"], key=head.count) if head else ","
 
 
 def read_dataset(path: str | Path, encoding: str = "latin-1",
