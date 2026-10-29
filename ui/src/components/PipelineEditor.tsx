@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   ArrowDown, ArrowUp, ArrowUpDown, CalendarClock, Calculator, ChevronDown, ChevronRight,
-  ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Eraser, Eye, EyeOff, Filter, GitMerge, Hash,
+  CaseUpper, ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Eraser, Eye, EyeOff, Filter, GitMerge, Hash,
   Layers, ListChecks, Loader2, Maximize2, PenLine, Plus, Redo2, RotateCcw, Rows3, Sigma, Split,
   SplitSquareHorizontal, Table2, Trash2, Undo2, Wand2, type LucideIcon,
 } from "lucide-react"
@@ -18,7 +18,7 @@ import { RecordTable } from "./DataView"
 import { Chip, DataGrid, Mono, type ChipTone } from "./grid"
 import { SasCodeField, SasForm } from "./sas"
 import { sasSentence, useSasLines } from "./sasHooks"
-import { Callout } from "./shell"
+import { Callout, Panel } from "./shell"
 
 /** Every step reads the same at a glance, in any order, after any amount of time away:
  *  one operation \u2192 one icon \u2192 one colour, everywhere the op appears (the step header,
@@ -41,6 +41,7 @@ const OP_META: Record<string, { icon: LucideIcon; tone: ChipTone }> = {
   transpose_long: { icon: Rows3, tone: "teal" },
   transpose_findings: { icon: Table2, tone: "teal" },
   transpose_rule: { icon: Table2, tone: "teal" },
+  uppercase: { icon: CaseUpper, tone: "teal" },
 }
 const DEFAULT_META = { icon: SplitSquareHorizontal, tone: "slate" as ChipTone }
 
@@ -99,7 +100,11 @@ function stepSummary(st: Step): string {
       return t.length ? `derive ${t.slice(0, 3).join(", ")}${more(t.length, 3)} on ${str("dataset") || "…"}`
                       : `derive column(s) on ${str("dataset") || "…"}`
     }
+    case "uppercase":
+      return `uppercase ${names("columns").join(", ") || "\u2026"} on ${str("dataset") || "\u2026"}`
     case "compute": {
+      if (!str("func") && str("target") && str("expression"))
+        return `${str("target")} = ${str("expression")} on ${str("dataset") || "\u2026"}`
       const fn = str("func"); const cols = names("columns")
       return `${FN_LABELS[fn] ?? fn ?? "compute"}(${cols.slice(0, 3).join(", ")}${more(cols.length, 3)})${
         str("out_col") ? ` → ${str("out_col")}` : ""} on ${str("dataset") || "…"}`
@@ -1842,4 +1847,518 @@ function StepSasLine({ step, summary }: { step: Step; summary: string }) {
           title={summary}>
       {line || summary}
     </span>)
+}
+
+
+/* ── SDTM Studio's prep, rendered the GUI way ───────────────────────────────
+   A studio-imported study's steps are read-only here, but they deserve the same
+   visual language as the editable pipeline: one colour per op, a plain sentence
+   per step, and labelled field boxes — never a JSON dump. */
+
+export type StudioStep = {
+  step: number; op: string; name: string; reads: string[]; params: Record<string, unknown>
+}
+
+const STUDIO_OP_LABEL: Record<string, string> = {
+  stack: "Stack", merge: "Merge", filter: "Filter", select: "Keep columns",
+  drop: "Drop columns", rename: "Rename", constant: "Constants", derive: "Conditional derive",
+  compute: "Compute", aggregate: "Summarise", date_extreme: "Date extreme", sort: "Sort",
+  dedup: "De-duplicate", split: "Split", transpose_long: "Transpose to rows",
+  transpose_findings: "Transpose findings", transpose_rule: "Transpose by rule",
+  uppercase: "Uppercase",
+}
+
+function condSentence(c: Cond): string {
+  if (!c?.column) return ""
+  const o = c.operator ?? "=="
+  if (!c.value && (o === "!=" || o === "==") )
+    return `${c.column} ${o === "!=" ? "is not blank" : "is blank"}`
+  const op = OP_SHORT[o] ?? o
+  const v = c.value && !COND_NO_VALUE.has(o) ? ` ${c.value}` : ""
+  return `${c.column} ${op}${v}`
+}
+
+function FieldBox({ label, tone, children }: { label: string; tone: ChipTone; children: ReactNode }) {
+  return (
+    <div className={cn("rounded-lg border p-2", FIELD_TONE_BOX[tone])}>
+      <div className={cn("mb-1.5 text-[10px] font-semibold uppercase tracking-wide", FIELD_TONE_TEXT[tone])}>
+        {label}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 text-[12px]">{children}</div>
+    </div>
+  )
+}
+
+function ColumnChips({ cols, max = 24 }: { cols: string[]; max?: number }) {
+  return (
+    <>
+      {cols.slice(0, max).map((c, i) => <Mono key={`${c}-${i}`}>{c}</Mono>)}
+      {cols.length > max && <span className="text-[11px] text-muted-foreground">+{cols.length - max} more</span>}
+    </>
+  )
+}
+
+/** The step's params as the labelled boxes the editor would show — read-only. */
+function StudioParamBoxes({ op, params }: { op: string; params: Record<string, unknown> }) {
+  const p = params ?? {}
+  const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "")
+  const list = (k: string) => (Array.isArray(p[k]) ? (p[k] as unknown[]) : [])
+  const names = (k: string) => list(k).filter((x): x is string => typeof x === "string" && !!x)
+  const boxes: ReactNode[] = []
+  const used = new Set<string>()
+  const take = (...keys: string[]) => keys.forEach((k) => used.add(k))
+
+  if (str("dataset")) { take("dataset"); boxes.push(
+    <FieldBox key="ds" label="Dataset" tone="blue"><Mono>{str("dataset")}</Mono></FieldBox>) }
+  if (names("datasets").length) { take("datasets"); boxes.push(
+    <FieldBox key="dss" label="Datasets to append" tone="blue"><ColumnChips cols={names("datasets")} /></FieldBox>) }
+
+  const inputs = list("inputs") as Array<{ dataset?: string; columns?: string[]; key?: string }>
+  if (inputs.length) { take("inputs", "on", "how"); boxes.push(
+    <FieldBox key="join" label="Datasets to join" tone="green">
+      <div className="w-full space-y-1">
+        {inputs.map((x, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-1.5">
+            <Mono>{x.dataset ?? "?"}</Mono>
+            <span className="text-[11px] text-muted-foreground">
+              {x.columns?.length ? `keeps ${x.columns.length} column(s)` : "keeps every column"}
+              {x.key ? <> · joins by its <Mono>{x.key}</Mono></> : null}
+            </span>
+          </div>
+        ))}
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          <span className="text-[11px] text-muted-foreground">join on</span>
+          <ColumnChips cols={names("on")} />
+          {str("how") && <span className="text-[11px] text-muted-foreground">· keep records from: {str("how")}</span>}
+        </div>
+      </div>
+    </FieldBox>) }
+
+  const conds = list("conds") as Cond[]
+  if (conds.length) { take("conds"); boxes.push(
+    <FieldBox key="conds" label="Keep records where" tone="amber">
+      <div className="w-full space-y-0.5">
+        {conds.map((c, i) => <div key={i}>{i > 0 && <span className="mr-1 text-[11px] text-muted-foreground">and</span>}{condSentence(c)}</div>)}
+      </div>
+    </FieldBox>) }
+  if (op === "filter" && str("expression")) { take("expression"); boxes.push(
+    <FieldBox key="fx" label="Keep records where" tone="amber"><Mono>{str("expression")}</Mono></FieldBox>) }
+
+  const targets = names("targets").length ? names("targets") : (str("target") ? [str("target")] : [])
+  if (targets.length) { take("targets", "target"); boxes.push(
+    <FieldBox key="tg" label="Column(s) to set" tone="fuchsia"><ColumnChips cols={targets} /></FieldBox>) }
+
+  const rules = list("rules") as Array<{ conds?: Cond[]; value?: string; values?: Record<string, string> }>
+  if (rules.length) { take("rules", "else_value", "else_values"); boxes.push(
+    <FieldBox key="rules" label="If / else if" tone="fuchsia">
+      <div className="w-full space-y-1">
+        {rules.map((r, i) => (
+          <div key={i} className="flex flex-wrap items-baseline gap-1.5">
+            <span className="text-[11px] font-medium">{i === 0 ? "when" : "else when"}</span>
+            <span>{(r.conds ?? []).map(condSentence).filter(Boolean).join(" and ") || "always"}</span>
+            <span className="text-[11px] font-medium">→</span>
+            <Mono>{r.value ?? (r.values ? Object.entries(r.values).map(([k, v]) => `${k}=${v}`).join(", ") : "")}</Mono>
+          </div>
+        ))}
+        {(!!str("else_value") || p.else_values != null) && (
+          <div className="flex flex-wrap items-baseline gap-1.5">
+            <span className="text-[11px] font-medium">otherwise</span><span className="text-[11px] font-medium">→</span>
+            <Mono>{str("else_value") || JSON.stringify(p.else_values)}</Mono>
+          </div>
+        )}
+      </div>
+    </FieldBox>) }
+
+  const renames = list("renames") as Array<{ from?: string; to?: string }>
+  if (renames.length) { take("renames"); boxes.push(
+    <FieldBox key="rn" label="Rename" tone="violet">
+      {renames.map((r, i) => (
+        <span key={i} className="inline-flex items-center gap-1">
+          <Mono>{r.from ?? "?"}</Mono><span className="text-[11px] text-muted-foreground">→</span><Mono>{r.to ?? "?"}</Mono>
+        </span>
+      ))}
+    </FieldBox>) }
+
+  if (op === "constant" && list("columns").length) { take("columns"); boxes.push(
+    <FieldBox key="const" label="Columns to add" tone="violet">
+      {(list("columns") as Array<{ column?: string; value?: string }>).map((c, i) => (
+        <span key={i} className="inline-flex items-center gap-1">
+          <Mono>{c.column ?? "?"}</Mono><span className="text-[11px] text-muted-foreground">=</span><Mono>{String(c.value ?? "")}</Mono>
+        </span>
+      ))}
+    </FieldBox>) }
+  else if (names("columns").length) { take("columns"); boxes.push(
+    <FieldBox key="cols" label="Columns" tone="teal"><ColumnChips cols={names("columns")} /></FieldBox>) }
+
+  if (op === "compute" && str("expression")) { take("expression", "out_col"); boxes.push(
+    <FieldBox key="cx" label="Calculation" tone="blue">
+      {str("out_col") && <><Mono>{str("out_col")}</Mono><span className="text-[11px] text-muted-foreground">=</span></>}
+      <Mono>{str("expression")}</Mono>
+    </FieldBox>) }
+
+  if (names("id_vars").length) { take("id_vars"); boxes.push(
+    <FieldBox key="idv" label={`Carry through · ${names("id_vars").length} column(s)`} tone="teal">
+      <ColumnChips cols={names("id_vars")} max={10} />
+    </FieldBox>) }
+  if (names("value_vars").length) { take("value_vars"); boxes.push(
+    <FieldBox key="vv" label="Columns to melt" tone="teal"><ColumnChips cols={names("value_vars")} /></FieldBox>) }
+  const measures = list("measures") as Array<{ testcd?: string; value_col?: string; unit_col?: string }>
+  if (measures.length) { take("measures"); boxes.push(
+    <FieldBox key="ms" label="Measurements" tone="teal">
+      <div className="w-full space-y-0.5">
+        {measures.map((m, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-1.5">
+            <Mono>{m.testcd ?? "?"}</Mono>
+            <span className="text-[11px] text-muted-foreground">from</span><Mono>{m.value_col ?? "?"}</Mono>
+            {m.unit_col && <><span className="text-[11px] text-muted-foreground">unit</span><Mono>{m.unit_col}</Mono></>}
+          </div>
+        ))}
+      </div>
+    </FieldBox>) }
+
+  if (names("keys").length) { take("keys", "keep"); boxes.push(
+    <FieldBox key="dd" label={`Keep the ${str("keep") || "first"} record per`} tone="red">
+      <ColumnChips cols={names("keys")} /></FieldBox>) }
+  if (names("group_by").length) { take("group_by", "func", "column", "out_col"); boxes.push(
+    <FieldBox key="agg" label="Summarise" tone="violet">
+      <span className="text-[11px] text-muted-foreground">{str("func") || "summarise"}</span>
+      <Mono>{str("column") || "?"}</Mono>
+      <span className="text-[11px] text-muted-foreground">per</span><ColumnChips cols={names("group_by")} />
+      {str("out_col") && <><span className="text-[11px] text-muted-foreground">→</span><Mono>{str("out_col")}</Mono></>}
+    </FieldBox>) }
+
+  // whatever a studio step carries beyond the fields above, shown plainly — never dropped
+  const rest = Object.entries(p).filter(([k, v]) =>
+    !used.has(k) && v !== "" && v != null && !(Array.isArray(v) && !v.length))
+  if (rest.length) boxes.push(
+    <FieldBox key="rest" label="Also set" tone="slate">
+      <div className="w-full space-y-0.5">
+        {rest.map(([k, v]) => (
+          <div key={k} className="flex flex-wrap items-baseline gap-1.5">
+            <span className="text-[11px] text-muted-foreground">{k}</span>
+            <Mono>{typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+              ? String(v)
+              : Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]).join(", ")
+              : JSON.stringify(v)}</Mono>
+          </div>
+        ))}
+      </div>
+    </FieldBox>)
+
+  return <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-2">{boxes}</div>
+}
+
+/* ── editing a studio step ──────────────────────────────────────────────────
+   The same pipeline the studio's Domain Build edits, edited here: Save writes the steps
+   into the imported study with the studio's own save (same consolidation, same file), and
+   the rebuild runs them with the studio's engine. The editor is shape-driven — whatever
+   params a step carries become fields, so no studio op is ever locked out. */
+
+export type StudioSaveStep = { op: string; name: string; params: Record<string, unknown> }
+
+/** The params a step added HERE starts from — the studio's own shapes per op. */
+const STUDIO_OP_TEMPLATE: Record<string, Record<string, unknown>> = {
+  stack: { datasets: [""] },
+  merge: { inputs: [{ dataset: "", columns: [] }, { dataset: "", columns: [] }], on: ["USUBJID"], how: "left" },
+  filter: { dataset: "", expression: "" },
+  rename: { dataset: "", renames: [{ from: "", to: "" }] },
+  drop: { dataset: "", columns: [] },
+  select: { dataset: "", columns: [] },
+  constant: { dataset: "", columns: [{ column: "", value: "" }] },
+  derive: { dataset: "", target: "", rules: [{ conds: [{ column: "", operator: "==", value: "" }], value: "" }], else_value: "" },
+  compute: { dataset: "", target: "", expression: "" },
+  uppercase: { dataset: "", columns: [] },
+  aggregate: { dataset: "", group_by: [], func: "max", column: "", out_col: "" },
+  transpose_findings: { dataset: "", id_vars: [], measures: [{ testcd: "", value_col: "", unit_col: "" }] },
+}
+
+/** What a new row of an object-list looks like, by param key (for lists that start empty). */
+const ROW_SHAPE: Record<string, Record<string, unknown>> = {
+  conds: { column: "", operator: "==", value: "" },
+  rules: { conds: [{ column: "", operator: "==", value: "" }], value: "" },
+  renames: { from: "", to: "" },
+  inputs: { dataset: "", columns: [] },
+  measures: { testcd: "", value_col: "", unit_col: "" },
+  on_map: { left: "", right: "" },
+  branches: { name: "", conds: [{ column: "", operator: "==", value: "" }] },
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v)
+}
+
+/** What a param is CALLED in the editor — the studio's words (IF / THEN / ELSE, join on, …),
+ *  never the raw key. Context-sensitive: `value` inside a rule is the THEN, inside a
+ *  constant column it is just the value. */
+const STUDIO_KEY_LABEL: Record<string, string> = {
+  dataset: "dataset", datasets: "datasets to append", inputs: "datasets to join",
+  on: "join on", on_map: "join columns (left → right)", how: "keep records from",
+  conds: "keep records WHERE", expression: "expression",
+  target: "column to set", targets: "columns to set",
+  rules: "IF / ELSE IF", else_value: "ELSE (otherwise)", else_values: "ELSE (otherwise)",
+  renames: "rename", columns: "columns", keys: "keys", keep: "keep the",
+  group_by: "per", func: "function", out_col: "output column", column: "column",
+  id_vars: "carry through", value_vars: "columns to melt", measures: "measurements",
+  branches: "branches",
+  "rules.conds": "WHEN", "rules.value": "THEN set to", "rules.values": "THEN set",
+  "conds.column": "column", "conds.operator": "", "conds.value": "value",
+  "renames.from": "from", "renames.to": "to",
+  "inputs.dataset": "dataset", "inputs.columns": "keep columns", "inputs.key": "join by its",
+  "measures.testcd": "test code", "measures.value_col": "value from", "measures.unit_col": "unit from",
+  "on_map.left": "left", "on_map.right": "right",
+  "columns.column": "column", "columns.value": "value",
+}
+
+const studioKeyLabel = (parent: string, k: string): string => {
+  const hit = STUDIO_KEY_LABEL[`${parent}.${k}`] ?? STUDIO_KEY_LABEL[k]
+  return hit !== undefined ? hit : k.replace(/_/g, " ")
+}
+
+/** The operators a condition can use, worded as the step summaries word them. */
+const STUDIO_COND_OPS: Array<[string, string]> = [
+  ["==", "="], ["!=", "≠"], [">", ">"], [">=", "≥"], ["<", "<"], ["<=", "≤"],
+  ["contains", "contains"], ["startswith", "starts with"], ["endswith", "ends with"],
+  ["in", "in list"], ["notin", "not in list"], ["missing", "is blank"], ["notmissing", "is not blank"],
+]
+
+/** One editable param — the value's shape decides the control, so every studio op is
+ *  editable without an op-specific form, and nothing a step carries is hidden. */
+function StudioValueField({ k, value, onChange, parent = "" }: {
+  k: string; value: unknown; onChange: (v: unknown) => void; parent?: string
+}) {
+  if (parent === "conds" && k === "operator") return (
+    <Select value={typeof value === "string" && value ? value : "=="} onValueChange={onChange}>
+      <SelectTrigger className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {STUDIO_COND_OPS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+      </SelectContent>
+    </Select>)
+  if (typeof value === "boolean") return (
+    <Select value={String(value)} onValueChange={(v) => onChange(v === "true")}>
+      <SelectTrigger className="h-7 w-20 text-xs"><SelectValue /></SelectTrigger>
+      <SelectContent><SelectItem value="true">yes</SelectItem><SelectItem value="false">no</SelectItem></SelectContent>
+    </Select>)
+  if (typeof value === "number") return (
+    <Input className="h-7 w-24 font-mono text-xs" value={String(value)}
+           onChange={(e) => onChange(e.target.value === "" ? 0 : Number(e.target.value) || 0)} />)
+  if (Array.isArray(value)) {
+    const objRows = value.some(isPlainObject) || (!value.length && k in ROW_SHAPE)
+    if (!objRows) return (
+      <Input className="h-7 min-w-44 flex-1 font-mono text-xs" placeholder="comma-separated"
+             value={(value as unknown[]).map((x) => String(x)).join(", ")}
+             onChange={(e) => onChange(e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} />)
+    const rows = value.filter(isPlainObject)
+    const shape = ROW_SHAPE[k]
+      ?? (rows[0] ? Object.fromEntries(Object.keys(rows[0]).map((x) => [x, Array.isArray(rows[0][x]) ? [] : ""])) : { value: "" })
+    return (
+      <div className="w-full space-y-1">
+        {rows.map((row, i) => (
+          <div key={i} className="flex flex-wrap items-start gap-1.5 rounded-md border bg-surface/60 p-1.5">
+            {k === "rules" && (
+              <span className="mt-1 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-primary">
+                {i === 0 ? "IF" : "ELSE IF"}</span>)}
+            <div className="min-w-0 flex-1">
+              <StudioObjectFields obj={row} parent={k}
+                                  onChange={(o) => onChange(rows.map((r, j) => (j === i ? o : r)))} />
+            </div>
+            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" title="Remove this row"
+                    onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+              <Trash2 className="h-3 w-3" /></Button>
+          </div>
+        ))}
+        <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]"
+                onClick={() => onChange([...rows, structuredClone(shape)])}>
+          <Plus className="mr-1 h-3 w-3" />
+          add {k === "rules" ? (rows.length ? "an ELSE IF" : "the IF") : k === "conds" ? "a condition" : "one"}
+        </Button>
+      </div>)
+  }
+  if (isPlainObject(value)) return <StudioObjectFields obj={value} parent={k} onChange={onChange} />
+  return (
+    <Input className="h-7 min-w-44 flex-1 font-mono text-xs" value={value == null ? "" : String(value)}
+           onChange={(e) => onChange(e.target.value)} />)
+}
+
+export function StudioObjectFields({ obj, onChange, parent = "" }: {
+  obj: Record<string, unknown>; onChange: (o: Record<string, unknown>) => void; parent?: string
+}) {
+  return (
+    <div className="flex w-full flex-wrap items-start gap-x-4 gap-y-1.5">
+      {Object.entries(obj).map(([k, v]) => {
+        const label = studioKeyLabel(parent, k)
+        return (
+          <div key={k} className={cn("flex items-start gap-1.5",
+            Array.isArray(v) && (v.some(isPlainObject) || (!v.length && k in ROW_SHAPE)) ? "w-full" : "min-w-0")}>
+            {label !== "" && (
+              <span className="mt-1.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {label}</span>)}
+            <StudioValueField k={k} parent={parent} value={v} onChange={(nv) => onChange({ ...obj, [k]: nv })} />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+export function StudioPrepList({ steps, domain, onDone }: {
+  steps: StudioStep[]; domain: string; onDone: () => void
+}) {
+  const [edit, setEdit] = useState<StudioSaveStep[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState("")
+  const startEdit = () => {
+    setErr("")
+    setEdit(steps.map((st) => structuredClone({ op: st.op, name: st.name, params: st.params ?? {} })))
+  }
+  const save = async () => {
+    if (!edit) return
+    setBusy(true); setErr("")
+    try {
+      await api.setStudioPrep(domain, edit)
+      await api.rebuild(domain)
+      setEdit(null)
+      onDone()
+    } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+  const change = (i: number, st: StudioSaveStep) => setEdit((e) => e!.map((x, j) => (j === i ? st : x)))
+  const move = (i: number, d: number) => setEdit((e) => {
+    const n = [...e!]; const j = i + d
+    if (j < 0 || j >= n.length) return e!
+    ;[n[i], n[j]] = [n[j], n[i]]
+    return n
+  })
+
+  if (edit) {
+    return (
+      <Panel title={`Prepare the data — editing ${edit.length} step${edit.length === 1 ? "" : "s"}`}
+             description="The same pipeline SDTM Studio's Domain Build edits. Save writes it into this study with the studio's own save and rebuilds the domain with the studio's engine — Pull from the studio (Study setup) would replace it with the studio's latest."
+             actions={<div className="flex items-center gap-2">
+               <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setEdit(null); setErr("") }}>Cancel</Button>
+               <Button size="sm" disabled={busy} onClick={() => void save()}>
+                 {busy ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Saving…</> : "Save & rebuild"}
+               </Button>
+             </div>}>
+        {err && <div className="mb-3"><Callout tone="bad" title="Could not save">{err}</Callout></div>}
+        <div className="space-y-1.5">
+          {edit.map((st, i) => {
+            const meta = OP_META[st.op] ?? DEFAULT_META
+            const OpIcon = meta.icon
+            return (
+              <div key={i} className={cn("rounded-lg border border-l-4", ACCENT_BORDER[meta.tone])}>
+                <div className={cn("flex flex-wrap items-center gap-2 rounded-t-lg px-2 py-1.5", HEAD_TINT[meta.tone])}>
+                  <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold">{i + 1}</span>
+                  <Chip tone={meta.tone} className="shrink-0"><OpIcon className="h-3 w-3" /></Chip>
+                  <span className="shrink-0 text-[13px] font-medium">{STUDIO_OP_LABEL[st.op] ?? st.op}</span>
+                  <Input className="h-7 w-44 font-mono text-xs" value={st.name} placeholder="output name"
+                         onChange={(e) => change(i, { ...st, name: e.target.value })} />
+                  <span className={cn("min-w-0 flex-1 truncate text-[12px] italic", FIELD_TONE_TEXT[meta.tone])}>
+                    {stepSummary({ op: st.op, name: st.name, params: st.params })}
+                  </span>
+                  <span className="flex shrink-0 items-center">
+                    <Button variant="ghost" size="icon" className="h-6 w-6" title="Move up" disabled={i === 0}
+                            onClick={() => move(i, -1)}><ArrowUp className="h-3 w-3" /></Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" title="Move down" disabled={i === edit.length - 1}
+                            onClick={() => move(i, 1)}><ArrowDown className="h-3 w-3" /></Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" title="Duplicate this step"
+                            onClick={() => setEdit((e) => [...e!.slice(0, i + 1), structuredClone(st), ...e!.slice(i + 1)])}>
+                      <CopyPlus className="h-3 w-3" /></Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" title="Remove this step"
+                            onClick={() => setEdit((e) => e!.filter((_, j) => j !== i))}>
+                      <Trash2 className="h-3 w-3" /></Button>
+                  </span>
+                </div>
+                <div className="px-3 py-2.5">
+                  <StudioObjectFields obj={st.params} onChange={(p) => change(i, { ...st, params: p })} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-2.5 py-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Add a step</span>
+          <Select value="" onValueChange={(op) => setEdit((e) => [...e!,
+            { op, name: "", params: structuredClone(STUDIO_OP_TEMPLATE[op] ?? { dataset: "" }) }])}>
+            <SelectTrigger className="h-7 w-56 text-xs"><SelectValue placeholder="choose the operation…" /></SelectTrigger>
+            <SelectContent>
+              {Object.keys(STUDIO_OP_TEMPLATE).map((op) => {
+                const m = OP_META[op] ?? DEFAULT_META; const I = m.icon
+                return <SelectItem key={op} value={op}>
+                  <span className="flex items-center gap-1.5"><I className="h-3 w-3" />{STUDIO_OP_LABEL[op] ?? op}</span>
+                </SelectItem>
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+      </Panel>
+    )
+  }
+
+  if (!steps.length) {
+    return (
+      <div className="space-y-3">
+        <Callout title="No prep steps">SDTM Studio has no saved prep for this domain — it builds straight
+          from its raw forms. Prep can be designed right here, the studio's way.</Callout>
+        <Button size="sm" variant="outline" onClick={startEdit}>
+          <Plus className="mr-1.5 h-3.5 w-3.5" />Design the prep here</Button>
+      </div>
+    )
+  }
+  const asStep = (s: StudioStep): Step => ({ op: s.op, name: s.name, params: s.params ?? {} })
+  return (
+    <Panel title={`Prepare the data — ${steps.length} step${steps.length > 1 ? "s" : ""}, shared with SDTM Studio`}
+           description="The same pipeline the studio's Domain Build holds. Edit it here (the save is the studio's own) or in the studio — Pull from the studio on Study setup brings its latest over."
+           actions={<Button size="sm" variant="outline" onClick={startEdit}>
+             <PenLine className="mr-1.5 h-3.5 w-3.5" />Edit the steps</Button>}>
+      {steps.length >= 4 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed bg-muted/30 px-2.5 py-2">
+          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Map</span>
+          {steps.map((s) => {
+            const m = OP_META[s.op] ?? DEFAULT_META
+            const Icon = m.icon
+            return (
+              <button key={s.step} type="button" title={stepSummary(asStep(s))}
+                      onClick={() => {
+                        const el = document.getElementById(`studio-step-${s.step}`) as HTMLDetailsElement | null
+                        if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "center" }) }
+                      }}>
+                <Chip tone={m.tone} className="cursor-pointer transition hover:scale-105 hover:shadow-sm">
+                  <span className="font-semibold">{s.step}</span>
+                  <Icon className="h-3 w-3" />
+                  <span className="font-mono">{s.name || `step${s.step}`}</span>
+                </Chip>
+              </button>
+            )
+          })}
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {steps.map((s) => {
+          const meta = OP_META[s.op] ?? DEFAULT_META
+          const OpIcon = meta.icon
+          return (
+            <details key={s.step} id={`studio-step-${s.step}`}
+                     className={cn("rounded-lg border border-l-4", ACCENT_BORDER[meta.tone])}>
+              <summary className={cn("flex cursor-pointer flex-wrap items-center gap-2 rounded-lg px-2 py-1.5",
+                                     HEAD_TINT[meta.tone])}>
+                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold">{s.step}</span>
+                <Chip tone={meta.tone} className="shrink-0"><OpIcon className="h-3 w-3" /></Chip>
+                <span className="shrink-0 text-[13px] font-medium">{STUDIO_OP_LABEL[s.op] ?? s.op}</span>
+                <Mono>{s.name || "—"}</Mono>
+                <span className={cn("min-w-0 flex-1 truncate text-[12px] italic", FIELD_TONE_TEXT[meta.tone])}
+                      title={stepSummary(asStep(s))}>
+                  {stepSummary(asStep(s))}
+                </span>
+                {s.reads.length > 0 && (
+                  <span className="shrink-0 text-[11px] text-muted-foreground">reads {s.reads.slice(0, 3).join(", ")}{s.reads.length > 3 ? "\u2026" : ""}</span>
+                )}
+              </summary>
+              <div className="px-3 pb-3">
+                <StudioParamBoxes op={s.op} params={s.params ?? {}} />
+              </div>
+            </details>
+          )
+        })}
+      </div>
+    </Panel>
+  )
 }

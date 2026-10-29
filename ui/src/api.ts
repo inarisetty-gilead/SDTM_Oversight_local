@@ -85,6 +85,27 @@ export interface StudioPrepStep {
   step: number; op: string; name: string; reads: string[]; params: Record<string, unknown>
 }
 
+/** A value reference inside a studio mapping (a column, another variable, a text, …). */
+export interface StudioValueRef {
+  kind?: string; dataset?: string; column?: string; var?: string; text?: string; step?: number
+  [k: string]: unknown
+}
+
+/** One variable's mapping as SDTM Studio's Domain Build edits it. */
+export interface StudioBlock {
+  variable: string; mtype: string
+  dataset?: string; column?: string; value?: string; recipe?: string
+  args?: Record<string, unknown>
+  label?: string; codelist?: string; role?: string; origin?: string
+  input_variables?: string; supp?: boolean
+  [k: string]: unknown
+}
+
+export interface StudioBlocksInfo {
+  domain: string; blocks: StudioBlock[]; sources: Record<string, string[]>
+  prep_outputs: string[]; variables: string[]
+}
+
 export interface BuildResults {
   domains: DomainRow[]; out_dir: string; name_match: number; synthetic?: SyntheticMarker | null;
   not_built: Array<{ domain: string; variable: string; label: string; why: string; spec_rule: string; spec_row: number }>;
@@ -275,6 +296,15 @@ export const api = {
     built: string[]; compared: string[]; problems?: string[] }>(`/api/studies/${id}/open`),
   closeStudy: (id: string) => post(`/api/studies/${id}/close`),
   studioImport: (id: string, path: string) => post<StudioImport>(`/api/studies/${id}/studio-import`, { path }),
+  studioSync: (id: string, path = "") => post<StudioImport>(`/api/studies/${id}/studio-sync`, { path }),
+  setStudioPrep: (d: string, steps: Array<{ op: string; name: string; params: Record<string, unknown> }>) =>
+    post<{ domain: string; steps: Array<{ op: string; name: string; params: Record<string, unknown> }> }>(
+      `/api/domain/${d}/studio-prep`, { steps }),
+  studioBlocks: (d: string) => call<StudioBlocksInfo>(`/api/domain/${d}/studio-blocks`),
+  setStudioBlock: (d: string, v: string, block: StudioBlock) =>
+    post<{ ok: boolean }>(`/api/domain/${d}/studio-block/${v}`, { block }),
+  clearStudioBlock: (d: string, v: string) =>
+    call<{ ok: boolean }>(`/api/domain/${d}/studio-block/${v}`, { method: "DELETE" }),
   deleteStudy: (id: string) => call(`/api/studies/${id}`, { method: "DELETE" }),
   buildId: () => call<{ version: string; assets: string[]; built: string }>("/api/build-id"),
   state: () => call<Record<string, unknown>>("/api/state"),

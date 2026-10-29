@@ -509,8 +509,9 @@ def delete_study(study_id: str):
 
 # ── SDTM Studio studies ─────────────────────────────────────────────────────
 # A study imported from SDTM Studio is built by the studio's own engine (sdtm_builder/studio),
-# from the studio's spec, saved Domain Build edits and prep steps — reviewed and compared here,
-# edited in the studio.
+# from the studio's spec, saved Domain Build edits and prep steps. The prep steps are edited
+# here exactly as in the studio's Domain Build (the same save the studio makes); "Pull from
+# the studio" re-reads the study as the studio holds it now.
 class StudioImportIn(BaseModel):
     path: str
 
@@ -535,20 +536,11 @@ def _refuse_if_studio(what: str = "edited") -> None:
                                  f"study again and re-import it.")
 
 
-@app.post("/api/studies/{study_id}/studio-import")
-def studio_import(study_id: str, body: StudioImportIn):
-    """Bring in a study exported from SDTM Studio (tools/export_studio_study.py): its spec, saved
-    Domain Build edits, prep steps and raw data. From then on the study builds with the studio's
-    engine. Re-importing replaces the previous import."""
+def _studio_adopt(src_path: str) -> dict:
+    """Unpack an export into this study and point the session at it (shared by import and sync)."""
     from sdtm_builder.studio import oversight as studio_ov
-    if SESSION.study_id != study_id:
-        raise HTTPException(409, "open the study first")
-    if RUNNER.busy:
-        raise HTTPException(409, "a job is running")
-    try:
-        info = studio_ov.import_export(os.path.expanduser(body.path), _studio_dir())
-    except (ValueError, OSError, KeyError) as exc:
-        raise HTTPException(400, f"could not import the studio export: {exc}") from exc
+    info = studio_ov.import_export(os.path.expanduser(src_path), _studio_dir())
+    info["source"] = str(Path(os.path.expanduser(src_path)).resolve())
     SESSION.engine, SESSION.studio = "studio", info
     spec_path, raw_path = Path(info["spec_path"]).resolve(), Path(info["raw_path"]).resolve()
     SESSION.spec = load_spec(spec_path)
@@ -560,6 +552,191 @@ def studio_import(study_id: str, body: StudioImportIn):
     SESSION.studyid = SESSION.studyid or ""
     _autosave()
     return {"ok": True, **info, "datasets": len(SESSION.store.refs)}
+
+
+@app.post("/api/studies/{study_id}/studio-import")
+def studio_import(study_id: str, body: StudioImportIn):
+    """Bring in a study exported from SDTM Studio (tools/export_studio_study.py): its spec, saved
+    Domain Build edits, prep steps and raw data. From then on the study builds with the studio's
+    engine. Re-importing replaces the previous import."""
+    if SESSION.study_id != study_id:
+        raise HTTPException(409, "open the study first")
+    if RUNNER.busy:
+        raise HTTPException(409, "a job is running")
+    try:
+        return _studio_adopt(body.path)
+    except (ValueError, OSError, KeyError) as exc:
+        raise HTTPException(400, f"could not import the studio export: {exc}") from exc
+
+
+def _studio_api_dir() -> Path | None:
+    """The local SDTM Studio backend, if it is on this machine: SDTM_STUDIO_HOME, or the
+    sdtm-studio checkout next to this repository."""
+    for home in filter(None, [os.environ.get("SDTM_STUDIO_HOME"), str(ROOT.parent / "sdtm-studio")]):
+        api = Path(os.path.expanduser(home)) / "Container" / "sdtm_api"
+        if (api / ".venv" / "bin" / "python").is_file():
+            return api
+    return None
+
+
+@app.post("/api/studies/{study_id}/studio-sync")
+def studio_sync(study_id: str, body: StudioImportIn):
+    """Pull the study again from SDTM Studio, so whatever changed there — Domain Builds, prep
+    steps, Auto-Build — is what builds here. With a path, that export is imported; without one,
+    the export is made fresh from the studio installed on this machine, exactly as
+    tools/export_studio_study.py makes it. Prep edits made here are replaced by the studio's."""
+    import subprocess
+    if SESSION.study_id != study_id:
+        raise HTTPException(409, "open the study first")
+    if not _is_studio():
+        raise HTTPException(409, "this study was not imported from SDTM Studio")
+    if RUNNER.busy:
+        raise HTTPException(409, "a job is running")
+    src = (body.path or "").strip()
+    if not src:
+        api_dir = _studio_api_dir()
+        if api_dir is None:
+            src = SESSION.studio.get("source") or ""
+            if not (src and Path(src).exists()):
+                raise HTTPException(400, "SDTM Studio was not found on this machine (set "
+                                         "SDTM_STUDIO_HOME) and the original export is gone — "
+                                         "export the study in the studio and give the zip's path")
+        else:
+            out = STUDIES.root / SESSION.study_id / "studio_sync.zip"
+            tool = ROOT / "tools" / "export_studio_study.py"
+            run = subprocess.run(
+                [str(api_dir / ".venv" / "bin" / "python"), str(tool),
+                 SESSION.studio["study_id"], str(out)],
+                cwd=str(api_dir), capture_output=True, text=True, timeout=1800)
+            if run.returncode != 0:
+                tail = (run.stderr or run.stdout or "").strip().splitlines()[-6:]
+                raise HTTPException(400, "the studio's export failed — " + (" / ".join(tail) or "no output"))
+            src = str(out)
+    try:
+        return _studio_adopt(src)
+    except (ValueError, OSError, KeyError) as exc:
+        raise HTTPException(400, f"could not import the studio export: {exc}") from exc
+
+
+class StudioPrepIn(BaseModel):
+    steps: list[dict] = []
+
+
+@app.post("/api/domain/{domain}/studio-prep")
+def set_studio_prep(domain: str, body: StudioPrepIn):
+    """Save this domain's prep steps into the imported study — the very save SDTM Studio's own
+    Domain Build makes (same consolidation, same file), so the next build here runs them and a
+    study taken back into the studio holds them."""
+    if not _is_studio():
+        raise HTTPException(409, "this study was not imported from SDTM Studio")
+    dom = upper(domain)
+    if SESSION.spec is None or dom not in SESSION.spec.domains:
+        raise HTTPException(404, f"{dom} is not in the mapping spec")
+    if RUNNER.busy:
+        raise HTTPException(409, "a job is already running")
+    from sdtm_builder import studio as studio_pkg
+    _studio_configure()
+    steps = [{"op": s(st.get("op")), "name": s(st.get("name")), "params": st.get("params") or {}}
+             for st in body.steps if s(st.get("op"))]
+    try:
+        saved = studio_pkg.engine("build_exec").save_prep_steps(
+            SESSION.studio["study_id"], dom, steps)
+    except Exception as exc:  # noqa: BLE001 — surfaced to the editor, whatever the engine raised
+        raise HTTPException(400, f"could not save the steps: {exc}") from exc
+    _autosave()
+    return {"domain": dom, "steps": saved or []}
+
+
+def _studio_compose(dom: str):
+    from sdtm_builder import studio as studio_pkg
+    _studio_configure()
+    be = studio_pkg.engine("build_exec")
+    return be, be.compose_blocks(SESSION.studio["study_id"], dom)
+
+
+def _public_block(b: dict) -> dict:
+    return {k: v for k, v in b.items() if not str(k).startswith("_")}
+
+
+@app.get("/api/domain/{domain}/studio-blocks")
+def studio_blocks(domain: str):
+    """The domain's mapping as SDTM Studio's Domain Build holds it: one editable block per
+    variable, plus every dataset a mapping can read (raw, prepared, built SDTM) with its
+    columns — the pickers of the editor are filled from here."""
+    if not _is_studio():
+        raise HTTPException(409, "this study was not imported from SDTM Studio")
+    dom = upper(domain)
+    if SESSION.spec is None or dom not in SESSION.spec.domains:
+        raise HTTPException(404, f"{dom} is not in the mapping spec")
+    be, comp = _studio_compose(dom)
+    sources: dict[str, list[str]] = {}
+    try:
+        sources.update({k: sorted(str(c) for c in v) for k, v in SESSION.store.schema().items()})
+    except Exception:  # noqa: BLE001 — a raw file that no longer reads still leaves the rest usable
+        pass
+    prep_outputs = [s(st.get("name")) for st in comp.get("prep_steps") or [] if s(st.get("name"))]
+    try:    # the prepared datasets, with their real columns (a quick in-memory prep run)
+        frames = be._prep_frames(SESSION.studio["study_id"], comp.get("prep_steps") or [], persist=False)
+        sources.update({str(k): [str(c) for c in f.columns] for k, f in (frames or {}).items()})
+    except Exception:  # noqa: BLE001
+        for nm in prep_outputs:
+            sources.setdefault(nm, [])
+    for dname, r in SESSION.results.items():
+        if r.ok and r.dataset is not None:
+            sources[f"sdtm.{dname.lower()}"] = [str(c) for c in r.dataset.columns]
+    return {"domain": dom, "blocks": [_public_block(b) for b in comp["blocks"]],
+            "sources": sources, "prep_outputs": prep_outputs,
+            "variables": [upper(b.get("variable", "")) for b in comp["blocks"]]}
+
+
+class StudioBlockIn(BaseModel):
+    block: dict
+
+
+@app.post("/api/domain/{domain}/studio-block/{variable}")
+def set_studio_block(domain: str, variable: str, body: StudioBlockIn):
+    """Save one variable's mapping into the imported study, exactly as the studio's Domain
+    Build saves it: the edited block joins the saved blocks (user edit wins on compose),
+    everything else — other blocks, settings, prep steps, review marks — stays."""
+    if not _is_studio():
+        raise HTTPException(409, "this study was not imported from SDTM Studio")
+    dom, var = upper(domain), upper(variable)
+    if SESSION.spec is None or dom not in SESSION.spec.domains:
+        raise HTTPException(404, f"{dom} is not in the mapping spec")
+    if RUNNER.busy:
+        raise HTTPException(409, "a job is already running")
+    be, _ = _studio_compose(dom)
+    blk = _public_block(body.block or {})
+    blk["variable"] = var
+    sid = SESSION.studio["study_id"]
+    saved = be._load_saved(sid, dom) or {}
+    blocks = [b for b in (saved.get("blocks") or []) if upper(b.get("variable", "")) != var]
+    blocks.append(blk)
+    try:
+        be.save_blocks(sid, dom, blocks, settings_doc=saved.get("settings") or {},
+                       prep_steps=saved.get("prep_steps") or [], reviewed=saved.get("reviewed") or [])
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"could not save the mapping: {exc}") from exc
+    _autosave()
+    return {"domain": dom, "variable": var, "ok": True}
+
+
+@app.delete("/api/domain/{domain}/studio-block/{variable}")
+def clear_studio_block(domain: str, variable: str):
+    """Put a variable back under the studio's spec-derived mapping (drop the saved edit)."""
+    if not _is_studio():
+        raise HTTPException(409, "this study was not imported from SDTM Studio")
+    dom, var = upper(domain), upper(variable)
+    if RUNNER.busy:
+        raise HTTPException(409, "a job is already running")
+    be, _ = _studio_compose(dom)
+    sid = SESSION.studio["study_id"]
+    saved = be._load_saved(sid, dom) or {}
+    blocks = [b for b in (saved.get("blocks") or []) if upper(b.get("variable", "")) != var]
+    be.save_blocks(sid, dom, blocks, settings_doc=saved.get("settings") or {},
+                   prep_steps=saved.get("prep_steps") or [], reviewed=saved.get("reviewed") or [])
+    _autosave()
+    return {"domain": dom, "variable": var, "ok": True}
 
 
 # ── filesystem browser ──────────────────────────────────────────────────────

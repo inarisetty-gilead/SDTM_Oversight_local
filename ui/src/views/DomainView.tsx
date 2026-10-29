@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArrowDown, ArrowLeft, ArrowUp, BookOpen, CheckCircle2, Copy, ExternalLink, MessageSquare, Plus, Search, Table2, Trash2 } from "lucide-react"
 import { api } from "@/api"
-import type { CtInspect, DomainDetail, DomainReview, JobState, ReviewComment, ReviewStatus, StudioPrepStep, VariableRow } from "@/api"
+import type { CtInspect, DomainDetail, DomainReview, JobState, ReviewComment, ReviewStatus, VariableRow } from "@/api"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { SpecRowsPanel } from "@/components/SpecPeek"
@@ -16,7 +16,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Chip, DataGrid, Mono, STATUS_TONE, SegmentBar, type ChipTone } from "@/components/grid"
 import { Callout, Metric, Metrics, PageHeader, Panel } from "@/components/shell"
 import { DataView, RecordTable, VariableRecords, useDomainRecords } from "@/components/DataView"
-import { PipelineEditor } from "@/components/PipelineEditor"
+import { PipelineEditor, StudioPrepList } from "@/components/PipelineEditor"
+import { StudioVariableEditor } from "@/components/StudioBlockEditor"
 import { VariableEditor } from "@/components/VariableEditor"
 
 const FILTERS = ["all", "built", "empty", "dropped", "not_built", "error"] as const
@@ -548,11 +549,10 @@ export function DomainView({ domain, variable, onBack, onChanged }: {
                     {editing.how}{editing.source ? ` · ${editing.source}` : ""}
                   </span>
                   <div className="ml-auto flex gap-1">
-                    {d.engine !== "studio" && (
                     <Button size="sm" variant={pane === "edit" ? "default" : "outline"}
                             className="h-7 text-xs" onClick={() => setPane(pane === "edit" ? "data" : "edit")}>
                       {pane === "edit" ? "Done" : "Edit mapping"}
-                    </Button>)}
+                    </Button>
                     <Button size="sm" variant="ghost" className="h-7 text-xs"
                             onClick={() => { setEditing(null); setPane("data") }}>Close</Button>
                   </div>
@@ -590,10 +590,13 @@ export function DomainView({ domain, variable, onBack, onChanged }: {
                 </div>
                 <VariableRecords domain={d.domain} variable={editing.variable} refreshKey={dataKey}
                                  keys={varRecordKeys} />
-                {pane === "edit" && (
-                  <VariableEditor detail={d} variable={editing}
-                                  onDone={() => void afterRebuild()}
-                                  onClose={() => setPane("data")} />
+                {pane === "edit" && (d.engine === "studio"
+                  ? <StudioVariableEditor domain={d.domain} variable={editing.variable}
+                                          onDone={() => void afterRebuild()}
+                                          onClose={() => setPane("data")} />
+                  : <VariableEditor detail={d} variable={editing}
+                                    onDone={() => void afterRebuild()}
+                                    onClose={() => setPane("data")} />
                 )}
               </div>
             )}
@@ -744,7 +747,8 @@ export function DomainView({ domain, variable, onBack, onChanged }: {
             {d.engine === "studio" && d.build_mode === "auto"
               ? <Callout title="Auto-Build's prep">Auto-Build runs this domain's prep as saved in SDTM Studio's Domain Build (shown when the study is built with Domain Build), or the studio's own findings transpose where the spec calls for one.</Callout>
               : d.engine === "studio"
-              ? <StudioPrepList steps={d.studio_prep ?? []} />
+              ? <StudioPrepList key={d.domain} steps={d.studio_prep ?? []} domain={d.domain}
+                                onDone={() => void afterRebuild()} />
               : <PipelineEditor key={d.domain} detail={d} onDone={() => void afterRebuild()} />}
           </TabsContent>
 
@@ -867,30 +871,3 @@ function F({ label, children }: { label: string; children: React.ReactNode }) {
 }
 
 
-/** A studio study's prep steps, as SDTM Studio saved them — read-only: they run here exactly as
- *  in the studio, and are changed in the studio. */
-function StudioPrepList({ steps }: { steps: StudioPrepStep[] }) {
-  if (!steps.length) {
-    return <Callout title="No prep steps">SDTM Studio builds this domain straight from its raw forms.</Callout>
-  }
-  return (
-    <Panel title={`Prepare the data — ${steps.length} step${steps.length > 1 ? "s" : ""}, as saved in SDTM Studio`}
-           description="These run here exactly as in the studio. To change one, change it in the studio's Domain Build, export the study again and re-import it.">
-      <div className="divide-y rounded border">
-        {steps.map((s) => (
-          <details key={s.step} className="px-3 py-2">
-            <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-[13px]">
-              <span className="grid h-5 w-5 place-items-center rounded-full bg-muted text-[10px] font-semibold">{s.step}</span>
-              <Chip tone="blue">{s.op}</Chip>
-              <Mono>{s.name || "—"}</Mono>
-              {s.reads.length > 0 && <span className="text-[12px] text-muted-foreground">reads {s.reads.join(", ")}</span>}
-            </summary>
-            <pre className="mt-2 max-h-72 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px]">
-              {JSON.stringify(s.params, null, 2)}
-            </pre>
-          </details>
-        ))}
-      </div>
-    </Panel>
-  )
-}

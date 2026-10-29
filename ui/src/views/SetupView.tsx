@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Boxes, FileSpreadsheet, FolderOpen, Sparkles } from "lucide-react"
+import { Boxes, FileSpreadsheet, FolderOpen, RefreshCw, Sparkles } from "lucide-react"
 import { api } from "@/api"
 import type { RawInfo, SpecInfo, StudioImport } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -223,6 +223,7 @@ function StudioImportPanel({ studyId, path, setPath, onBrowse, onImported }: {
       .catch(() => undefined)
   }, [studyId])
   const studio = current?.engine === "studio" ? current.studio : null
+  const [pulling, setPulling] = useState(false)
   const run = async () => {
     setBusy(true); setErr("")
     try {
@@ -230,6 +231,14 @@ function StudioImportPanel({ studyId, path, setPath, onBrowse, onImported }: {
       setCurrent({ engine: "studio", studio: info })
       onImported(info)
     } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+  const pull = async () => {
+    setPulling(true); setErr("")
+    try {
+      const info = await api.studioSync(studyId)
+      setCurrent({ engine: "studio", studio: info })
+      onImported(info)
+    } catch (e) { setErr((e as Error).message) } finally { setPulling(false) }
   }
   return (
     <Panel icon={<Boxes className="h-4 w-4" />} tone="teal" title="A study from SDTM Studio"
@@ -239,7 +248,8 @@ function StudioImportPanel({ studyId, path, setPath, onBrowse, onImported }: {
           {studio.protocol_number ? <><Mono>{studio.protocol_number}</Mono> · </> : null}
           {(studio.domains ?? []).length} domains with a Domain Build
           {studio.exported ? <> · exported {studio.exported.replace("T", " ").slice(0, 16)}</> : null}.
-          {" "}Mappings and prep are the studio's: review them here, change them in the studio.
+          {" "}The same Domain Build and Auto-Build as the studio: prep is editable on each
+          domain's Prepare the data, and Pull latest brings over whatever changed in the studio.
         </Callout>
       ) : null}
       {!studyId ? (
@@ -250,8 +260,17 @@ function StudioImportPanel({ studyId, path, setPath, onBrowse, onImported }: {
             <PathField value={path} onChange={setPath} mode="file"
                        placeholder="/path/to/STUDY_studio_export.zip" onBrowse={onBrowse} />
           </div>
-          <Button disabled={busy || !path} onClick={() => void run()}>
-            {studio ? "Re-import" : "Import"}</Button>
+          <Button disabled={busy || pulling || !path} onClick={() => void run()}>
+            {busy ? "Importing…" : studio ? "Re-import" : "Import"}</Button>
+          {studio && (
+            <Button variant="outline" disabled={busy || pulling} title={
+              "Export the study afresh from the SDTM Studio installed on this machine and re-import it — "
+              + "Domain Builds, prep steps and Auto-Build as the studio holds them NOW. It runs the studio's "
+              + "builds, so it can take a few minutes; prep edits made here are replaced by the studio's."}
+              onClick={() => void pull()}>
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${pulling ? "animate-spin" : ""}`} />
+              {pulling ? "Pulling from the studio…" : "Pull latest from the studio"}</Button>
+          )}
         </div>
       )}
       {err && <Callout tone="bad" title="Could not import">{err}</Callout>}
