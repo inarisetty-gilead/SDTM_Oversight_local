@@ -2121,18 +2121,235 @@ const STUDIO_COND_OPS: Array<[string, string]> = [
   ["in", "in list"], ["notin", "not in list"], ["missing", "is blank"], ["notmissing", "is not blank"],
 ]
 
+/* ── pickers: what the studio's engine reads, offered as dropdowns ──────────
+   The edit forms know the study: every dataset a step can read (raw, prepared with their
+   REAL columns, built SDTM) comes from the same sources call the mapping editor uses, so
+   datasets, columns, join sides and functions are picked, not typed. */
+
+export type StudioEditCtx = {
+  sources: Record<string, string[]>; prepOutputs: string[]; stepCols: string[]
+}
+
+const MERGE_HOW: Array<[string, string]> = [
+  ["left", "left — keep every record of the first"], ["inner", "inner — only records both have"],
+  ["right", "right — keep every record of the second"], ["outer", "outer — keep records of either"],
+]
+const DEDUP_KEEP: Array<[string, string]> = [["first", "first"], ["last", "last"]]
+const AGG_FUNCS = ["min", "max", "sum", "mean", "median", "count", "first", "last", "nunique"]
+/** Lists whose entries are column names — picked from the step's datasets. */
+const COLUMN_LIST_KEYS = new Set(["columns", "on", "id_vars", "value_vars", "group_by", "keys", "targets", "by", "order"])
+
+function OptSelect({ value, onChange, opts, width = "w-64" }: {
+  value: string; onChange: (v: string) => void; opts: Array<[string, string]>; width?: string
+}) {
+  const known = opts.some(([v]) => v === value)
+  return (
+    <Select value={value || opts[0][0]} onValueChange={onChange}>
+      <SelectTrigger className={cn("h-7 text-xs", width)}><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {!known && value && <SelectItem value={value}>{value}</SelectItem>}
+        {opts.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  )
+}
+
+function DsSelect({ value, onChange, ctx }: {
+  value: string; onChange: (v: string) => void; ctx: StudioEditCtx
+}) {
+  const prep = new Set(ctx.prepOutputs)
+  const names = Object.keys(ctx.sources)
+  const groups: Array<[string, string[]]> = [
+    ["Prepared", names.filter((n) => prep.has(n)).sort()],
+    ["Raw", names.filter((n) => !prep.has(n) && !n.startsWith("sdtm.")).sort()],
+    ["Built SDTM", names.filter((n) => n.startsWith("sdtm.")).sort()],
+  ]
+  return (
+    <Select value={value || ""} onValueChange={onChange}>
+      <SelectTrigger className="h-7 w-52 font-mono text-xs"><SelectValue placeholder="dataset…" /></SelectTrigger>
+      <SelectContent className="max-h-72">
+        {value && !names.includes(value) && (
+          <SelectItem value={value} className="font-mono text-xs">{value}</SelectItem>)}
+        {groups.filter(([, ns]) => ns.length).map(([g, ns]) => (
+          <SelectGroup key={g}>
+            <SelectLabel className="text-[10px] uppercase tracking-wide">{g}</SelectLabel>
+            {ns.map((n) => <SelectItem key={n} value={n} className="font-mono text-xs">{n}</SelectItem>)}
+          </SelectGroup>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+function StudioColSelect({ value, onChange, cols, ph = "column…" }: {
+  value: string; onChange: (v: string) => void; cols: string[]; ph?: string
+}) {
+  if (!cols.length) return (
+    <Input className="h-7 w-44 font-mono text-xs" value={value} placeholder={ph}
+           onChange={(e) => onChange(e.target.value.toUpperCase())} />)
+  return (
+    <Select value={value || ""} onValueChange={onChange}>
+      <SelectTrigger className="h-7 w-48 font-mono text-xs"><SelectValue placeholder={ph} /></SelectTrigger>
+      <SelectContent className="max-h-72">
+        {value && !cols.includes(value) && (
+          <SelectItem value={value} className="font-mono text-xs">{value}</SelectItem>)}
+        {cols.map((c) => <SelectItem key={c} value={c} className="font-mono text-xs">{c}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  )
+}
+
+/** A list of column names: chips to remove, a dropdown to add, free typing for a name
+ *  the pickers don't know (e.g. a column a later step creates). */
+function ColumnChipsEdit({ values, onChange, cols }: {
+  values: string[]; onChange: (v: string[]) => void; cols: string[]
+}) {
+  const [typed, setTyped] = useState("")
+  const add = (c: string) => { if (c && !values.includes(c)) onChange([...values, c]) }
+  return (
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+      {values.map((c, i) => (
+        <Chip key={`${c}-${i}`} tone="slate" className="gap-1 font-mono">
+          {c}
+          <button type="button" className="opacity-60 hover:opacity-100"
+                  onClick={() => onChange(values.filter((_, j) => j !== i))}>×</button>
+        </Chip>
+      ))}
+      {cols.length > 0 && (
+        <Select value="" onValueChange={add}>
+          <SelectTrigger className="h-6 w-40 text-[11px] text-muted-foreground">
+            <SelectValue placeholder="add a column…" /></SelectTrigger>
+          <SelectContent className="max-h-72">
+            {cols.filter((c) => !values.includes(c)).map((c) => (
+              <SelectItem key={c} value={c} className="font-mono text-xs">{c}</SelectItem>))}
+          </SelectContent>
+        </Select>)}
+      <Input className="h-6 w-32 font-mono text-[11px]" placeholder="or type + Enter"
+             value={typed} onChange={(e) => setTyped(e.target.value)}
+             onKeyDown={(e) => {
+               if (e.key === "Enter" && typed.trim()) {
+                 add(typed.trim().toUpperCase()); setTyped("")
+               }
+             }} />
+    </div>
+  )
+}
+
+/** The datasets of a stack: one dataset picker per row. */
+function DatasetListEdit({ values, onChange, ctx }: {
+  values: string[]; onChange: (v: string[]) => void; ctx: StudioEditCtx
+}) {
+  return (
+    <div className="flex w-full flex-col gap-1">
+      {values.map((d, i) => (
+        <div key={i} className="flex items-center gap-1">
+          <DsSelect value={d} onChange={(v) => onChange(values.map((x, j) => (j === i ? v : x)))} ctx={ctx} />
+          <Button variant="ghost" size="icon" className="h-6 w-6" title="Remove this dataset"
+                  onClick={() => onChange(values.filter((_, j) => j !== i))}>
+            <Trash2 className="h-3 w-3" /></Button>
+        </div>
+      ))}
+      <Button variant="outline" size="sm" className="h-6 w-fit px-2 text-[11px]"
+              onClick={() => onChange([...values, ""])}>
+        <Plus className="mr-1 h-3 w-3" />add a dataset</Button>
+    </div>
+  )
+}
+
+/** A derive value as the engine reads it: a fixed text, a column's value, or a
+ *  function of a column — UPPER(X) is picked as the function, never typed as text. */
+const DERIVE_FNS: Array<[string, string]> = [
+  ["UPPER", "UPPER( ) — uppercase a column"], ["LOWER", "LOWER( ) — lowercase a column"],
+  ["STRIP", "STRIP( ) — trim a column"],
+]
+const DERIVE_FN_NORM: Record<string, string> = {
+  UPPER: "UPPER", UPCASE: "UPPER", LOWER: "LOWER", LOWCASE: "LOWER", STRIP: "STRIP", TRIM: "STRIP",
+}
+
+function parseDeriveValue(v: string, cols: string[]) {
+  const m = /^(UPPER|UPCASE|LOWER|LOWCASE|STRIP|TRIM)\(\s*([A-Za-z0-9_]+)\s*\)$/i.exec(v)
+  if (m) return { kind: DERIVE_FN_NORM[m[1].toUpperCase()], col: m[2].toUpperCase() }
+  if (/^[A-Za-z0-9_]+$/.test(v) && cols.some((c) => c.toUpperCase() === v.toUpperCase()))
+    return { kind: "column", col: v }
+  return { kind: "text", col: "" }
+}
+
+function DeriveValueField({ value, onChange, cols }: {
+  value: string; onChange: (v: string) => void; cols: string[]
+}) {
+  const p = parseDeriveValue(value, cols)
+  const isFn = p.kind in DERIVE_FN_NORM
+  return (
+    <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-1">
+      <Select value={p.kind} onValueChange={(kind) => {
+        if (kind === "text") onChange("")
+        else if (kind === "column") onChange(p.col || "")
+        else onChange(`${kind}(${p.col || ""})`)
+      }}>
+        <SelectTrigger className="h-7 w-56 text-xs text-muted-foreground"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="text">fixed text</SelectItem>
+          <SelectItem value="column">a column's value</SelectItem>
+          {DERIVE_FNS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {p.kind === "text" ? (
+        <Input className="h-7 min-w-48 flex-1 font-mono text-xs" value={value} placeholder="text"
+               onChange={(e) => onChange(e.target.value)} />
+      ) : (
+        <>
+          {isFn && <Mono>{p.kind}(</Mono>}
+          <StudioColSelect value={p.col} cols={cols}
+                     onChange={(c) => onChange(isFn ? `${p.kind}(${c})` : c)} />
+          {isFn && <Mono>)</Mono>}
+        </>
+      )}
+    </span>
+  )
+}
+
 /** One editable param — the value's shape decides the control, so every studio op is
- *  editable without an op-specific form, and nothing a step carries is hidden. */
-function StudioValueField({ k, value, onChange, parent = "" }: {
+ *  editable without an op-specific form, and nothing a step carries is hidden. With a
+ *  ctx (the study's datasets and columns), the fields become pickers, not typing. */
+function StudioValueField({ k, value, onChange, parent = "", ctx = null, siblings }: {
   k: string; value: unknown; onChange: (v: unknown) => void; parent?: string
+  ctx?: StudioEditCtx | null; siblings?: Record<string, unknown>
 }) {
   if (parent === "conds" && k === "operator") return (
     <Select value={typeof value === "string" && value ? value : "=="} onValueChange={onChange}>
-      <SelectTrigger className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
+      <SelectTrigger className="h-7 w-36 text-xs"><SelectValue /></SelectTrigger>
       <SelectContent>
         {STUDIO_COND_OPS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
       </SelectContent>
     </Select>)
+  if (ctx) {
+    const sv = typeof value === "string" ? value : ""
+    // a merge input's own columns come from ITS dataset; everything else from the step's
+    const rowDs = typeof siblings?.dataset === "string" ? (siblings.dataset as string) : ""
+    const cols = parent === "inputs" && ctx.sources[rowDs]?.length ? ctx.sources[rowDs] : ctx.stepCols
+    if (k === "dataset" && (typeof value === "string" || value == null))
+      return <DsSelect value={sv} onChange={onChange} ctx={ctx} />
+    if (k === "datasets" && Array.isArray(value))
+      return <DatasetListEdit values={(value as unknown[]).map((x) => String(x ?? ""))}
+                              onChange={onChange} ctx={ctx} />
+    if (k === "how") return <OptSelect value={sv} onChange={onChange} opts={MERGE_HOW} />
+    if (k === "keep" && parent !== "inputs")
+      return <OptSelect value={sv} onChange={onChange} opts={DEDUP_KEEP} width="w-28" />
+    if (k === "func")
+      return <OptSelect value={sv || "min"} onChange={onChange}
+                        opts={AGG_FUNCS.map((f) => [f, f])} width="w-32" />
+    if ((parent === "conds" && k === "column") || (parent === "renames" && k === "from")
+        || (parent === "measures" && (k === "value_col" || k === "unit_col"))
+        || (parent === "on_map" && (k === "left" || k === "right"))
+        || (parent === "" && k === "column"))
+      return <StudioColSelect value={sv} onChange={onChange} cols={cols} />
+    if ((parent === "rules" && k === "value") || (parent === "" && k === "else_value"))
+      return <DeriveValueField value={sv} onChange={onChange} cols={cols} />
+    if (Array.isArray(value) && !value.some(isPlainObject) && !(k in ROW_SHAPE)
+        && COLUMN_LIST_KEYS.has(k))
+      return <ColumnChipsEdit values={(value as unknown[]).map((x) => String(x))}
+                              onChange={onChange} cols={cols} />
+  }
   if (typeof value === "boolean") return (
     <Select value={String(value)} onValueChange={(v) => onChange(v === "true")}>
       <SelectTrigger className="h-7 w-20 text-xs"><SelectValue /></SelectTrigger>
@@ -2158,7 +2375,7 @@ function StudioValueField({ k, value, onChange, parent = "" }: {
               <span className="mt-1 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-primary">
                 {i === 0 ? "IF" : "ELSE IF"}</span>)}
             <div className="min-w-0 flex-1">
-              <StudioObjectFields obj={row} parent={k}
+              <StudioObjectFields obj={row} parent={k} ctx={ctx}
                                   onChange={(o) => onChange(rows.map((r, j) => (j === i ? o : r)))} />
             </div>
             <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" title="Remove this row"
@@ -2173,26 +2390,32 @@ function StudioValueField({ k, value, onChange, parent = "" }: {
         </Button>
       </div>)
   }
-  if (isPlainObject(value)) return <StudioObjectFields obj={value} parent={k} onChange={onChange} />
+  if (isPlainObject(value)) return <StudioObjectFields obj={value} parent={k} ctx={ctx} onChange={onChange} />
   return (
-    <Input className="h-7 min-w-44 flex-1 font-mono text-xs" value={value == null ? "" : String(value)}
+    <Input className={cn("h-7 min-w-44 flex-1 font-mono text-xs",
+                         (k === "expression" || k === "code") && "min-w-72 w-full")}
+           value={value == null ? "" : String(value)}
            onChange={(e) => onChange(e.target.value)} />)
 }
 
-export function StudioObjectFields({ obj, onChange, parent = "" }: {
-  obj: Record<string, unknown>; onChange: (o: Record<string, unknown>) => void; parent?: string
+export function StudioObjectFields({ obj, onChange, parent = "", ctx = null }: {
+  obj: Record<string, unknown>; onChange: (o: Record<string, unknown>) => void
+  parent?: string; ctx?: StudioEditCtx | null
 }) {
   return (
     <div className="flex w-full flex-wrap items-start gap-x-4 gap-y-1.5">
       {Object.entries(obj).map(([k, v]) => {
         const label = studioKeyLabel(parent, k)
+        const wide = Array.isArray(v) && (v.some(isPlainObject) || (!v.length && k in ROW_SHAPE))
+          || (!!ctx && (k === "datasets" || COLUMN_LIST_KEYS.has(k) && Array.isArray(v)))
+          || k === "expression" || k === "code"
         return (
-          <div key={k} className={cn("flex items-start gap-1.5",
-            Array.isArray(v) && (v.some(isPlainObject) || (!v.length && k in ROW_SHAPE)) ? "w-full" : "min-w-0")}>
+          <div key={k} className={cn("flex items-start gap-1.5", wide ? "w-full" : "min-w-0")}>
             {label !== "" && (
               <span className="mt-1.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {label}</span>)}
-            <StudioValueField k={k} parent={parent} value={v} onChange={(nv) => onChange({ ...obj, [k]: nv })} />
+            <StudioValueField k={k} parent={parent} value={v} ctx={ctx} siblings={obj}
+                              onChange={(nv) => onChange({ ...obj, [k]: nv })} />
           </div>
         )
       })}
@@ -2206,9 +2429,27 @@ export function StudioPrepList({ steps, domain, onDone }: {
   const [edit, setEdit] = useState<StudioSaveStep[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState("")
+  const [picker, setPicker] = useState<Omit<StudioEditCtx, "stepCols"> | null>(null)
   const startEdit = () => {
     setErr("")
     setEdit(steps.map((st) => structuredClone({ op: st.op, name: st.name, params: st.params ?? {} })))
+    if (!picker)   // the study's datasets and columns, so the fields are pickers, not typing
+      api.studioBlocks(domain)
+        .then((r) => setPicker({ sources: r.sources, prepOutputs: r.prep_outputs }))
+        .catch(() => setPicker({ sources: {}, prepOutputs: [] }))
+  }
+  /** Every column a step can see: its dataset's, its merge inputs', its stacked datasets',
+   *  and its own earlier outputs are all in sources (prep ran in memory to read them). */
+  const ctxFor = (p: Record<string, unknown>): StudioEditCtx | null => {
+    if (!picker) return null
+    const names = new Set<string>()
+    if (typeof p.dataset === "string") names.add(p.dataset)
+    for (const d of Array.isArray(p.datasets) ? p.datasets : []) if (typeof d === "string") names.add(d)
+    for (const i of Array.isArray(p.inputs) ? p.inputs : [])
+      if (isPlainObject(i) && typeof i.dataset === "string") names.add(i.dataset)
+    const cols = new Set<string>()
+    for (const n of names) for (const c of picker.sources[n] ?? []) cols.add(c)
+    return { ...picker, stepCols: [...cols].sort() }
   }
   const save = async () => {
     if (!edit) return
@@ -2268,7 +2509,8 @@ export function StudioPrepList({ steps, domain, onDone }: {
                   </span>
                 </div>
                 <div className="px-3 py-2.5">
-                  <StudioObjectFields obj={st.params} onChange={(p) => change(i, { ...st, params: p })} />
+                  <StudioObjectFields obj={st.params} ctx={ctxFor(st.params)}
+                                      onChange={(p) => change(i, { ...st, params: p })} />
                 </div>
               </div>
             )

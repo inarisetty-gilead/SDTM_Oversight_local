@@ -144,12 +144,9 @@ function ValuePick({ val, onCh, info, vars, kinds, allowMissing, allowSelf, prio
             {vars.map((v) => <SelectItem key={v} value={v} className="font-mono text-xs">{v}</SelectItem>)}
           </SelectContent>
         </Select>)}
-      {k === "text" && <>
-        <Mono>'</Mono>
-        <Input className="h-7 w-32 font-mono text-xs" value={val?.text ?? ""} placeholder="text"
-               onChange={(e) => set({ text: e.target.value })} />
-        <Mono>'</Mono>
-      </>}
+      {k === "text" && (
+        <Input className="h-7 w-44 min-w-32 font-mono text-xs" value={val?.text ?? ""} placeholder="text"
+               onChange={(e) => set({ text: e.target.value })} />)}
       {k === "self" && <Mono>&lt;value so far&gt;</Mono>}
       {k === "step" && (
         <Select value={String(val?.step || 1)} onValueChange={(n) => set({ step: Number(n) })}>
@@ -159,7 +156,7 @@ function ValuePick({ val, onCh, info, vars, kinds, allowMissing, allowSelf, prio
               <SelectItem key={n} value={String(n)} className="text-xs">step {n}</SelectItem>))}
           </SelectContent>
         </Select>)}
-      {k === "missing" && <Mono>''</Mono>}
+      {k === "missing" && <span className="text-[11px] text-muted-foreground">(blank)</span>}
     </span>
   )
 }
@@ -193,7 +190,7 @@ function CondRules({ args, onArgs, info, vars, target, allowSelf, priorSteps = 0
               </SelectContent>
             </Select>
             {!noVal && (
-              <Input className="h-7 w-28 font-mono text-xs" value={r.value ?? ""}
+              <Input className="h-7 w-40 font-mono text-xs" value={r.value ?? ""}
                      placeholder={list ? "A,B,C" : "value"}
                      title={list ? "comma-separated values" : "compared as text; > < ≥ ≤ compare as numbers"}
                      onChange={(e) => setRule(k, { value: e.target.value })} />)}
@@ -270,7 +267,7 @@ function FnArgs({ args, onArgs, info, vars, allowSelf, priorSteps = 0 }: {
       {(meta?.fields ?? []).map((f) => (
         <div key={f} className="flex items-center gap-1.5">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{f}</span>
-          <Input className="h-7 w-32 font-mono text-xs" value={String(args[f] ?? "")}
+          <Input className="h-7 w-40 font-mono text-xs" value={String(args[f] ?? "")}
                  onChange={(e) => setA({ [f]: e.target.value })} />
         </div>
       ))}
@@ -342,10 +339,9 @@ function PipelineSteps({ args, onArgs, info, vars, target }: {
             </div>)}
           {st.op === "constant" && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <Mono>{target} = '</Mono>
-              <Input className="h-7 w-48 font-mono text-xs" value={st.value ?? ""} placeholder="fixed value"
+              <Mono>{target} =</Mono>
+              <Input className="h-7 w-56 font-mono text-xs" value={st.value ?? ""} placeholder="fixed value"
                      onChange={(e) => setStep(k, { value: e.target.value })} />
-              <Mono>'</Mono>
             </div>)}
           {st.op === "fn" && (
             <FnArgs args={st.args ?? {}} onArgs={(a) => setStep(k, { args: a })}
@@ -501,10 +497,9 @@ export function StudioVariableEditor({ domain, variable, onDone, onClose }: {
         </div>)}
       {key === "constant" && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <KW>ASSIGN</KW><Mono>{variable} = '</Mono>
-          <Input className="h-7 w-56 font-mono text-xs" value={blk.value ?? ""} placeholder="fixed value"
+          <KW>ASSIGN</KW><Mono>{variable} =</Mono>
+          <Input className="h-7 w-64 font-mono text-xs" value={blk.value ?? ""} placeholder="fixed value"
                  onChange={(e) => set({ value: e.target.value })} />
-          <Mono>'</Mono>
         </div>)}
       {key === "sequence" && (
         <p className="text-[12px] text-muted-foreground">
